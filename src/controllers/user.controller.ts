@@ -4,6 +4,12 @@ import { z } from 'zod';
 import User from '../models/userSchema';
 import ErrorResponse from "../utils/errorResponse";
 
+
+interface CloudFileOutput extends Express.Multer.File {
+    cloudUrl: string,
+    cloudProvider: string,
+    cloudPublicId: string
+}
 // Update profile schema
 const updateProfileSchema = z.object({
   name: z.string().min(1).max(50).optional(),
@@ -88,13 +94,13 @@ export const updateUserProfile = async (req: Request, res: Response, next: NextF
 export const uploadProfilePicture = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
   try {
     const userId = req.user?._id;
-    
+    const files = req.files as Record<string, Express.Multer.File[]>
     // Check if file was uploaded
-    if (!req.files || !req.files?.avatar || !req.files?.avatar[0]) {
+    if (!files || !files.avatar || !files?.avatar[0]) {
       throw new ErrorResponse(400, "No image file provided");
     }
     
-    const avatarFile = req.files?.avatar[0];
+    const avatarFile = files.avatar[0] as CloudFileOutput;
     
     // Get the cloud URL from Upfly processed file
     const avatarUrl = avatarFile.cloudUrl || avatarFile.path;

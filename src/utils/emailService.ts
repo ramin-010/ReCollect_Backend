@@ -6,26 +6,13 @@ import { Content } from '../models/contentSchema';
 
 // Create reusable transporter
 const createTransporter = () => {
-  // For development, you can use Ethereal Email
-  // For production, use real email service (Gmail, SendGrid, etc.)
-  
-  if (process.env.NODE_ENV === 'production') {
-    return nodemailer.createTransport({
-      service: 'gmail',
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASSWORD
-      }
-    });
-  } else {
-    // Development - Use console logging
-    return {
-      sendMail: async (mailOptions: any) => {
-        console.log('📧 Email would be sent:', mailOptions);
-        return { messageId: 'test-message-id' };
-      }
-    };
-  }
+  return nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASSWORD
+    }
+  });
 };
 
 export const sendReminderEmail = async (
@@ -45,110 +32,260 @@ export const sendReminderEmail = async (
         <html>
           <head>
             <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>ReCollect Reminder</title>
+            <!-- Import Inter font for a more premium look where supported -->
+            <link rel="preconnect" href="https://fonts.googleapis.com">
+            <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+            <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
             <style>
-              body {
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-                line-height: 1.6;
-                color: #333;
-                max-width: 600px;
-                margin: 0 auto;
-                padding: 20px;
+              /* Reset & Base */
+              * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
               }
+              body {
+                font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+                background-color: #f3f4f6; /* Softer, cooler gray */
+                color: #1f2937; /* Dark gray for better readability than pure black */
+                line-height: 1.6;
+                -webkit-font-smoothing: antialiased;
+                -moz-osx-font-smoothing: grayscale;
+              }
+
+              /* Layout */
+               .email-wrapper {
+            background-color: #f3f4f6;
+             padding: 8px 10px; 
+            min-height: 100vh;
+        }
+
+        .email-container {
+            max-width: 600px;
+            /* Slightly narrower for better reading measure */
+            margin: 0 auto;
+            background: #ffffff;
+            border-radius: 16px;
+            /* More rounded corners */
+            overflow: hidden;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.04);
+        }
+
+              /* Header */
               .header {
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                color: white;
-                padding: 30px;
-                border-radius: 10px 10px 0 0;
+                background: #ffffff;
+                padding: 25px 40px 14px;
                 text-align: center;
               }
-              .logo {
-                font-size: 32px;
-                font-weight: bold;
-                margin-bottom: 10px;
+              .logo-img {
+                height: 68px; /* Refined size */
+                width: auto;
+                display: block;
+                margin: 0 auto;
               }
+
+              /* Content */
               .content {
-                background: white;
-                padding: 30px;
-                border: 1px solid #e2e8f0;
-                border-radius: 0 0 10px 10px;
+                padding: 0 48px 48px;
+              }
+              .greeting {
+                font-size: 18px;
+                color: #111827;
+                margin-bottom: 32px;
+                font-weight: 500;
+                text-align: center;
+              }
+
+              /* Cards */
+              .card {
+                background: #ffffff;
+                border: 1px solid #e5e7eb;
+                border-radius: 12px;
+                padding: 24px;
+                margin-bottom: 24px;
+                box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+              }
+              .card-highlight {
+                background: #f9fafb; /* Very subtle contrast */
+                border-color: #e5e7eb;
+              }
+
+              /* Reminder Section */
+              .reminder-header {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                margin-bottom: 12px;
+              }
+              .reminder-badge {
+                background: #fee2e2;
+                color: #991b1b;
+                font-size: 11px;
+                font-weight: 700;
+                padding: 4px 8px;
+                border-radius: 20px;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                display: inline-flex;
+                align-items: center;
+                gap: 4px;
+              }
+              .reminder-message {
+                font-size: 15px;
+                color: #4b5563;
+                line-height: 1.6;
+              }
+
+              /* Note Section */
+              .note-label {
+                font-size: 11px;
+                text-transform: uppercase;
+                letter-spacing: 1px;
+                color: #6b7280;
+                font-weight: 600;
+                margin-bottom: 8px;
+                display: block;
               }
               .note-title {
-                font-size: 24px;
-                font-weight: bold;
-                color: #2d3748;
-                margin-bottom: 15px;
+                font-size: 20px;
+                font-weight: 700;
+                color: #111827;
+                line-height: 1.3;
+                margin-bottom: 4px;
               }
-              .note-body {
-                background: #f7fafc;
-                padding: 20px;
-                border-radius: 8px;
-                margin: 20px 0;
-                color: #4a5568;
-              }
-              .button {
-                display: inline-block;
-                background: #667eea;
-                color: white;
-                padding: 12px 30px;
-                text-decoration: none;
-                border-radius: 6px;
-                font-weight: 500;
-                margin-top: 20px;
-              }
-              .footer {
-                text-align: center;
-                margin-top: 30px;
-                padding-top: 20px;
-                border-top: 1px solid #e2e8f0;
-                color: #718096;
+              .note-preview {
                 font-size: 14px;
+                color: #6b7280;
+                margin-top: 8px;
+                display: -webkit-box;
+                -webkit-line-clamp: 2;
+                -webkit-box-orient: vertical;
+                overflow: hidden;
               }
-              .reminder-info {
-                background: #fef5e7;
-                border-left: 4px solid #f39c12;
-                padding: 15px;
-                margin: 20px 0;
+
+              /* CTA */
+              .cta-container {
+                text-align: center;
+                margin-top: 40px;
+                margin-bottom: 16px;
+              }
+              .cta-button {
+                display: inline-block;
+                background: #000000;
+                color: #ffffff;
+                padding: 16px 40px;
+                text-decoration: none;
+                border-radius: 100px; /* Pill shape */
+                font-weight: 600;
+                font-size: 15px;
+                transition: all 0.2s ease;
+                box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+              }
+              .cta-button:hover {
+                background: #1f2937;
+                transform: translateY(-1px);
+                box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+              }
+
+              /* Footer */
+              .footer {
+                padding: 32px;
+                background: #f9fafb;
+                border-top: 1px solid #f3f4f6;
+                text-align: center;
+              }
+              .footer-text {
+                color: #9ca3af;
+                font-size: 12px;
+                line-height: 1.6;
+                margin: 4px 0;
+              }
+              .footer-link {
+                color: #6b7280;
+                text-decoration: none;
+                font-weight: 500;
+                transition: color 0.2s;
+              }
+              .footer-link:hover {
+                color: #111827;
+                text-decoration: underline;
+              }
+              .divider {
+                height: 1px;
+                background: #e5e7eb;
+                width: 40px;
+                margin: 24px auto;
+              }
+
+              /* Mobile */
+              @media only screen and (max-width: 600px) {
+                .email-wrapper {
+                  padding: 12px;
+                }
+                .content {
+                  padding: 0 24px 32px;
+                }
+                .header {
+                  padding: 32px 24px 24px;
+                }
+                .cta-button {
+                  width: 100%;
+                  text-align: center;
+                }
               }
             </style>
           </head>
           <body>
-            <div class="header">
-              <div class="logo">ReCollect</div>
-              <p>Your Knowledge Reminder</p>
-            </div>
-            
-            <div class="content">
-              <p>Hi ${user.name},</p>
-              
-              <div class="reminder-info">
-                <strong>⏰ This is your scheduled reminder!</strong><br>
-                ${reminder.message || 'You asked to be reminded about this note.'}
-              </div>
-              
-              <div class="note-title">
-                📝 ${content.title}
-              </div>
-              
-              ${content.body ? `
-                <div class="note-body">
-                  ${content.body.substring(0, 500)}${content.body.length > 500 ? '...' : ''}
+            <div class="email-wrapper">
+              <div class="email-container">
+                <div class="header">
+                  <img src="https://res.cloudinary.com/dsfb3jjqx/image/upload/v1763902793/recollect/yg9aexn9iwtxmun5du4d.png" alt="ReCollect" class="logo-img" style="background-color:white ; border-radius: 4px; />
                 </div>
-              ` : ''}
-              
-              <a href="${process.env.FRONTEND_URL}/dashboard/${content.DashId}?note=${content._id}" class="button">
-                View Full Note →
-              </a>
-              
-              <div class="footer">
-                <p>
-                  This reminder was set by you on ${new Date(reminder.createdAt).toLocaleDateString()}.
-                  <br>
-                  To manage your reminders, visit your ReCollect dashboard.
-                </p>
-                <p>
-                  © ${new Date().getFullYear()} ReCollect. All rights reserved.
-                </p>
+                
+                <div class="content">
+                  <div class="greeting">
+                    Hi ${user.name}, here's your reminder.
+                  </div>
+                  
+                  <!-- Reminder Card -->
+                  <div class="card card-highlight">
+                    <div class="reminder-header">
+                      <span class="reminder-badge">🔔 Reminder</span>
+                    </div>
+                    <div class="reminder-message">
+                      ${reminder.message || 'You asked to be reminded about this note.'}
+                    </div>
+                  </div>
+                  
+                  <!-- Note Content Card -->
+                  <div class="card">
+                    <span class="note-label">From your note</span>
+                    <h2 class="note-title">${content.title}</h2>
+                    <p class="note-preview">
+                      ${content.description || 'No preview available.'}
+                    </p>
+                  </div>
+                  
+                  <div class="cta-container">
+                    <a href="${process.env.FRONTEND_URL}/dashboard/${content.DashId}?note=${content._id}" class="cta-button">
+                      View Note in ReCollect
+                    </a>
+                  </div>
+                </div>
+                
+                <div class="footer">
+                  <p class="footer-text">
+                    Sent via ReCollect • Your Personal Knowledge Base
+                  </p>
+                  <div class="divider"></div>
+                  <p class="footer-text">
+                    <a href="${process.env.FRONTEND_URL}/dashboard" class="footer-link">Manage Reminders</a> • <a href="${process.env.FRONTEND_URL}/dashboard" class="footer-link">Unsubscribe</a>
+                  </p>
+                  <p class="footer-text" style="margin-top: 16px;">
+                    © ${new Date().getFullYear()} ReCollect. All rights reserved.
+                  </p>
+                </div>
               </div>
             </div>
           </body>
@@ -172,120 +309,298 @@ export const sendWelcomeEmail = async (user: any): Promise<boolean> => {
     const mailOptions = {
       from: `"ReCollect" <${process.env.EMAIL_FROM || 'noreply@recollect.com'}>`,
       to: user.email,
-      subject: 'Welcome to ReCollect! 🎉',
+      subject: 'Welcome to ReCollect',
       html: `
         <!DOCTYPE html>
         <html>
           <head>
             <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>Welcome to ReCollect</title>
+            <!-- Import Inter font for a more premium look where supported -->
+            <link rel="preconnect" href="https://fonts.googleapis.com">
+            <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+            <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
             <style>
+              /* Reset & Base */
+              * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+              }
               body {
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+                font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+                background-color: #f3f4f6; /* Softer, cooler gray */
+                color: #1f2937; /* Dark gray for better readability than pure black */
                 line-height: 1.6;
-                color: #333;
-                max-width: 600px;
+                -webkit-font-smoothing: antialiased;
+                -moz-osx-font-smoothing: grayscale;
+              }
+
+              /* Layout */
+              .email-wrapper {
+                background-color: #f3f4f6;
+                padding: 48px 20px;
+                min-height: 100vh;
+              }
+              .email-container {
+                max-width: 560px; /* Slightly narrower for better reading measure */
                 margin: 0 auto;
-                padding: 20px;
+                background: #ffffff;
+                border-radius: 16px; /* More rounded corners */
+                overflow: hidden;
+                box-shadow: 0 10px 40px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.04);
               }
+
+              /* Header */
               .header {
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                color: white;
-                padding: 40px;
-                border-radius: 10px;
+                background: #ffffff;
+                padding: 40px 40px 24px;
                 text-align: center;
-                margin-bottom: 30px;
               }
-              .logo {
-                font-size: 36px;
-                font-weight: bold;
-                margin-bottom: 10px;
+              .logo-img {
+                height: 68px; /* Refined size */
+                width: auto;
+                display: block;
+                margin: 0 auto 20px;
               }
+              .header-title {
+                font-size: 24px;
+                font-weight: 700;
+                color: #111827;
+                margin-bottom: 8px;
+                line-height: 1.3;
+                letter-spacing: -0.02em;
+              }
+              .header-subtitle {
+                font-size: 16px;
+                color: #6b7280;
+                font-weight: 400;
+                line-height: 1.5;
+              }
+
+              /* Content */
               .content {
-                background: white;
-                padding: 30px;
+                padding: 0 48px 48px;
               }
-              .features {
-                background: #f7fafc;
-                padding: 20px;
-                border-radius: 8px;
-                margin: 20px 0;
+              .greeting {
+                font-size: 18px;
+                color: #111827;
+                margin-bottom: 32px;
+                font-weight: 500;
+                text-align: center;
+              }
+
+              /* Cards */
+              .card {
+                background: #ffffff;
+                border: 1px solid #e5e7eb;
+                border-radius: 12px;
+                padding: 24px;
+                margin-bottom: 24px;
+                box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+              }
+              
+              /* Features Section */
+              .features-title {
+                font-size: 14px;
+                font-weight: 600;
+                color: #111827;
+                margin-bottom: 16px;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
               }
               .feature-item {
-                margin: 10px 0;
-                padding-left: 25px;
-                position: relative;
+                display: flex;
+                align-items: flex-start;
+                margin-bottom: 16px;
+                gap: 12px;
               }
-              .feature-item::before {
-                content: "✓";
-                position: absolute;
-                left: 0;
-                color: #48bb78;
-                font-weight: bold;
+              .feature-item:last-child {
+                margin-bottom: 0;
               }
-              .button {
-                display: inline-block;
-                background: #667eea;
-                color: white;
-                padding: 14px 35px;
-                text-decoration: none;
-                border-radius: 6px;
-                font-weight: 500;
-                margin: 20px 0;
-              }
-              .footer {
-                text-align: center;
-                margin-top: 30px;
-                padding-top: 20px;
-                border-top: 1px solid #e2e8f0;
-                color: #718096;
+              .feature-icon {
+                color: #10b981; /* Premium green */
+                font-size: 18px;
+                margin-top: 2px;
+                flex-shrink: 0;
+                background: #ecfdf5;
+                width: 24px;
+                height: 24px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                border-radius: 50%;
                 font-size: 14px;
+              }
+              .feature-text {
+                font-size: 15px;
+                color: #4b5563;
+                line-height: 1.5;
+              }
+
+              /* Tip Box */
+              .tip-box {
+                background: #eff6ff;
+                border: 1px solid #dbeafe;
+                border-radius: 12px;
+                padding: 20px;
+                margin-top: 32px;
+              }
+              .tip-title {
+                font-size: 14px;
+                font-weight: 600;
+                color: #1e40af;
+                margin-bottom: 8px;
+                display: flex;
+                align-items: center;
+                gap: 6px;
+              }
+              .tip-text {
+                font-size: 14px;
+                color: #1e3a8a;
+                line-height: 1.6;
+              }
+
+              /* CTA */
+              .cta-container {
+                text-align: center;
+                margin-top: 40px;
+                margin-bottom: 16px;
+              }
+              .cta-button {
+                display: inline-block;
+                background: #000000;
+                color: #ffffff;
+                padding: 16px 40px;
+                text-decoration: none;
+                border-radius: 100px; /* Pill shape */
+                font-weight: 600;
+                font-size: 15px;
+                transition: all 0.2s ease;
+                box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+              }
+              .cta-button:hover {
+                background: #1f2937;
+                transform: translateY(-1px);
+                box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+              }
+
+              /* Footer */
+              .footer {
+                padding: 32px;
+                background: #f9fafb;
+                border-top: 1px solid #f3f4f6;
+                text-align: center;
+              }
+              .footer-text {
+                color: #9ca3af;
+                font-size: 12px;
+                line-height: 1.6;
+                margin: 4px 0;
+              }
+              .footer-link {
+                color: #6b7280;
+                text-decoration: none;
+                font-weight: 500;
+                transition: color 0.2s;
+              }
+              .footer-link:hover {
+                color: #111827;
+                text-decoration: underline;
+              }
+              .divider {
+                height: 1px;
+                background: #e5e7eb;
+                width: 40px;
+                margin: 24px auto;
+              }
+
+              /* Mobile */
+              @media only screen and (max-width: 600px) {
+                .email-wrapper {
+                  padding: 12px;
+                }
+                .content {
+                  padding: 0 24px 32px;
+                }
+                .header {
+                  padding: 32px 24px 24px;
+                }
+                .header-title {
+                  font-size: 22px;
+                }
+                .cta-button {
+                  width: 100%;
+                  text-align: center;
+                }
               }
             </style>
           </head>
           <body>
-            <div class="header">
-              <div class="logo">ReCollect</div>
-              <p>Your Professional Knowledge Management System</p>
-            </div>
-            
-            <div class="content">
-              <h2>Welcome aboard, ${user.name}! 🚀</h2>
-              
-              <p>
-                We're thrilled to have you join the ReCollect community. 
-                You've just taken the first step towards building your second brain!
-              </p>
-              
-              <div class="features">
-                <h3>Here's what you can do with ReCollect:</h3>
-                <div class="feature-item">Create unlimited dashboards to organize your thoughts</div>
-                <div class="feature-item">Add rich notes with text, links, and images</div>
-                <div class="feature-item">Set reminders for important notes</div>
-                <div class="feature-item">Share your knowledge with secure links</div>
-                <div class="feature-item">Search across all your content instantly</div>
-              </div>
-              
-              <center>
-                <a href="${process.env.FRONTEND_URL}/dashboard" class="button">
-                  Start Exploring →
-                </a>
-              </center>
-              
-              <p>
-                <strong>Quick tip:</strong> Start by creating your first dashboard 
-                and adding a few notes. The more you use ReCollect, the more valuable 
-                it becomes!
-              </p>
-              
-              <div class="footer">
-                <p>
-                  Need help? Reply to this email or visit our 
-                  <a href="${process.env.FRONTEND_URL}/help">help center</a>.
-                </p>
-                <p>
-                  © ${new Date().getFullYear()} ReCollect. All rights reserved.
-                </p>
+            <div class="email-wrapper">
+              <div class="email-container">
+                <div class="header">
+                  <img src="https://res.cloudinary.com/dsfb3jjqx/image/upload/v1763902793/recollect/yg9aexn9iwtxmun5du4d.png" alt="ReCollect" class="logo-img" style="background-color:white ; border-radius: 4px; />
+                  <h1 class="header-title">Welcome to ReCollect</h1>
+                  <p class="header-subtitle">Your personal knowledge management system</p>
+                </div>
+                
+                <div class="content">
+                  <div class="greeting">
+                    Hi ${user.name}, welcome aboard!
+                  </div>
+                   
+                  <div class="card">
+                    <h2 class="features-title">What you can do</h2>
+                    <div class="feature-item">
+                      <span class="feature-icon">✓</span>
+                      <span class="feature-text">Create unlimited dashboards to organize your thoughts</span>
+                    </div>
+                    <div class="feature-item">
+                      <span class="feature-icon">✓</span>
+                      <span class="feature-text">Add rich notes with text, links, and images</span>
+                    </div>
+                    <div class="feature-item">
+                      <span class="feature-icon">✓</span>
+                      <span class="feature-text">Set reminders for important notes</span>
+                    </div>
+                    <div class="feature-item">
+                      <span class="feature-icon">✓</span>
+                      <span class="feature-text">Share your knowledge with secure links</span>
+                    </div>
+                    <div class="feature-item">
+                      <span class="feature-icon">✓</span>
+                      <span class="feature-text">Search across all your content instantly</span>
+                    </div>
+                  </div>
+                  
+                  <div class="cta-container">
+                    <a href="${process.env.FRONTEND_URL}/dashboard" class="cta-button">
+                      Get Started
+                    </a>
+                  </div>
+                  
+                  <div class="tip-box">
+                    <div class="tip-title">💡 Quick Tip</div>
+                    <div class="tip-text">
+                      Start by creating your first dashboard and adding a few notes. The more you use ReCollect, the more valuable it becomes!
+                    </div>
+                  </div>
+                </div>
+                
+                <div class="footer">
+                  <p class="footer-text">
+                    Sent via ReCollect • Your Personal Knowledge Base
+                  </p>
+                  <div class="divider"></div>
+                  <p class="footer-text">
+                    Need help? <a href="${process.env.FRONTEND_URL}/help" class="footer-link">Visit our help center</a> or reply to this email.
+                  </p>
+                  <p class="footer-text" style="margin-top: 16px;">
+                    © ${new Date().getFullYear()} ReCollect. All rights reserved.
+                  </p>
+                </div>
               </div>
             </div>
           </body>

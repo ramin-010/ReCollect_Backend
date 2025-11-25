@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ReCollect Reminder</title>
+    <!-- Import Inter font for a more premium look where supported -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        /* Reset & Base */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background-color: #f3f4f6;
+            /* Softer, cooler gray */
+            color: #1f2937;
+            /* Dark gray for better readability than pure black */
+            line-height: 1.6;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
+        /* Layout */
+        .email-wrapper {
+            background-color: #f3f4f6;
+             padding: 8px 10px; 
+            min-height: 100vh;
+        }
+
+        .email-container {
+            max-width: 600px;
+            /* Slightly narrower for better reading measure */
+            margin: 0 auto;
+            background: #ffffff;
+            border-radius: 16px;
+            /* More rounded corners */
+            overflow: hidden;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.04);
+        }
+
+        /* Header */
+        .header {
+            background: #ffffff;
+            padding: 25px 40px 14px;
+            text-align: center;
+        }
+
+        .logo-img {
+            height: 68px;
+            /* Refined size */
+            width: auto;
+            display: block;
+            margin: 0 auto;
+        }
+
+        /* Content */
+        .content {
+            padding: 0 48px 48px;
+        }
+
+        .greeting {
+            font-size: 18px;
+            color: #111827;
+            margin-bottom: 32px;
+            font-weight: 500;
+            text-align: center;
+        }
+
+        /* Cards */
+        .card {
+            background: #ffffff;
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 24px;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+        }
+
+        .card-highlight {
+            background: #f9fafb;
+            /* Very subtle contrast */
+            border-color: #e5e7eb;
+        }
+
+        /* Reminder Section */
+        .reminder-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+
+        .reminder-badge {
+            background: #fee2e2;
+            color: #991b1b;
+            font-size: 11px;
+            font-weight: 700;
+            padding: 4px 8px;
+            border-radius: 20px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .reminder-message {
+            font-size: 15px;
+            color: #4b5563;
+            line-height: 1.6;
+        }
+
+        /* Note Section */
+        .note-label {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #6b7280;
+            font-weight: 600;
+            margin-bottom: 8px;
+            display: block;
+        }
+
+        .note-title {
+            font-size: 20px;
+            font-weight: 700;
+            color: #111827;
+            line-height: 1.3;
+            margin-bottom: 4px;
+        }
+
+        .note-preview {
+            font-size: 14px;
+            color: #6b7280;
+            margin-top: 8px;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        /* CTA */
+        .cta-container {
+            text-align: center;
+            margin-top: 40px;
+            margin-bottom: 16px;
+        }
+
+        .cta-button {
+            display: inline-block;
+            background: #000000;
+            color: #ffffff;
+            padding: 16px 40px;
+            text-decoration: none;
+            border-radius: 100px;
+            /* Pill shape */
+            font-weight: 600;
+            font-size: 15px;
+            transition: all 0.2s ease;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .cta-button:hover {
+            background: #1f2937;
+            transform: translateY(-1px);
+            box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+        }
+
+        /* Footer */
+        .footer {
+            padding: 32px;
+            background: #f9fafb;
+            border-top: 1px solid #f3f4f6;
+            text-align: center;
+        }
+
+        .footer-text {
+            color: #9ca3af;
+            font-size: 12px;
+            line-height: 1.6;
+            margin: 4px 0;
+        }
+
+        .footer-link {
+            color: #6b7280;
+            text-decoration: none;
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+
+        .footer-link:hover {
+            color: #111827;
+            text-decoration: underline;
+        }
+
+        .divider {
+            height: 1px;
+            background: #e5e7eb;
+            width: 40px;
+            margin: 24px auto;
+        }
+
+        /* Mobile */
+        @media only screen and (max-width: 600px) {
+            .email-wrapper {
+                padding: 12px;
+            }
+
+            .content {
+                padding: 0 24px 32px;
+            }
+
+            .header {
+                padding: 32px 24px 24px;
+            }
+
+            .cta-button {
+                width: 100%;
+                text-align: center;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="email-wrapper">
+        <div class="email-container">
+            <div class="header">
+                <img src="https://res.cloudinary.com/dsfb3jjqx/image/upload/v1763902793/recollect/yg9aexn9iwtxmun5du4d.png"
+                    alt="ReCollect" class="logo-img " style="background-color:white ; border-radius: 4px;" />
+            </div>
+
+            <div class="content">
+                <div class="greeting">
+                    Hi John, here's your reminder.
+                </div>
+
+                <!-- Reminder Card -->
+                <div class="card card-highlight">
+                    <div class="reminder-header">
+                        <span class="reminder-badge">🔔 Reminder</span>
+                    </div>
+                    <div class="reminder-message">
+                        "Don't forget to review this important information before the meeting tomorrow!"
+                    </div>
+                </div>
+
+                <!-- Note Content Card -->
+                <div class="card">
+                    <span class="note-label">From your note</span>
+                    <h2 class="note-title">Project Proposal: Q4 Marketing Strategy</h2>
+                    <p class="note-preview">
+                        Key objectives for Q4 include increasing organic traffic by 20% and launching the new referral
+                        program...
+                    </p>
+                </div>
+
+                <div class="cta-container">
+                    <a href="#" class="cta-button">
+                        View Note in ReCollect
+                    </a>
+                </div>
+            </div>
+
+            <div class="footer">
+                <p class="footer-text">
+                    Sent via ReCollect • Your Personal Knowledge Base
+                </p>
+                <div class="divider"></div>
+                <p class="footer-text">
+                    <a href="#" class="footer-link">Manage Reminders</a> • <a href="#"
+                        class="footer-link">Unsubscribe</a>
+                </p>
+                <p class="footer-text" style="margin-top: 16px;">
+                    © 2025 ReCollect. All rights reserved.
+                </p>
+            </div>
+        </div>
+    </div>
+</body>
+
+</html>

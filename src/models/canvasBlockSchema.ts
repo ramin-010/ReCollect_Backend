@@ -78,7 +78,7 @@ const BlockSchema = new Schema<IBlock>(
 );
 
 // Indexes for better query performance
-BlockSchema.index({ blockId: 1 });
+// 
 BlockSchema.index({ type: 1 });
 
 

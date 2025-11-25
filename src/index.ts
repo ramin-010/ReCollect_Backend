@@ -1,15 +1,17 @@
-import express,{Request, Response, NextFunction, Application} from 'express'
-const app : Application = express();
+import express, { Request, Response, NextFunction, Application } from 'express'
+const app: Application = express();
 import morgan from 'morgan';
 import cors from 'cors'
 import cookieParser from 'cookie-parser';
 
 
-import ConnectDb from './db/db';
+import ConnectDb from './server/db';
 import errorHandler from './middlwares/errorHandler';
+import { USE_BULLMQ } from './services/reminderService';
+import { startCronScheduler } from './services/cronScheduler';
 
 app.use(express.json());
-app.use(express.urlencoded({extended : true}));
+app.use(express.urlencoded({ extended: true }));
 app.use(morgan('dev'));
 app.use(cookieParser())
 
@@ -20,20 +22,21 @@ ConnectDb();
 
 const allowOrigin = [
     'http://localhost:3000',
-    'http://localhost:5173'
+    'http://localhost:5173',
+    'http://192.168.40.58:3000'
 ].filter(Boolean)
 
 app.use(cors({
-    origin : (origin , cb) =>{
-        if(!origin || allowOrigin.includes(origin)){
+    origin: (origin, cb) => {
+        if (!origin || allowOrigin.includes(origin)) {
             cb(null, true)
-        }else{
+        } else {
             cb(new Error('Not allowed by Cors'))
         }
     },
-    credentials : true,
-    methods : ['GET', "POST", "PUT", "DELETE", "PATCH"],
-    allowedHeaders : ['Content-Type', "Authorization"]
+    credentials: true,
+    methods: ['GET', "POST", "PUT", "DELETE", "PATCH"],
+    allowedHeaders: ['Content-Type', "Authorization"]
 }))
 
 
@@ -55,55 +58,23 @@ app.use('/api', tagQueryRouter)
 import userRoutes from './routers/user.routes'
 app.use('/api', userRoutes);
 
-import reminderRoutes from './routers/reminder.routes'
-app.use('/api', reminderRoutes);
+// import reminderRoutes from './routers/reminder.routes'
+// app.use('/api', reminderRoutes);
 
 app.use(errorHandler);
 
+// Initialize reminder system based on mode
+if (USE_BULLMQ) {
+    console.log('📋 Reminder System Mode: BullMQ');
+    console.log('⚠️  Make sure to run the worker separately: ts-node src/worker/reminderWorker.ts');
+} else {
+    console.log('📋 Reminder System Mode: Cron + DB Polling');
+    startCronScheduler();
+}
+
 const PORT = process.env.PORT
-app.listen(PORT, ()=>{
+app.listen(PORT, () => {
     console.log(`Server runnin on : http://localhost:${PORT}`);
 })
 
 module.exports = app;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

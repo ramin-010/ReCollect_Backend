@@ -84,7 +84,7 @@ export const Getme = async(req : Request, res : Response, next : NextFunction) :
         const dashboards = await Dashboard.find({ user: user._id })
         .populate({
             path: 'contents',
-            select: 'title body links tags visibility', // include tags field here
+            select: 'title body links tags visibility description updatedAt', // include tags field here
             populate: [
                 { 
                     path: 'tags',                  // nested populate
@@ -127,7 +127,7 @@ function sendTokenResponse (user : UserType, statusCode : number, res : Response
         expires: new Date(Date.now() + JWT_COOKIE_EXPIRE * 24 * 60 * 60 * 1000),
         httpOnly: true,
         secure: true,
-        sameSite: 'none'
+        sameSite: 'lax'
     }
      const userObj = user.toObject();
   delete userObj.password;
