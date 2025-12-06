@@ -111,3 +111,49 @@ export const DeletDash = async(req : Request, res : Response, next: NextFunction
     }
 }
 
+
+export const getDashboardContents = async(req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const { id } = req.params;
+        const userId = req.user?.id;
+
+        if (!userId) throw new ErrorResponse(401, "User not authenticated");
+
+        // Find dashboard and verify ownership
+        const dashboard = await dashboardModel.findById(id)
+            .populate({
+                path: 'contents',
+                select: 'title body links tags visibility description updatedAt isPinned isArchived',
+                populate: [
+                    { 
+                        path: 'tags',
+                        select: 'name'
+                    },
+                    {
+                        path: 'body'
+                    }
+                ]
+            })
+            .lean();
+
+        if (!dashboard) {
+            throw new ErrorResponse(404, 'Dashboard not found');
+        }
+
+        // Verify the dashboard belongs to the user
+        if (dashboard.user.toString() !== userId) {
+            throw new ErrorResponse(403, 'Not authorized to access this dashboard');
+        }
+
+        res.status(200).json({
+            success: true,
+            data: {
+                contents: dashboard.contents || []
+            },
+            message: 'Dashboard contents fetched successfully'
+        });
+    } catch (err: any) {
+        next(err);
+    }
+};
+

@@ -81,26 +81,14 @@ export const Getme = async(req : Request, res : Response, next : NextFunction) :
     try{
         const user = req.user as UserType;
 
+        // Fetch dashboards without populating contents for lightweight initial load
         const dashboards = await Dashboard.find({ user: user._id })
-        .populate({
-            path: 'contents',
-            select: 'title body links tags visibility description updatedAt', // include tags field here
-            populate: [
-                { 
-                    path: 'tags',                  // nested populate
-                    select: 'name'                 // only select the tag name
-                },
-                {
-                    path : 'body'
-                }
-            ]
-        }) as DashboardType[];
-
- 
+            .select('name description user contents createdAt updatedAt') // Select only necessary fields
+            .lean(); 
 
         res.status(200).json({
             success : true,
-            data : dashboards,
+            data : {dashboards , user},
             message : 'get me succeded'
         })
     }catch(err : any){

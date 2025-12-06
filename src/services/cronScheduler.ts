@@ -51,7 +51,7 @@ export const startCronScheduler = () => {
                         continue;
                     }
                    
-                   
+                    console.log(`📧 Sending reminder email for ${reminderId}...`);
                     const emailSent = await sendReminderEmail(
                         reminder.user,
                         reminder.content,

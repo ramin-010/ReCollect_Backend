@@ -171,3 +171,63 @@ export const deleteUserAccount = async (req: Request, res: Response, next: NextF
     next(err);
   }
 };
+
+
+export const getUserSettings = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
+  try {
+    const userId = req.user?.id;
+    console.log("ENTERED");
+    if (!userId) {
+      throw new ErrorResponse(401, 'User not authenticated');
+    }
+
+    // Fetch user with populated archived and favorite notes
+    const user = await User.findById(userId)
+      .populate({
+        path: 'archivedNotes',
+        select: 'title body links tags visibility description updatedAt isPinned isArchived',
+        populate: [
+          {
+            path: 'tags',
+            select: 'name'
+          },
+          {
+            path: 'body'
+          }
+        ]
+      })
+      .populate({
+        path: 'favoriteNotes',
+        select: 'title body links tags visibility description updatedAt isPinned isArchived',
+        populate: [
+          {
+            path: 'tags',
+            select: 'name'
+          },
+          {
+            path: 'body'
+          }
+        ]
+      })
+      .select('-password')
+      .lean();
+
+      console.log(user);
+
+    if (!user) {
+      throw new ErrorResponse(404, 'User not found');
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {
+        user,
+        archivedNotes: user.archivedNotes || [],
+        favoriteNotes: user.favoriteNotes || []
+      },
+      message: 'User settings fetched successfully'
+    });
+  } catch (error: any) {
+    next(error);
+  }
+};

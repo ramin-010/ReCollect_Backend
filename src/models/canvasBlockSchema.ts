@@ -6,13 +6,14 @@ export interface IBlock extends Document {
   x: string;
   y: string;
   width: string;
-  height: string;
+  height?: string; // Optional for text blocks (auto-calculated)
+  fontSize: string;
   content?: string;
   url?: string;
   imageId?: string;
   isUploaded?: boolean;
   cloudPublicId? : string,
-  cloudProvider? : string
+  cloudProvider? : string,
 }
 
 const BlockSchema = new Schema<IBlock>(
@@ -42,13 +43,17 @@ const BlockSchema = new Schema<IBlock>(
     },
     height: {
       type: String,
-      required: true,
+      required: false, // Optional for text blocks (auto-calculated)
     },
     content: {
       type: String,
       required: false,
     },
     url: {
+      type: String,
+      required: false,
+    },
+    fontSize: {
       type: String,
       required: false,
     },
@@ -78,8 +83,7 @@ const BlockSchema = new Schema<IBlock>(
 );
 
 // Indexes for better query performance
-// 
 BlockSchema.index({ type: 1 });
 
 
-export default mongoose.model<IBlock>('Block', BlockSchema);;
+export default mongoose.model<IBlock>('Block', BlockSchema);

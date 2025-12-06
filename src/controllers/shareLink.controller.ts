@@ -131,12 +131,17 @@ export const fetchContentLink = async (req : Request, res : Response, next : Nex
             expiresAt: { $gt: new Date() }
         })
         .populate({
-            path : 'content',
-            select : 'title body links',
-            populate : {
-                path : 'tags', 
-                select : 'name'
-            }
+            path: 'content',
+            select: 'title body links tags visibility description updatedAt', // include tags field here
+            populate: [
+                { 
+                    path: 'tags',                  // nested populate
+                    select: 'name'                 // only select the tag name
+                },
+                {
+                    path : 'body'
+                }
+            ]
         });
 
 
@@ -166,19 +171,23 @@ export const fetchDashLink = async (req : Request, res : Response, next : NextFu
         .populate(
             {
                 path : 'dashboard',
-                select : 'name description',
+                select : 'name description createdAt updatedAt',
                 populate : {
                     path : 'contents',
-                    select : 'title body links',
-                    populate : {
-                        path : 'tags',
-                        select : 'name'
-                    }
+                    select : 'title body links tags visibility description updatedAt',
+                    match: { visibility: 'Public' }, // Only include Public visibility content
+                    populate : [
+                        {
+                            path : 'tags',
+                            select : 'name'
+                        },
+                        {
+                            path: 'body',
+                        }
+                    ]
                 }
             }
         )
-        // .populate({path : 'dashboard.contents', select : 'title body links'})
-        // .populate({path : 'dashboard.contents.tags', select : 'name'});
 
         if (!dashDoc) {
             throw new ErrorResponse(404, 'URL is expired');

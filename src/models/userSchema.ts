@@ -11,6 +11,9 @@ export interface User extends Document{
     email : string,
     password : string,
     avatar ?: string,
+    reminderEmail ? : string,
+    archivedNotes?: string[],
+    favoriteNotes?: string[]
   comparePassword(enteredPassword: string): Promise<boolean>;
     getSignedJwtToken() : String
 }
@@ -30,6 +33,12 @@ const userSchema = new Schema<User>(
             trim : true,
             unique : true,
         },
+        reminderEmail : {
+            type : String,
+            trim : true,
+            unique : true,
+            
+        },
         password : {
             type : String,
             required : true,
@@ -39,7 +48,15 @@ const userSchema = new Schema<User>(
         avatar : {
             type : String,
             default : '',
-        }
+        },
+        archivedNotes: [{
+            type: Schema.Types.ObjectId,
+            ref: 'Content'
+        }],
+        favoriteNotes: [{
+            type: Schema.Types.ObjectId,
+            ref: 'Content'
+        }]
     }, 
     {
         timestamps : true

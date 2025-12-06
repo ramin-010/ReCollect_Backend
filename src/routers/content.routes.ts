@@ -21,7 +21,7 @@ const upload = upflyUpload({
                 cloud_name: cloud_name,
                 api_key: cloud_key,
                 api_secret: cloud_secret,
-                folder: 'test-uploads'
+                folder: 'test-second-brain-uploads'
             }
         },
 
@@ -29,7 +29,7 @@ const upload = upflyUpload({
 });
 
 router.post('/add-content', authMiddleware, upload as RequestHandler, addContent as unknown as RequestHandler);
-router.patch('/update-content/:id', authMiddleware, updateContent)
+router.patch('/update-content/:id', authMiddleware, upload as RequestHandler, updateContent)
 router.delete('/delete-content/:id', authMiddleware, deleteContent)
 
 export default router;

@@ -6,7 +6,8 @@ import {
   getUserProfile,
   updateUserProfile,
   uploadProfilePicture,
-  deleteUserAccount
+  deleteUserAccount,
+  getUserSettings
 } from '../controllers/user.controller';
 
 const router = express.Router();
@@ -18,6 +19,7 @@ router.use(authMiddleware);
 router.get('/profile', getUserProfile);
 router.put('/profile', updateUserProfile);
 router.delete('/account', deleteUserAccount);
+router.get('/user/settings', getUserSettings);
 
 const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
 const apiKey = process.env.CLOUDINARY_API_KEY;
