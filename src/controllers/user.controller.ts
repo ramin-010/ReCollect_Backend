@@ -22,6 +22,8 @@ const updateProfileSchema = z.object({
   }).optional()
 });
 
+import { deleteFromCloud } from "./content.controller";
+
 // Get user profile
 export const getUserProfile = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
   try {
@@ -95,26 +97,32 @@ export const uploadProfilePicture = async (req: Request, res: Response, next: Ne
   try {
     const userId = req.user?._id;
     const files = req.files as Record<string, Express.Multer.File[]>
-    // Check if file was uploaded
+
     if (!files || !files.avatar || !files?.avatar[0]) {
       throw new ErrorResponse(400, "No image file provided");
     }
     
     const avatarFile = files.avatar[0] as CloudFileOutput;
     
-    // Get the cloud URL from Upfly processed file
     const avatarUrl = avatarFile.cloudUrl || avatarFile.path;
+    const avatarPublicId = avatarFile.cloudPublicId;
+    const avatarProvider = avatarFile.cloudProvider;
     
     if (!avatarUrl) {
       throw new ErrorResponse(500, "Failed to upload image");
     }
     
-    // Update user avatar
     const updatedUser = await User.findByIdAndUpdate(
       userId,
-      { avatar: avatarUrl },
-      { new: true }
+      { avatar: avatarUrl, cloudPublicId: avatarPublicId, cloudProvider: avatarProvider },
     ).select('-password');
+    
+    const existingAvatar = updatedUser?.cloudPublicId || '';
+   
+    console.log("Existing Avatar",existingAvatar); 
+    if(existingAvatar){
+      await deleteFromCloud(existingAvatar);
+    }
     
     if (!updatedUser) {
       throw new ErrorResponse(404, "User not found");
@@ -123,7 +131,6 @@ export const uploadProfilePicture = async (req: Request, res: Response, next: Ne
     res.status(200).json({
       success: true,
       data: {
-        user: updatedUser,
         avatar: avatarUrl
       }
     });
@@ -229,5 +236,55 @@ export const getUserSettings = async (req: Request, res: Response, next: NextFun
     });
   } catch (error: any) {
     next(error);
+  }
+};
+
+// Change password schema
+const changePasswordSchema = z.object({
+  newPassword: z.string().min(8, { message: 'Password must be at least 8 characters long' }),
+  confirmPassword: z.string()
+}).refine((data) => data.newPassword === data.confirmPassword, {
+  message: "Passwords don't match",
+  path: ["confirmPassword"]
+});
+
+// Change password
+export const changePassword = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
+  try {
+    const userId = req.user?._id;
+    
+    if (!userId) {
+      throw new ErrorResponse(401, 'User not authenticated');
+    }
+
+    const result = changePasswordSchema.safeParse(req.body);
+    
+    if (!result.success) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid data',
+        errors: result.error.flatten()
+      });
+    }
+
+    const { newPassword } = result.data;
+
+    // Find user and update password
+    const user = await User.findById(userId).select('+password');
+    
+    if (!user) {
+      throw new ErrorResponse(404, 'User not found');
+    }
+
+    // Update password (will be hashed by pre-save hook in userSchema)
+    user.password = newPassword;
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Password changed successfully'
+    });
+  } catch (err: any) {
+    next(err);
   }
 };

@@ -1,8 +1,7 @@
 import cron from "node-cron";
 import Reminder from "../models/reminderSchema";
-import User from "../models/userSchema";
-import Content from "../models/contentSchema";
-import { sendReminderEmail } from "../utils/emailService";
+import Todo from "../models/todoSchema";
+import { sendReminderEmail, sendTodoReminderEmail } from "../utils/emailService";
 
 export const startCronScheduler = () => {
     // Run every minute
@@ -17,7 +16,7 @@ export const startCronScheduler = () => {
                     emailSent: false,
                     reminderDate: { $lte: now },
                 },
-                { _id: 1 }
+                { _id: 1, type: 1 }
             )
                 .limit(50)
                 .maxTimeMS(5000)
@@ -29,34 +28,66 @@ export const startCronScheduler = () => {
             
             for (const doc of dueReminders) {
                 const reminderId = doc._id;
+                const reminderType = doc.type || 'note'; // Default to 'note' for backward compatibility
 
                 try {
-                 
-                    const reminder = await Reminder.findById(reminderId)
-                        .populate([
-                            { path: "user", select: "email name" },
-                            { path: "content", select: "title description DashId" }
-                        ])
-                        .lean();
+                    let emailSent = false;
 
-                    if (!reminder) {
-                        console.error(`Reminder ${reminderId} vanished`);
-                        await Reminder.findByIdAndUpdate(reminderId, { status: "failed" });
-                        continue;
-                    }
+                    if (reminderType === 'todo') {
+                        // Handle todo reminder
+                        const reminder = await Reminder.findById(reminderId)
+                            .populate([
+                                { path: "user", select: "email name" },
+                                { path: "todoId", select: "text isCompleted" }
+                            ])
+                            .lean();
 
-                    if (!reminder.user || !reminder.content) {
-                        console.error(`Missing user/content for reminder ${reminderId}`);
-                        await Reminder.findByIdAndUpdate(reminderId, { status: "failed" });
-                        continue;
+                        if (!reminder) {
+                            console.error(`Reminder ${reminderId} vanished`);
+                            await Reminder.findByIdAndUpdate(reminderId, { status: "failed" });
+                            continue;
+                        }
+
+                        if (!reminder.user || !reminder.todoId) {
+                            console.error(`Missing user/todo for reminder ${reminderId}`);
+                            await Reminder.findByIdAndUpdate(reminderId, { status: "failed" });
+                            continue;
+                        }
+
+                        console.log(`📧 Sending todo reminder email for ${reminderId}...`);
+                        emailSent = await sendTodoReminderEmail(
+                            reminder.user,
+                            reminder.todoId,
+                            reminder
+                        );
+                    } else {
+                        // Handle note reminder (original behavior)
+                        const reminder = await Reminder.findById(reminderId)
+                            .populate([
+                                { path: "user", select: "email name" },
+                                { path: "content", select: "title description DashId" }
+                            ])
+                            .lean();
+
+                        if (!reminder) {
+                            console.error(`Reminder ${reminderId} vanished`);
+                            await Reminder.findByIdAndUpdate(reminderId, { status: "failed" });
+                            continue;
+                        }
+
+                        if (!reminder.user || !reminder.content) {
+                            console.error(`Missing user/content for reminder ${reminderId}`);
+                            await Reminder.findByIdAndUpdate(reminderId, { status: "failed" });
+                            continue;
+                        }
+                       
+                        console.log(`📧 Sending note reminder email for ${reminderId}...`);
+                        emailSent = await sendReminderEmail(
+                            reminder.user,
+                            reminder.content,
+                            reminder
+                        );
                     }
-                   
-                    console.log(`📧 Sending reminder email for ${reminderId}...`);
-                    const emailSent = await sendReminderEmail(
-                        reminder.user,
-                        reminder.content,
-                        reminder
-                    );
 
                     await Reminder.findByIdAndUpdate(reminderId, {
                         status: emailSent ? "sent" : "failed",
@@ -75,3 +106,4 @@ export const startCronScheduler = () => {
 
     console.log("✓ Cron scheduler started. Checking reminders every minute.");
 };
+

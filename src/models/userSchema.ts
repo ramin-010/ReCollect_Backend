@@ -13,6 +13,8 @@ export interface User extends Document{
     avatar ?: string,
     reminderEmail ? : string,
     archivedNotes?: string[],
+    cloudPublicId?: string,
+    cloudProvider?: string,
     favoriteNotes?: string[]
   comparePassword(enteredPassword: string): Promise<boolean>;
     getSignedJwtToken() : String
@@ -56,7 +58,17 @@ const userSchema = new Schema<User>(
         favoriteNotes: [{
             type: Schema.Types.ObjectId,
             ref: 'Content'
-        }]
+        }],
+        cloudPublicId : {
+            type : String,
+            default: '',
+            required: false,
+        },
+        cloudProvider : {
+            type : String,
+            default: '',
+            required: false,
+        },
     }, 
     {
         timestamps : true

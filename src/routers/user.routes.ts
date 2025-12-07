@@ -7,7 +7,8 @@ import {
   updateUserProfile,
   uploadProfilePicture,
   deleteUserAccount,
-  getUserSettings
+  getUserSettings,
+  changePassword
 } from '../controllers/user.controller';
 
 const router = express.Router();
@@ -20,6 +21,8 @@ router.get('/profile', getUserProfile);
 router.put('/profile', updateUserProfile);
 router.delete('/account', deleteUserAccount);
 router.get('/user/settings', getUserSettings);
+
+router.post('/change-password', changePassword);
 
 const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
 const apiKey = process.env.CLOUDINARY_API_KEY;
@@ -44,7 +47,7 @@ router.post('/avatar',
           folder: 'recollect/avatars'
         },
         format: 'webp',
-        quality: 85,
+        quality: 60,
         output: 'memory'
       }
     },

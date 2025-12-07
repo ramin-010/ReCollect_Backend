@@ -65,7 +65,7 @@ const ParseJson = <T>(data: any, fallback: T): T => {
     }
 }
 
-const deleteFromCloud = async (publicId: string): Promise<void> => {
+export const deleteFromCloud = async (publicId: string): Promise<void> => {
     try {
         console.log("Deleting from cloud:", publicId);
         return new Promise((resolve, reject) => {
@@ -85,7 +85,7 @@ const deleteFromCloud = async (publicId: string): Promise<void> => {
     }
 }
 
-const batchDeleteFromCloud = async (publicIds: string[]): Promise<void> => {
+export const batchDeleteFromCloud = async (publicIds: string[]): Promise<void> => {
     if (publicIds.length === 0) return;
     
     const deletePromises = publicIds.map(id => 

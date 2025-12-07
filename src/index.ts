@@ -55,8 +55,28 @@ app.use('/api', shareLinkRouter);
 import tagQueryRouter from './routers/tagQuery.routes'
 app.use('/api', tagQueryRouter)
 
+import otpRoutes from './routers/otp.routes'
+app.use('/api', otpRoutes);
+
+import drawingRoutes from './routers/drawing.routes';
+app.use('/api/drawings', drawingRoutes);
+
+
+import todoRoutes from './routers/todo.routes';
+app.use('/api', todoRoutes);
+
+
+import expenseRoutes from './routers/expense.routes';
+app.use('/api/expenses', expenseRoutes);
+
 import userRoutes from './routers/user.routes'
 app.use('/api', userRoutes);
+
+import docRoutes from './routers/doc.routes';
+app.use('/api/docs', docRoutes);
+
+
+
 
 // import reminderRoutes from './routers/reminder.routes'
 // app.use('/api', reminderRoutes);
