@@ -39,7 +39,7 @@ const userSchema = new Schema<User>(
             type : String,
             trim : true,
             unique : true,
-            
+            sparse : true
         },
         password : {
             type : String,
@@ -76,8 +76,11 @@ const userSchema = new Schema<User>(
 
 
 userSchema.pre('save', async function(next){
+    if(!this.reminderEmail){
+        this.reminderEmail = this.email;
+    }
     if(!this.isModified('password')){
-        return next;
+        return next();
     }
     const salt = await bcrypt.genSalt(10);
     this.password = await bcrypt.hash(this.password, salt);

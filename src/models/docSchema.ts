@@ -3,46 +3,61 @@ import mongoose, { Schema, Document } from 'mongoose';
 export interface IDoc extends Document {
   user: mongoose.Types.ObjectId;
   title: string;
-  content: string; // BlockNote JSON stringified
-  emoji?: string;  // Document icon emoji
+  content: any; // TipTap JSON content
+  coverImage: string | null;
+  emoji: string;
   isPinned: boolean;
   isArchived: boolean;
+  // Track cloud images for cleanup on update/delete
+  cloudImages: {
+    nodeId: string;
+    cloudUrl: string;
+    cloudPublicId: string;
+  }[];
   createdAt: Date;
   updatedAt: Date;
 }
 
-const DocSchema: Schema = new Schema({
-  user: { 
-    type: Schema.Types.ObjectId, 
-    ref: 'User', 
-    required: true 
+const DocSchema: Schema = new Schema(
+  {
+    user: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
+      index: true,
+    },
+    title: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    content: {
+      type: Schema.Types.Mixed,
+      default: { type: 'doc', content: [] },
+    },
+    coverImage: {
+      type: String,
+      default: null,
+    },
+    isPinned: {
+      type: Boolean,
+      default: false,
+    },
+    isArchived: {
+      type: Boolean,
+      default: false,
+    },
+    cloudImages: [
+      {
+        nodeId: { type: String, required: true },
+        cloudUrl: { type: String, required: true },
+        cloudPublicId: { type: String, required: true },
+      },
+    ],
   },
-  title: { 
-    type: String, 
-    required: true, 
-    default: 'Untitled',
-    trim: true 
-  },
-  content: { 
-    type: String, 
-    default: '[]' // Empty BlockNote content
-  },
-  emoji: { 
-    type: String, 
-    default: '📄'
-  },
-  isPinned: { 
-    type: Boolean, 
-    default: false 
-  },
-  isArchived: { 
-    type: Boolean, 
-    default: false 
-  },
-}, { timestamps: true });
-
-// Indexes
-DocSchema.index({ user: 1, createdAt: -1 });
-DocSchema.index({ user: 1, isPinned: -1, updatedAt: -1 });
+  {
+    timestamps: true,
+  }
+);
 
 export default mongoose.model<IDoc>('Doc', DocSchema);

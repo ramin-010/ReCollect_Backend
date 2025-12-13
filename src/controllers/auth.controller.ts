@@ -1,31 +1,32 @@
 import { Request, Response, NextFunction, CookieOptions } from "express";
-import {boolean, number, success, z} from 'zod'
-import User,{User as UserType} from '../models/userSchema'
+import { z } from 'zod'
+import User, { User as UserType } from '../models/userSchema'
 import ErrorResponse from "../utils/errorResponse";
-import Dashboard,{Dashboard as DashboardType} from '../models/dashboardSchema'
+import Dashboard from '../models/dashboardSchema'
+import { createAndSendOtp, verifyOtpInternal, deleteOtp } from './otp.controller';
 
 const userSignupSchema = z.object({
-    name : z.string().min(1, {message : 'Name cannot be empty'}),
-    email : z.string().email({message : 'email is not valid'}),
-    password : z.string().min(8, {message : 'Password must be atleast 8 charachter long'})
+    name: z.string().min(1, { message: 'Name cannot be empty' }),
+    email: z.string().email({ message: 'email is not valid' }),
+    password: z.string().min(8, { message: 'Password must be atleast 8 charachter long' })
 });
 
 type UserSignup = z.infer<typeof userSignupSchema>
 
-export const Signup = async (req: Request, res: Response, next: NextFunction) : Promise<any>=> {
-   try{
+export const Signup = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
+    try {
         const result = userSignupSchema.safeParse(req.body)
-    
-        if(!result.success){
-        return res.status(400).json({
-                message : 'Invalid Credential',
-                error : result.error.flatten()
+
+        if (!result.success) {
+            return res.status(400).json({
+                message: 'Invalid Credential',
+                error: result.error.flatten()
             })
         }
-        const{email , name , password} = result.data as UserSignup ;
-        const existingUser = await User.findOne({email}).exec();
+        const { email, name, password } = result.data as UserSignup;
+        const existingUser = await User.findOne({ email }).exec();
 
-        if(existingUser){
+        if (existingUser) {
             throw new ErrorResponse(400, "User already exists")
         }
 
@@ -35,81 +36,71 @@ export const Signup = async (req: Request, res: Response, next: NextFunction) : 
             password
         });
 
-    sendTokenResponse(user, 200, res)
-   }catch(err : any){
+        sendTokenResponse(user, 200, res)
+    } catch (err: any) {
         next(err);
-   }
+    }
 }
 
 const userLoginSchema = z.object({
-    email : z.string().email({message: 'email is not valid'}),
-    password : z.string().min(8, {message : "password must be atleast 8 character long" })
+    email: z.string().email({ message: 'email is not valid' }),
+    password: z.string().min(8, { message: "password must be atleast 8 character long" })
 })
 
 type UserLogin = z.infer<typeof userLoginSchema>
 
-export const login = async(req : Request , res : Response, next : NextFunction) : Promise<any> =>{
-    try{
+export const login = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
+    try {
         const result = userLoginSchema.safeParse(req.body);
 
-        if(!result.success){
+        if (!result.success) {
             return res.status(400).json({
-                message : "Invalid credentails",
-                error : result.error.flatten()
+                message: "Invalid credentails",
+                error: result.error.flatten()
             })
         }
 
-        const {email , password} = result.data as UserLogin
+        const { email, password } = result.data as UserLogin
 
-        const user = await User.findOne({email}).select('+password').exec();
-        if(!user){
+        const user = await User.findOne({ email }).select('+password').exec();
+        if (!user) {
             throw new ErrorResponse(400, "user does not exist")
         }
         const isMatched = await user.comparePassword(password);
-        if(!isMatched) throw new ErrorResponse(400, "wrong password");
-        
-       
+        if (!isMatched) throw new ErrorResponse(400, "wrong password");
+
         req.user = user;
         sendTokenResponse(user, 200, res);
-    }catch(err : any){
+    } catch (err: any) {
         next(err)
     }
 }
 
-
-export const Getme = async(req : Request, res : Response, next : NextFunction) : Promise<void>=>{
-    try{
+export const Getme = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
         const user = req.user as UserType;
 
-        // Fetch dashboards without populating contents for lightweight initial load
         const dashboards = await Dashboard.find({ user: user._id })
-            .select('name description user contents createdAt updatedAt') // Select only necessary fields
-            .lean(); 
+            .select('name description user contents createdAt updatedAt')
+            .lean();
 
         res.status(200).json({
-            success : true,
-            data : {dashboards , user},
-            message : 'get me succeded'
+            success: true,
+            data: { dashboards, user },
+            message: 'get me succeded'
         })
-    }catch(err : any){
+    } catch (err: any) {
         next(err)
     }
 }
 
-
-
-
-
-function sendTokenResponse (user : UserType, statusCode : number, res : Response) : void{
+function sendTokenResponse(user: UserType, statusCode: number, res: Response): void {
     const token = user.getSignedJwtToken();
 
-    // JWT_COOKIE_EXPIRE : number = process.env.JWT_COOKIE_EXPIRE;
-
-    if(!process.env.JWT_COOKIE_EXPIRE){
+    if (!process.env.JWT_COOKIE_EXPIRE) {
         throw new ErrorResponse(400, 'JWT_COOKIE_EXPIRE is undefined')
     }
     const JWT_COOKIE_EXPIRE = parseInt(process.env.JWT_COOKIE_EXPIRE);
-
 
     const options: CookieOptions = {
         expires: new Date(Date.now() + JWT_COOKIE_EXPIRE * 24 * 60 * 60 * 1000),
@@ -117,8 +108,8 @@ function sendTokenResponse (user : UserType, statusCode : number, res : Response
         secure: true,
         sameSite: 'lax'
     }
-     const userObj = user.toObject();
-  delete userObj.password;
+    const userObj = user.toObject();
+    delete userObj.password;
 
     res.status(statusCode).cookie('token', token, options).json({
         success: true,
@@ -127,21 +118,201 @@ function sendTokenResponse (user : UserType, statusCode : number, res : Response
 }
 
 export const logout = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
-  try {
-    // Clear the token cookie
-    res.cookie('token', '', {
-      httpOnly: true,
-      expires: new Date(0),
-      secure: true,
-      sameSite: 'none'
-    });
+    try {
+        res.cookie('token', '', {
+            httpOnly: true,
+            expires: new Date(0),
+            secure: true,
+            sameSite: 'none'
+        });
 
-    res.status(200).json({
-      success: true,
-      message: 'Logged out successfully'
-    });
-  } catch (err: any) {
-    next(err);
-  }
+        res.status(200).json({
+            success: true,
+            message: 'Logged out successfully'
+        });
+    } catch (err: any) {
+        next(err);
+    }
 };
 
+const preSignupSchema = z.object({
+    name: z.string().min(1, { message: 'Name cannot be empty' }),
+    email: z.string().email({ message: 'Email is not valid' }),
+    password: z.string().min(8, { message: 'Password must be at least 8 characters long' })
+});
+
+export const preSignup = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
+    try {
+        const result = preSignupSchema.safeParse(req.body);
+
+        if (!result.success) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid credentials',
+                error: result.error.flatten()
+            });
+        }
+
+        const { name, email, password } = result.data;
+
+        const existingUser = await User.findOne({ email: email.toLowerCase() }).exec();
+        if (existingUser) {
+            return res.status(400).json({
+                success: false,
+                message: 'Email already registered. Please login instead.'
+            });
+        }
+
+        const emailSent = await createAndSendOtp(email, 'signup', { name, password });
+
+        if (!emailSent) {
+            return res.status(500).json({
+                success: false,
+                message: 'Failed to send OTP email. Please try again.'
+            });
+        }
+
+        res.status(200).json({
+            success: true,
+            message: 'OTP sent successfully to your email. Please verify to complete signup.'
+        });
+
+    } catch (err: any) {
+        next(err);
+    }
+};
+
+const verifySignupSchema = z.object({
+    email: z.string().email({ message: 'Email is not valid' }),
+    otp: z.string().length(4, { message: 'OTP must be exactly 4 digits' })
+});
+
+export const verifySignup = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
+    try {
+        const result = verifySignupSchema.safeParse(req.body);
+
+        if (!result.success) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid request',
+                error: result.error.flatten()
+            });
+        }
+
+        const { email, otp } = result.data;
+
+        const storedOtp = await verifyOtpInternal(email, otp, 'signup');
+
+        if (!storedOtp.signupData) {
+            return res.status(400).json({
+                success: false,
+                message: 'Signup data not found. Please start the signup process again.'
+            });
+        }
+
+        const user = await User.create({
+            email: email.toLowerCase(),
+            name: storedOtp.signupData.name,
+            password: storedOtp.signupData.password
+        });
+
+        await deleteOtp(storedOtp._id as string);
+
+        sendTokenResponse(user, 201, res);
+
+    } catch (err: any) {
+        next(err);
+    }
+};
+
+const forgotPasswordSchema = z.object({
+    email: z.string().email({ message: 'Email is not valid' })
+});
+
+export const forgotPassword = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
+    try {
+        const result = forgotPasswordSchema.safeParse(req.body);
+
+        if (!result.success) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid request',
+                error: result.error.flatten()
+            });
+        }
+
+        const { email } = result.data;
+
+        const user = await User.findOne({ email: email.toLowerCase() }).exec();
+
+        if (!user) {
+            return res.status(200).json({
+                success: true,
+                message: 'If an account exists with this email, an OTP has been sent.'
+            });
+        }
+
+        const emailSent = await createAndSendOtp(email, 'password-reset');
+
+        if (!emailSent) {
+            return res.status(500).json({
+                success: false,
+                message: 'Failed to send OTP email. Please try again.'
+            });
+        }
+
+        res.status(200).json({
+            success: true,
+            message: 'If an account exists with this email, an OTP has been sent.'
+        });
+
+    } catch (err: any) {
+        next(err);
+    }
+};
+
+const resetPasswordSchema = z.object({
+    email: z.string().email({ message: 'Email is not valid' }),
+    otp: z.string().length(4, { message: 'OTP must be exactly 4 digits' }),
+    newPassword: z.string().min(8, { message: 'Password must be at least 8 characters long' })
+});
+
+export const resetPassword = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
+    try {
+        const result = resetPasswordSchema.safeParse(req.body);
+
+        if (!result.success) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid request',
+                error: result.error.flatten()
+            });
+        }
+
+        const { email, otp, newPassword } = result.data;
+
+        const storedOtp = await verifyOtpInternal(email, otp, 'password-reset');
+
+        const user = await User.findOne({ email: email.toLowerCase() });
+
+        if (!user) {
+            return res.status(400).json({
+                success: false,
+                message: 'User not found.'
+            });
+        }
+
+        user.password = newPassword;
+        await user.save();
+
+        await deleteOtp(storedOtp._id as string);
+
+        res.status(200).json({
+            success: true,
+            message: 'Password reset successful. You can now login with your new password.'
+        });
+
+    } catch (err: any) {
+        next(err);
+    }
+};
