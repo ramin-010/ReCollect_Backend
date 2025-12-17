@@ -20,7 +20,8 @@ const ExpenseSchema: Schema = new Schema({
   note: { type: String },
 }, { timestamps: true });
 
-// Index for efficient querying
+// Index for efficient hquerying
+
 ExpenseSchema.index({ userId: 1, date: -1 });
 
 export default mongoose.model<IExpense>('Expense', ExpenseSchema);
