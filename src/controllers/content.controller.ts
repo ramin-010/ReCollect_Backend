@@ -1,4 +1,4 @@
-import ContentModel, { Content as ContentType } from '../models/contentSchema';
+import ContentModel, { Content as ContentType, IConnection } from '../models/contentSchema';
 import { Request, Response, NextFunction } from 'express';
 import ErrorResponse from '../utils/errorResponse';
 import TagsModel from '../models/tagsSchema'
@@ -25,18 +25,20 @@ export type ContentInput = {
     reminderData?: string,
     upsertBlocks?: string;
     finalBlockOrder?: string;
+    connections?: string;  // JSON string of IConnection[]
 }
 
 type UpdateInput = Partial<ContentInput>
 
-type ContentDBInput = Omit<ContentInput, 'tags' | 'DashId'> & {
+type ContentDBInput = Omit<ContentInput, 'tags' | 'DashId' | 'connections'> & {
     user: mongoose.Types.ObjectId,
     tags?: mongoose.Types.ObjectId[],
-
+    connections?: IConnection[],
 }
 
-type ContentDBUpdateInput = Omit<ContentInput, 'tags'> & {
+type ContentDBUpdateInput = Omit<ContentInput, 'tags' | 'connections'> & {
     tags?: mongoose.Types.ObjectId[];
+    connections?: IConnection[];
 }
 
 interface CloudFileOutput extends Express.Multer.File {
@@ -117,6 +119,7 @@ export const addContent = async (req: Request, res: Response, next: NextFunction
     try {
 
         console.log('files', req.files); 
+        console.log("body", req.body)
         const data = req.body as ContentInput;
         const user = req.user?._id as string;
 
@@ -139,7 +142,22 @@ export const addContent = async (req: Request, res: Response, next: NextFunction
 
         const files = req.files as Record<string, Express.Multer.File[]>;
         const imageBlockIds = ParseJson<string[]>(data.imageBlockIds, []);
-        let blocks = ParseJson<IBlock[]>(data.body, []);
+        
+        // Parse new format: body can be { blocks: [], connections: [] } or legacy array
+        const rawBody = ParseJson<any>(data.body, { blocks: [], connections: [] });
+        let blocks: IBlock[];
+        let connections: IConnection[];
+        
+        if (Array.isArray(rawBody)) {
+            // Legacy format: array of blocks
+            blocks = rawBody;
+            connections = [];
+        } else {
+            // New format: { blocks: [], connections: [] }
+            blocks = rawBody.blocks || [];
+            connections = rawBody.connections || [];
+        }
+        
         const tags = ParseJson<string[]>(data.tags, []);
         const links = ParseJson<string[]>(data.links, []);
 
@@ -221,6 +239,7 @@ export const addContent = async (req: Request, res: Response, next: NextFunction
 
         if (links !== undefined) dbData.links = links;
         if (data.visibility !== undefined) dbData.visibility = data.visibility;
+        if (connections.length > 0) dbData.connections = connections;
 
         const contentArray = await ContentModel.create([dbData], { session, ordered: true });
         const content = contentArray[0];
@@ -281,6 +300,7 @@ export const addContent = async (req: Request, res: Response, next: NextFunction
         const contentResponse = content.toObject();
         contentResponse.body = populatedBody;
         contentResponse.tags = populatedTags;
+        // connections are already embedded in content
 
         res.status(200).json({
             success: true,
@@ -481,6 +501,12 @@ export const updateContent = async (
         }
         if (finalBlockOrderIds !== undefined) {
             updateDbData.body = finalBlockOrderIds;
+        }
+        
+        // Handle connections update
+        if (data.connections !== undefined) {
+            const connections = ParseJson<IConnection[]>(data.connections, []);
+            updateDbData.connections = connections;
         }
 
         const updatedContent = await ContentModel.findByIdAndUpdate(
