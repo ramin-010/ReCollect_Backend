@@ -23,6 +23,12 @@ export interface IBlock extends Document {
 const StackItemSchema = new Schema({
   blockId: { type: String, required: true },
   type: { type: String, enum: ['text', 'image', 'embed', 'code'], required: true },
+  x: { type: Number },
+  y: { type: Number },
+  width: { type: Number },
+  height: { type: Schema.Types.Mixed }, // Can be number or 'auto'
+  fontSize: { type: String },
+  color: { type: String },
   content: { type: String },
   url: { type: String },
   imageId: { type: String },

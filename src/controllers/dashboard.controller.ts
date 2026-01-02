@@ -123,7 +123,7 @@ export const getDashboardContents = async(req: Request, res: Response, next: Nex
         const dashboard = await dashboardModel.findById(id)
             .populate({
                 path: 'contents',
-                select: 'title body links tags visibility description updatedAt isPinned isArchived',
+                select: 'title body links tags visibility description updatedAt isPinned isArchived connections',
                 populate: [
                     { 
                         path: 'tags',
@@ -135,7 +135,7 @@ export const getDashboardContents = async(req: Request, res: Response, next: Nex
                 ]
             })
             .lean();
-
+        
         if (!dashboard) {
             throw new ErrorResponse(404, 'Dashboard not found');
         }
@@ -156,4 +156,3 @@ export const getDashboardContents = async(req: Request, res: Response, next: Nex
         next(err);
     }
 };
-

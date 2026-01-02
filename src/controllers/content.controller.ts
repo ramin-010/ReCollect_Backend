@@ -417,7 +417,9 @@ export const updateContent = async (
                         y: blockData.y,
                         width: blockData.width,
                         height: blockData.height,
-                        fontSize : blockData.fontSize,
+                        fontSize: blockData.fontSize,
+                        color: blockData.color,
+                        stackItems: blockData.stackItems,
                     };
 
                     if (blockData.content !== undefined) updatePayload.content = blockData.content;
