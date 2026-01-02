@@ -82,7 +82,7 @@ export const getAllDocs = async (req: Request, res: Response, next: NextFunction
     if (!userId) throw new ErrorResponse(401, "Unauthorized");
 
     const docs = await DocModel.find({ user: userId })
-      .select('title isPinned isArchived coverImage createdAt updatedAt')
+      .select('title content isPinned isArchived coverImage createdAt updatedAt')
       .sort({ updatedAt: -1 })
       .lean();
 
