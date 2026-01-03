@@ -5,6 +5,7 @@ export interface ShareLink extends Document {
     user : mongoose.Schema.Types.ObjectId,
     content ?: mongoose.Schema.Types.ObjectId,
     dashboard? : mongoose.Schema.Types.ObjectId,
+    doc? : mongoose.Schema.Types.ObjectId,
     type : string,
     slug : string,
     expiresAt? : Date
@@ -17,7 +18,7 @@ const ShareLinkSchema = new Schema<ShareLink>({
     },
     type : {
         type : String,
-        enum : ['dashboard', 'content']
+        enum : ['dashboard', 'content', 'doc']
     },
     dashboard : {
         type : mongoose.Schema.Types.ObjectId,
@@ -26,6 +27,10 @@ const ShareLinkSchema = new Schema<ShareLink>({
     content : {
         type : mongoose.Schema.Types.ObjectId,
         ref : 'Content'
+    },
+    doc : {
+        type : mongoose.Schema.Types.ObjectId,
+        ref : 'Doc'
     },
     slug : {
         type : String,

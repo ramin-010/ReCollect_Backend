@@ -203,3 +203,96 @@ export const fetchDashLink = async (req : Request, res : Response, next : NextFu
         next(err)
     }
 }
+
+// ==================== DOC SHARE FUNCTIONS ====================
+
+type docInput = {
+    type: 'doc',
+    docId: string
+}
+
+export const createDocShareLink = async(req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const user = req.user?._id as string;
+        const { type, docId }: docInput = req.body;
+
+        if (!docId || !docId.trim()) {
+            throw new ErrorResponse(400, "Missing document ID");
+        }
+        if (!type?.trim()) {
+            throw new ErrorResponse(400, 'Type cannot be empty');
+        }
+        if (type.toLowerCase() !== 'doc') {
+            throw new ErrorResponse(400, 'Type should be doc');
+        }
+
+        // Check if a valid share link already exists
+        const isExist = await shareLinkSchema.findOne({
+            user: user,
+            doc: docId,
+            expiresAt: { $gt: new Date() }
+        });
+
+        if (isExist) {
+            return void res.status(200).json({
+                success: true,
+                data: {
+                    url: `${process.env.FRONTEND_URL}/${type}/${isExist.slug}`
+                }
+            });
+        }
+
+        const slug = randomUUID();
+
+        const dbData = {
+            user: user,
+            type: type,
+            doc: docId,
+            slug: slug
+        };
+        console.log("dbData", dbData)
+        const link = await shareLinkSchema.create(dbData);
+        if (!link) {
+            throw new ErrorResponse(400, 'Unable to generate the public url');
+        }
+        console.log("link", link)
+        res.status(200).json({
+            success: true,
+            data: {
+                url: `${process.env.FRONTEND_URL}/${type}/${slug}`
+            }
+        });
+
+    } catch (err: any) {
+        next(err);
+    }
+}
+
+export const fetchDocLink = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const { slug } = req.params;
+
+        const docLink = await shareLinkSchema.findOne({
+            slug,
+            type: 'doc',
+            expiresAt: { $gt: new Date() }
+        })
+        .populate({
+            path: 'doc',
+            select: 'title content docType isPinned createdAt updatedAt'
+        });
+
+        if (!docLink) {
+            throw new ErrorResponse(404, 'URL is expired or not found');
+        }
+
+        res.status(200).json({
+            success: true,
+            data: docLink,
+            message: 'Successfully fetched the document'
+        });
+
+    } catch (err: any) {
+        next(err);
+    }
+}
