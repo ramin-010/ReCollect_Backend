@@ -1,4 +1,6 @@
 import shareLinkSchema,{ShareLink as ShareLinkType} from "../models/shareLinkSchema";
+import DocModel from "../models/docSchema";
+import mongoose from 'mongoose';
 import { Request, Response, NextFunction } from "express";
 import ErrorResponse from "../utils/errorResponse";
 import {randomUUID} from 'crypto'
@@ -132,11 +134,11 @@ export const fetchContentLink = async (req : Request, res : Response, next : Nex
         })
         .populate({
             path: 'content',
-            select: 'title body links tags visibility description updatedAt', // include tags field here
+            select: 'title body links tags visibility description updatedAt', 
             populate: [
                 { 
-                    path: 'tags',                  // nested populate
-                    select: 'name'                 // only select the tag name
+                    path: 'tags',                  
+                    select: 'name'                 
                 },
                 {
                     path : 'body'
@@ -175,7 +177,7 @@ export const fetchDashLink = async (req : Request, res : Response, next : NextFu
                 populate : {
                     path : 'contents',
                     select : 'title body links tags visibility description updatedAt',
-                    match: { visibility: 'Public' }, // Only include Public visibility content
+                    match: { visibility: 'Public' }, 
                     populate : [
                         {
                             path : 'tags',
@@ -204,17 +206,20 @@ export const fetchDashLink = async (req : Request, res : Response, next : NextFu
     }
 }
 
-// ==================== DOC SHARE FUNCTIONS ====================
+
+
+
 
 type docInput = {
     type: 'doc',
-    docId: string
+    docId: string,
+    role?: 'editor' | 'viewer'
 }
 
 export const createDocShareLink = async(req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
         const user = req.user?._id as string;
-        const { type, docId }: docInput = req.body;
+        const { type, docId, role = 'viewer' }: docInput = req.body;
 
         if (!docId || !docId.trim()) {
             throw new ErrorResponse(400, "Missing document ID");
@@ -226,10 +231,23 @@ export const createDocShareLink = async(req: Request, res: Response, next: NextF
             throw new ErrorResponse(400, 'Type should be doc');
         }
 
-        // Check if a valid share link already exists
+        
+        const targetDoc = await DocModel.findById(docId);
+        if (!targetDoc) {
+            throw new ErrorResponse(404, "Document not found");
+        }
+        
+        
+        const isOwner = targetDoc.user.toString() === user.toString();
+        if (!isOwner) {
+            throw new ErrorResponse(403, "Only the document owner can generate share links");
+        }
+
+        
         const isExist = await shareLinkSchema.findOne({
             user: user,
             doc: docId,
+            role: role,
             expiresAt: { $gt: new Date() }
         });
 
@@ -248,14 +266,14 @@ export const createDocShareLink = async(req: Request, res: Response, next: NextF
             user: user,
             type: type,
             doc: docId,
+            role: role,
             slug: slug
         };
-        console.log("dbData", dbData)
         const link = await shareLinkSchema.create(dbData);
         if (!link) {
             throw new ErrorResponse(400, 'Unable to generate the public url');
         }
-        console.log("link", link)
+        
         res.status(200).json({
             success: true,
             data: {
@@ -290,6 +308,70 @@ export const fetchDocLink = async (req: Request, res: Response, next: NextFuncti
             success: true,
             data: docLink,
             message: 'Successfully fetched the document'
+        });
+
+    } catch (err: any) {
+        next(err);
+    }
+}
+
+import Doc from '../models/docSchema';
+
+export const saveSharedDoc = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const { slug } = req.params;
+        const userId = req.user?._id;
+
+        if (!userId) {
+            throw new ErrorResponse(401, 'Unauthorized');
+        }
+
+        
+        const shareLink = await shareLinkSchema.findOne({
+            slug,
+            type: 'doc',
+            expiresAt: { $gt: new Date() }
+        });
+
+        if (!shareLink || !shareLink.doc) {
+            throw new ErrorResponse(404, 'Invalid or expired share link');
+        }
+
+        
+        const doc = await Doc.findById(shareLink.doc);
+        if (!doc) {
+            throw new ErrorResponse(404, 'Document not found');
+        }
+
+        
+        if (doc.user.toString() === userId.toString()) {
+             return void res.status(400).json({
+                success: false,
+                message: 'You are the owner of this document'
+             });
+        }
+
+        
+        const isCollaborator = doc.collaborators?.some(c => c.user.toString() === userId.toString());
+        if (isCollaborator) {
+            return void res.status(200).json({
+                success: true,
+                message: 'You are already a collaborator on this document'
+            });
+        }
+
+        
+        doc.collaborators.push({
+            user: new mongoose.Types.ObjectId(userId.toString()),
+            role: shareLink.role || 'viewer', 
+            addedAt: new Date()
+        });
+
+        await doc.save();
+
+        res.status(200).json({
+            success: true,
+            message: 'Document saved to your profile successfully'
         });
 
     } catch (err: any) {

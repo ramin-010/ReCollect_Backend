@@ -19,6 +19,11 @@ export interface IDoc extends Document {
   }[];
   createdAt: Date;
   updatedAt: Date;
+  collaborators: {
+    user: mongoose.Types.ObjectId;
+    role: 'editor' | 'viewer';
+    addedAt: Date;
+  }[];
 }
 
 const DocSchema: Schema = new Schema(
@@ -55,6 +60,21 @@ const DocSchema: Schema = new Schema(
       type: Boolean,
       default: false,
     },
+    collaborators: [{
+      user: {
+        type: Schema.Types.ObjectId,
+        ref: 'User',
+      },
+      role: {
+        type: String,
+        enum: ['editor', 'viewer'],
+        default: 'viewer',
+      },
+      addedAt: {
+        type: Date,
+        default: Date.now,
+      }
+    }],
     cloudImages: [
       {
         nodeId: { type: String, required: true },

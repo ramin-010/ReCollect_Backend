@@ -8,7 +8,8 @@ export interface ShareLink extends Document {
     doc? : mongoose.Schema.Types.ObjectId,
     type : string,
     slug : string,
-    expiresAt? : Date
+    expiresAt? : Date;
+    role?: 'editor' | 'viewer';
 }
 
 const ShareLinkSchema = new Schema<ShareLink>({
@@ -19,6 +20,11 @@ const ShareLinkSchema = new Schema<ShareLink>({
     type : {
         type : String,
         enum : ['dashboard', 'content', 'doc']
+    },
+    role: {
+        type: String,
+        enum: ['editor', 'viewer'],
+        default: 'viewer'
     },
     dashboard : {
         type : mongoose.Schema.Types.ObjectId,
