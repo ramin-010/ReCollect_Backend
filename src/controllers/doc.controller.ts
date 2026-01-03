@@ -54,12 +54,13 @@ export const createDoc = async (req: Request, res: Response, next: NextFunction)
     const userId = req.user?._id;
     if (!userId) throw new ErrorResponse(401, "Unauthorized");
 
-    const { title } = req.body;
+    const { title, docType } = req.body;
 
     const newDoc = await DocModel.create({
       user: userId,
       title: title || 'Untitled',
       content: { type: 'doc', content: [] },
+      docType: docType || 'notes',
       cloudImages: [],
     });
 
@@ -82,7 +83,7 @@ export const getAllDocs = async (req: Request, res: Response, next: NextFunction
     if (!userId) throw new ErrorResponse(401, "Unauthorized");
 
     const docs = await DocModel.find({ user: userId })
-      .select('title content isPinned isArchived coverImage createdAt updatedAt')
+      .select('title content docType isPinned isArchived coverImage createdAt updatedAt')
       .sort({ updatedAt: -1 })
       .lean();
 
@@ -119,6 +120,43 @@ export const getDoc = async (req: Request, res: Response, next: NextFunction): P
 };
 
 // ============================================================
+// UPDATE DOC (PATCH - for simple updates like docType, isPinned)
+// ============================================================
+export const updateDoc = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const userId = req.user?._id;
+
+    if (!userId) throw new ErrorResponse(401, "Unauthorized");
+
+    const { docType, isPinned, isArchived, title } = req.body;
+    
+    const updateData: any = {};
+    if (docType !== undefined) updateData.docType = docType;
+    if (isPinned !== undefined) updateData.isPinned = isPinned;
+    if (isArchived !== undefined) updateData.isArchived = isArchived;
+    if (title !== undefined) updateData.title = title;
+    updateData.updatedAt = new Date();
+
+    const updatedDoc = await DocModel.findOneAndUpdate(
+      { _id: id, user: userId },
+      updateData,
+      { new: true, runValidators: true }
+    ).lean();
+
+    if (!updatedDoc) throw new ErrorResponse(404, "Doc not found");
+
+    res.status(200).json({
+      success: true,
+      data: updatedDoc,
+      message: 'Doc updated successfully',
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// ============================================================
 // SAVE/UPDATE DOC
 // ============================================================
 export const saveDoc = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -128,7 +166,7 @@ export const saveDoc = async (req: Request, res: Response, next: NextFunction): 
 
     if (!userId) throw new ErrorResponse(401, "Unauthorized");
 
-    const { title, coverImage, imageNodeIds } = req.body;
+    const { title, coverImage, imageNodeIds, docType } = req.body;
     let content = parseJson(req.body.content, { type: 'doc', content: [] });
     const parsedImageNodeIds = parseJson<string[]>(imageNodeIds, []);
 
@@ -205,6 +243,7 @@ export const saveDoc = async (req: Request, res: Response, next: NextFunction): 
         {
           title: title || existingDoc.title,
           content,
+          docType: docType !== undefined ? docType : existingDoc.docType,
           coverImage: coverImage !== undefined ? coverImage : existingDoc.coverImage,
           cloudImages: mergedCloudImages,
           updatedAt: new Date(),

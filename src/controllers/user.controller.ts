@@ -14,6 +14,8 @@ interface CloudFileOutput extends Express.Multer.File {
 const updateProfileSchema = z.object({
   name: z.string().min(1).max(50).optional(),
   email: z.string().email().optional(),
+  phone: z.string().max(20).optional(),
+  reminderEmail: z.string().email().optional(),
   bio: z.string().max(500).optional(),
   preferences: z.object({
     theme: z.enum(['light', 'dark', 'blue', 'gray']).optional(),
@@ -192,7 +194,7 @@ export const getUserSettings = async (req: Request, res: Response, next: NextFun
     const user = await User.findById(userId)
       .populate({
         path: 'archivedNotes',
-        select: 'title body links tags visibility description updatedAt isPinned isArchived',
+        select: 'title body links tags visibility description updatedAt isPinned isArchived connections',
         populate: [
           {
             path: 'tags',
@@ -205,7 +207,7 @@ export const getUserSettings = async (req: Request, res: Response, next: NextFun
       })
       .populate({
         path: 'favoriteNotes',
-        select: 'title body links tags visibility description updatedAt isPinned isArchived',
+        select: 'title body links tags visibility description updatedAt isPinned isArchived connections',
         populate: [
           {
             path: 'tags',
@@ -225,12 +227,44 @@ export const getUserSettings = async (req: Request, res: Response, next: NextFun
       throw new ErrorResponse(404, 'User not found');
     }
 
+    // Import Dashboard model
+    const Dashboard = (await import('../models/dashboardSchema')).default;
+
+    // Get all content IDs
+    const archivedNoteIds = (user.archivedNotes || []).map((note: any) => note._id);
+    const favoriteNoteIds = (user.favoriteNotes || []).map((note: any) => note._id);
+    const allContentIds = [...new Set([...archivedNoteIds, ...favoriteNoteIds])];
+
+    // Find dashboards that contain these contents and create a map of contentId -> dashboardId
+    const dashboards = await Dashboard.find({
+      user: userId,
+      contents: { $in: allContentIds }
+    }).select('_id contents').lean();
+
+    const contentToDashboardMap = new Map<string, string>();
+    dashboards.forEach((dashboard: any) => {
+      dashboard.contents.forEach((contentId: any) => {
+        contentToDashboardMap.set(contentId.toString(), dashboard._id.toString());
+      });
+    });
+
+    // Add DashId to each note
+    const enrichedArchivedNotes = (user.archivedNotes || []).map((note: any) => ({
+      ...note,
+      DashId: contentToDashboardMap.get(note._id.toString()) || ''
+    }));
+
+    const enrichedFavoriteNotes = (user.favoriteNotes || []).map((note: any) => ({
+      ...note,
+      DashId: contentToDashboardMap.get(note._id.toString()) || ''
+    }));
+
     res.status(200).json({
       success: true,
       data: {
         user,
-        archivedNotes: user.archivedNotes || [],
-        favoriteNotes: user.favoriteNotes || []
+        archivedNotes: enrichedArchivedNotes,
+        favoriteNotes: enrichedFavoriteNotes
       },
       message: 'User settings fetched successfully'
     });

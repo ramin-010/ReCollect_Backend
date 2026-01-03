@@ -18,7 +18,7 @@ router.use(authMiddleware);
 
 // Profile routes
 router.get('/profile', getUserProfile);
-router.put('/profile', updateUserProfile);
+router.patch('/update-profile', updateUserProfile);
 router.delete('/account', deleteUserAccount);
 router.get('/user/settings', getUserSettings);
 

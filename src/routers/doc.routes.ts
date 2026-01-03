@@ -1,7 +1,7 @@
 import express, { RequestHandler } from 'express';
 import { upflyUpload } from 'upfly';
 import authMiddleware from '../middlwares/auth';
-import { saveDoc, getDoc, deleteDoc, getAllDocs, createDoc } from '../controllers/doc.controller';
+import { saveDoc, getDoc, deleteDoc, getAllDocs, createDoc, updateDoc } from '../controllers/doc.controller';
 
 const router = express.Router();
 
@@ -34,6 +34,7 @@ const upload = upflyUpload({
 router.get('/', authMiddleware, getAllDocs as RequestHandler);           // GET /api/docs
 router.post('/', authMiddleware, createDoc as RequestHandler);            // POST /api/docs (create new)
 router.get('/:id', authMiddleware, getDoc as RequestHandler);             // GET /api/docs/:id
+router.patch('/:id', authMiddleware, updateDoc as RequestHandler);        // PATCH /api/docs/:id (update fields)
 router.post('/:id', authMiddleware, upload as RequestHandler, saveDoc as RequestHandler);  // POST /api/docs/:id (save with images)
 router.delete('/:id', authMiddleware, deleteDoc as RequestHandler);       // DELETE /api/docs/:id
 

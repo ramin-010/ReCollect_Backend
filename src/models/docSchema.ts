@@ -1,9 +1,12 @@
 import mongoose, { Schema, Document } from 'mongoose';
 
+export type DocType = 'notes' | 'meeting' | 'project' | 'personal';
+
 export interface IDoc extends Document {
   user: mongoose.Types.ObjectId;
   title: string;
   content: any; // TipTap JSON content
+  docType: DocType;
   coverImage: string | null;
   emoji: string;
   isPinned: boolean;
@@ -34,6 +37,11 @@ const DocSchema: Schema = new Schema(
     content: {
       type: Schema.Types.Mixed,
       default: { type: 'doc', content: [] },
+    },
+    docType: {
+      type: String,
+      enum: ['notes', 'meeting', 'project', 'personal'],
+      default: 'notes',
     },
     coverImage: {
       type: String,

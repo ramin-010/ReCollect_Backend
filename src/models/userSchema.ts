@@ -10,6 +10,7 @@ export interface User extends Document{
     name : string,
     email : string,
     password : string,
+    phone ?: string,
     avatar ?: string,
     reminderEmail ? : string,
     archivedNotes?: string[],
@@ -40,6 +41,11 @@ const userSchema = new Schema<User>(
             trim : true,
             unique : true,
             sparse : true
+        },
+        phone : {
+            type : String,
+            trim : true,
+            default: ''
         },
         password : {
             type : String,
