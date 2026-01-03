@@ -279,7 +279,7 @@ export const fetchDocLink = async (req: Request, res: Response, next: NextFuncti
         })
         .populate({
             path: 'doc',
-            select: 'title content docType isPinned createdAt updatedAt'
+            select: 'title content docType isPinned createdAt updatedAt coverImage cloudImages'
         });
 
         if (!docLink) {
