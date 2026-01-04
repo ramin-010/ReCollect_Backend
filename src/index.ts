@@ -9,6 +9,7 @@ import ConnectDb from './server/db';
 import errorHandler from './middlwares/errorHandler';
 import { USE_BULLMQ } from './services/reminderService';
 import { startCronScheduler } from './services/cronScheduler';
+import { initializeCollaboration, startCollaborationServer } from './collaboration';
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -75,6 +76,9 @@ app.use('/api', userRoutes);
 import docRoutes from './routers/doc.routes';
 app.use('/api/docs', docRoutes);
 
+import uploadRoutes from './routers/upload.routes';
+app.use('/api/collab/upload', uploadRoutes);
+
 
 
 
@@ -95,6 +99,10 @@ if (USE_BULLMQ) {
 const PORT = process.env.PORT
 app.listen(PORT, () => {
     console.log(`Server runnin on : http://localhost:${PORT}`);
+    
+    // Initialize and start collaboration server for real-time editing
+    initializeCollaboration();
+    startCollaborationServer();
 })
 
 module.exports = app;

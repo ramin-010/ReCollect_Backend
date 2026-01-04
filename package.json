@@ -13,6 +13,7 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@hocuspocus/server": "^3.4.3",
     "bcryptjs": "^3.0.2",
     "bullmq": "^5.64.1",
     "cloudinary": "^2.8.0",
@@ -30,6 +31,7 @@
     "nodemailer": "^7.0.10",
     "pm2": "^6.0.13",
     "upfly": "^2.0.4",
+    "yjs": "^13.6.29",
     "zod": "^4.1.12"
   },
   "devDependencies": {

@@ -11,6 +11,8 @@ export interface IDoc extends Document {
   emoji: string;
   isPinned: boolean;
   isArchived: boolean;
+  // Yjs state for real-time collaboration
+  yjsState?: string; // Base64 encoded Yjs state
   // Track cloud images for cleanup on update/delete
   cloudImages: {
     nodeId: string;
@@ -59,6 +61,10 @@ const DocSchema: Schema = new Schema(
     isArchived: {
       type: Boolean,
       default: false,
+    },
+    yjsState: {
+      type: String,
+      default: null,
     },
     collaborators: [{
       user: {
