@@ -2,6 +2,7 @@
 import express, { RequestHandler } from 'express';
 import { upflyUpload } from 'upfly';
 import authMiddleware from '../middlwares/auth';
+import Doc from '../models/docSchema';
 
 const router = express.Router();
 
@@ -9,13 +10,12 @@ const cloud_name = process.env.CLOUDINARY_CLOUD_NAME || '';
 const cloud_key = process.env.CLOUDINARY_API_KEY || '';
 const cloud_secret = process.env.CLOUDINARY_API_SECRET || '';
 
-// Upfly middleware standalone for uploads
 const upload = upflyUpload({
   fields: {
     "image": {
       output: 'memory',
       format: 'webp',
-      quality: 60,
+      quality: 50,
       cloudStorage: true,
       cloudProvider: "cloudinary",
       cloudConfig: {
@@ -28,36 +28,47 @@ const upload = upflyUpload({
   },
 });
 
-// POST /api/upload
-// Accepts multipart/form-data with field 'image'
-router.post('/', authMiddleware, upload as RequestHandler, ((req, res) => {
-    // Upfly likely adds the URL to the body with the field name
-    // Or if output is memory, it might behave differently.
-    // Based on usage in other files, it seems to work.
-    // Assuming upfly puts url in req.body.image (string)
-    
-    // Upfly (via Multer) adds 'files' to request.
-    // The configured field is "image".
+router.post('/', authMiddleware, upload as RequestHandler, (async (req, res) => {
     const files = req.files as Record<string, any[]>;
     const imageFiles = files?.['image'];
-    
-    console.log('Files:', files);
-    console.log('Image Files:', imageFiles);
+    const docId = req.body.docId;
     
     if (!imageFiles || imageFiles.length === 0) {
         return res.status(400).json({ error: 'No image file uploaded' });
     }
     
-    // Upfly adds cloudUrl to the file object
     const uploadedFile = imageFiles[0];
-    const imageUrl = uploadedFile.cloudUrl;
+    const { cloudUrl, cloudPublicId, cloudProvider } = uploadedFile;
 
-    if (!imageUrl) {
+    if (!cloudUrl) {
         console.error('[Upload] Cloud URL missing in file object:', uploadedFile);
         return res.status(500).json({ error: 'Upload provider failed to return URL' });
     }
 
-    return res.status(200).json({ url: imageUrl });
+    // If docId provided, add to cloudImages array for cleanup tracking
+    if (docId) {
+        try {
+            await Doc.findByIdAndUpdate(docId, {
+                $push: {
+                    cloudImages: {
+                        imageId: cloudPublicId,
+                        cloudUrl: cloudUrl,
+                        cloudPublicId: cloudPublicId,
+                    }
+                }
+            });
+            console.log(`[Upload] Added image to cloudImages for doc ${docId}`);
+        } catch (err) {
+            console.error('[Upload] Failed to update cloudImages:', err);
+        }
+    }
+
+    return res.status(200).json({ 
+        url: cloudUrl,
+        publicId: cloudPublicId,
+        provider: cloudProvider,
+    });
 }) as RequestHandler);
 
 export default router;
+

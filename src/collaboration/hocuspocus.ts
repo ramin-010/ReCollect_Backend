@@ -5,10 +5,6 @@ import * as Y from 'yjs';
 
 dotenv.config();
 
-// ============================================
-// REUSABLE DOCUMENT HANDLER INTERFACE
-// ============================================
-
 export interface CollabUser {
   id: string;
   name: string;
@@ -20,33 +16,26 @@ export interface CollabUser {
 export interface CollabDocument {
   id: string;
   yjsState: string | undefined;
-  content?: any;
+  // content?: any;   #legacy
 }
 
-// Each document type (docs, content, etc.) implements this handler
 export interface DocumentHandler {
-  // Check if user can edit this document
   authorize(userId: string, docId: string): Promise<boolean>;
-  // Load document from database
   load(docId: string): Promise<CollabDocument | null>;
-  // Save Yjs state to database
   save(docId: string, yjsState: string): Promise<void>;
 }
 
 // ============================================
 // DOCUMENT HANDLER REGISTRY
-// ============================================
+
 
 const documentHandlers = new Map<string, DocumentHandler>();
 
-// Register a new document type handler
 export function registerDocumentHandler(prefix: string, handler: DocumentHandler) {
   documentHandlers.set(prefix, handler);
   console.log(`[Collab] Registered handler for: ${prefix}`);
 }
 
-// Parse document name to get prefix and ID
-// Format: "prefix_documentId" e.g., "doc_123abc" or "content_456def"
 function parseDocumentName(documentName: string): { prefix: string; id: string } | null {
   const underscoreIndex = documentName.indexOf('_');
   if (underscoreIndex === -1) return null;
@@ -108,11 +97,9 @@ function getRandomColor(userId: string): string {
 export const hocuspocusServer = new Server({
   port: parseInt(process.env.COLLAB_PORT || '1234'),
   
-  // Authentication - validate JWT and document access
   async onAuthenticate({ token, documentName, request }) {
     let authToken = token;
 
-    // If no token provided (client couldn't read HttpOnly cookie), try to get it from request headers
     if (!authToken && request && (request as any).headers?.cookie) {
       const cookies = (request as any).headers.cookie.split(';');
       const tokenCookie = cookies.find((c: string) => c.trim().startsWith('token='));

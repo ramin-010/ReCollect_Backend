@@ -13,10 +13,5 @@ export type { DocumentHandler, CollabUser, CollabDocument } from './hocuspocus';
 import { registerDocHandler } from './docHandler';
 
 export function initializeCollaboration() {
-  // Register all document type handlers
   registerDocHandler();
-  
-  // Future handlers can be added here:
-  // registerContentHandler();
-  // registerDrawingHandler();
 }
