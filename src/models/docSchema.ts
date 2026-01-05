@@ -5,17 +5,13 @@ export type DocType = 'notes' | 'meeting' | 'project' | 'personal';
 export interface IDoc extends Document {
   user: mongoose.Types.ObjectId;
   title: string;
-  content: any; // TipTap JSON content
+  yjsState?: string; // Base64 encoded Yjs state - single source of truth
   docType: DocType;
   coverImage: string | null;
-  emoji: string;
   isPinned: boolean;
   isArchived: boolean;
-  // Yjs state for real-time collaboration
-  yjsState?: string; // Base64 encoded Yjs state
-  // Track cloud images for cleanup on update/delete
   cloudImages: {
-    nodeId: string;
+    imageId: string; // Unique ID for tracking (e.g., "img_123" or cloudinary URL)
     cloudUrl: string;
     cloudPublicId: string;
   }[];
@@ -41,9 +37,9 @@ const DocSchema: Schema = new Schema(
       required: true,
       trim: true,
     },
-    content: {
-      type: Schema.Types.Mixed,
-      default: { type: 'doc', content: [] },
+    yjsState: {
+      type: String,
+      default: null,
     },
     docType: {
       type: String,
@@ -62,36 +58,25 @@ const DocSchema: Schema = new Schema(
       type: Boolean,
       default: false,
     },
-    yjsState: {
-      type: String,
-      default: null,
-    },
-    collaborators: [{
-      user: {
-        type: Schema.Types.ObjectId,
-        ref: 'User',
-      },
-      role: {
-        type: String,
-        enum: ['editor', 'viewer'],
-        default: 'viewer',
-      },
-      addedAt: {
-        type: Date,
-        default: Date.now,
-      }
-    }],
     cloudImages: [
       {
-        nodeId: { type: String, required: true },
+        imageId: { type: String, required: true },
         cloudUrl: { type: String, required: true },
         cloudPublicId: { type: String, required: true },
       },
     ],
+    collaborators: [
+      {
+        user: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+        role: { type: String, enum: ['editor', 'viewer'], default: 'editor' },
+        addedAt: { type: Date, default: Date.now },
+      },
+    ],
   },
-  {
-    timestamps: true,
-  }
+  { timestamps: true }
 );
+
+// Index for collaboration queries
+DocSchema.index({ 'collaborators.user': 1 });
 
 export default mongoose.model<IDoc>('Doc', DocSchema);

@@ -231,86 +231,122 @@ export const saveDoc = async (req: Request, res: Response, next: NextFunction): 
       }
     }
 
-    const { title, coverImage, imageNodeIds, docType } = req.body;
-    let content = parseJson(req.body.content, { type: 'doc', content: [] });
-    const parsedImageNodeIds = parseJson<string[]>(imageNodeIds, []);
-
-    const files = req.files as Record<string, Express.Multer.File[]>;
-
-    const newCloudImages: { nodeId: string; cloudUrl: string; cloudPublicId: string }[] = [];
-    const nodeIdToUrl: Record<string, string> = {};
-
-    for (const nodeId of parsedImageNodeIds) {
-      const fieldname = `image_${nodeId}`;
-      const fileArray = files?.[fieldname];
-      if (fileArray && fileArray.length > 0) {
-        const file = fileArray[0] as CloudFileOutput;
-        nodeIdToUrl[nodeId] = file.cloudUrl;
-        newCloudImages.push({
-          nodeId,
-          cloudUrl: file.cloudUrl,
-          cloudPublicId: file.cloudPublicId,
-        });
-      }
-    }
-
-    const replaceUrlsInContent = (node: any) => {
-      if (node.type === 'image' && node.attrs?.src?.startsWith('PENDING_UPLOAD:')) {
-        const nodeId = node.attrs.src.replace('PENDING_UPLOAD:', '');
-        if (nodeIdToUrl[nodeId]) {
-          node.attrs.src = nodeIdToUrl[nodeId];
+    let { title, coverImage, docType, content, imageNodeIds, allImageIds } = req.body;
+    
+    
+    content = parseJson<any>(content, null);
+    imageNodeIds = parseJson<string[]>(imageNodeIds, []);
+    allImageIds = parseJson<string[]>(allImageIds, []);
+    
+    const files = req.files as Record<string, Express.Multer.File[]> | undefined;
+    const newCloudImages: { imageId: string; cloudUrl: string; cloudPublicId: string }[] = [];
+    
+    
+    if (files && imageNodeIds.length > 0 && content) {
+      console.log('[saveDoc] Processing', imageNodeIds.length, 'images');
+      
+      const imageUrlMap: Record<string, { url: string; publicId: string }> = {};
+      
+      for (const imageId of imageNodeIds) {
+        const fieldName = `image_${imageId}`;
+        const fileArray = files[fieldName];
+        if (fileArray && fileArray.length > 0) {
+          const file = fileArray[0] as CloudFileOutput;
+          if (file.cloudUrl && file.cloudPublicId) {
+            imageUrlMap[imageId] = {
+              url: file.cloudUrl,
+              publicId: file.cloudPublicId,
+            };
+          }
         }
       }
-      if (node.content && Array.isArray(node.content)) {
-        node.content.forEach(replaceUrlsInContent);
+      
+      
+      const replaceImageUrls = (node: any): void => {
+        if ((node.type === 'resizableImage' || node.type === 'image') && node.attrs?.imageId) {
+          const imageData = imageUrlMap[node.attrs.imageId];
+          if (imageData) {
+            node.attrs.src = imageData.url;
+            delete node.attrs.imageId; 
+          }
+        }
+        if (node.content && Array.isArray(node.content)) {
+          node.content.forEach(replaceImageUrls);
+        }
+      };
+      
+      replaceImageUrls(content);
+      
+      
+      for (const [imageId, data] of Object.entries(imageUrlMap)) {
+        newCloudImages.push({
+          imageId,
+          cloudUrl: data.url,
+          cloudPublicId: data.publicId,
+        });
       }
-    };
-    replaceUrlsInContent(content);
-
+      
+      console.log('[saveDoc] Uploaded', newCloudImages.length, 'images');
+    }
+    
+    
+    let yjsState: string | null = null;
+    if (content) {
+      const Y = require('yjs');
+      const { prosemirrorJSONToYDoc } = require('y-prosemirror');
+      const { getSchema } = require('@tiptap/core');
+      const StarterKit = require('@tiptap/starter-kit').default;
+      const Image = require('@tiptap/extension-image').default;
+      
+      const extensions = [
+        StarterKit.configure({ heading: { levels: [1, 2, 3] } }),
+        Image,
+      ];
+      
+      const schema = getSchema(extensions);
+      const ydoc = prosemirrorJSONToYDoc(schema, content, 'default');
+      const state = Y.encodeStateAsUpdate(ydoc);
+      yjsState = Buffer.from(state).toString('base64');
+      ydoc.destroy();
+      
+      console.log('[saveDoc] Converted content to yjsState');
+    }
+    
+    
+    const oldImageIds = (doc?.cloudImages || []).map(img => img.imageId);
+    const newImageIdsSet = new Set(allImageIds);
+    const imagesToDelete = oldImageIds.filter(id => !newImageIdsSet.has(id));
+    
+    if (imagesToDelete.length > 0) {
+      console.log('[saveDoc] Cleaning up', imagesToDelete.length, 'orphaned images');
+      const orphanedImages = (doc?.cloudImages || []).filter(img => imagesToDelete.includes(img.imageId));
+      const publicIds = orphanedImages.map(img => img.cloudPublicId);
+      
+      if (publicIds.length > 0) {
+        await batchDeleteFromCloud(publicIds);
+      }
+    }
+    
+    
+    const retainedImages = (doc?.cloudImages || []).filter(img => newImageIdsSet.has(img.imageId));
+    const finalCloudImages = [...retainedImages, ...newCloudImages];
+    
+    
     const existingDoc = doc;
-
+    
     if (existingDoc) {
       const isOwner = existingDoc.user.toString() === userId.toString();
       
-      const currentImageUrls = new Set<string>();
-      const extractImageUrls = (node: any) => {
-        if (node.type === 'image' && node.attrs?.src && !node.attrs.src.startsWith('data:')) {
-          currentImageUrls.add(node.attrs.src);
-        }
-        if (node.content && Array.isArray(node.content)) {
-          node.content.forEach(extractImageUrls);
-        }
-      };
-      extractImageUrls(content);
-
-      const removedImages = (existingDoc.cloudImages || []).filter(
-        img => !currentImageUrls.has(img.cloudUrl)
-      );
-
-      if (removedImages.length > 0) {
-        console.log(`[doc] Deleting ${removedImages.length} removed images from cloud`);
-        await batchDeleteFromCloud(removedImages.map(img => img.cloudPublicId));
-      }
-
-      const keptImages = (existingDoc.cloudImages || []).filter(
-        img => currentImageUrls.has(img.cloudUrl)
-      );
-      const mergedCloudImages = [...keptImages, ...newCloudImages];
-
       const updateData: any = {
-        content,
+        yjsState: yjsState || existingDoc.yjsState,
         title: isOwner ? (title || existingDoc.title) : existingDoc.title,
         docType: isOwner ? (docType !== undefined ? docType : existingDoc.docType) : existingDoc.docType,
         coverImage: coverImage !== undefined ? coverImage : existingDoc.coverImage,
-        cloudImages: mergedCloudImages,
+        cloudImages: finalCloudImages,
         updatedAt: new Date(),
       };
 
-      const updatedDoc = await DocModel.findByIdAndUpdate(
-        id,
-        updateData,
-        { new: true }
-      ).lean();
+      const updatedDoc = await DocModel.findByIdAndUpdate(id, updateData, { new: true }).lean();
 
       res.status(200).json({
         success: true,
@@ -322,9 +358,9 @@ export const saveDoc = async (req: Request, res: Response, next: NextFunction): 
         _id: id,
         user: userId,
         title: title || 'Untitled',
-        content,
+        yjsState: yjsState,
         coverImage: coverImage || null,
-        cloudImages: newCloudImages,
+        cloudImages: finalCloudImages,
       });
 
       res.status(201).json({
