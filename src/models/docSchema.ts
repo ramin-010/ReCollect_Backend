@@ -5,7 +5,8 @@ export type DocType = 'notes' | 'meeting' | 'project' | 'personal';
 export interface IDoc extends Document {
   user: mongoose.Types.ObjectId;
   title: string;
-  yjsState?: string; // Base64 encoded Yjs state - single source of truth
+  yjsState?: string;
+  previewState?: string;  // Truncated JSON for list previews
   docType: DocType;
   coverImage: string | null;
   isPinned: boolean;
@@ -38,6 +39,10 @@ const DocSchema: Schema = new Schema(
       trim: true,
     },
     yjsState: {
+      type: String,
+      default: null,
+    },
+    previewState: {
       type: String,
       default: null,
     },

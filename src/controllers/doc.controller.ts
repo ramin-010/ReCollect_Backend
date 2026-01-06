@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 import DocModel, { IDoc } from '../models/docSchema';
 import ErrorResponse from '../utils/errorResponse';
 import cloudinary from '../utils/cloudinary';
+import { generatePreviewState } from '../utils/previewUtils';
 
 interface CloudFileOutput extends Express.Multer.File {
   cloudUrl: string;
@@ -80,7 +81,7 @@ export const getAllDocs = async (req: Request, res: Response, next: NextFunction
         { 'collaborators.user': userId }
       ]
     })
-      .select('title content docType isPinned isArchived coverImage createdAt updatedAt user collaborators')
+      .select('title previewState docType isPinned isArchived coverImage createdAt updatedAt user collaborators')
       .populate('user', 'name email')
       .sort({ updatedAt: -1 })
       .lean();
@@ -178,13 +179,14 @@ export const updateDoc = async (req: Request, res: Response, next: NextFunction)
       }
     }
 
-    const { docType, isPinned, isArchived, title } = req.body;
-    
+    const { docType, isPinned, isArchived, title, coverImage } = req.body;
+    console.log("body :", req.body);
     const updateData: any = {};
     if (docType !== undefined) updateData.docType = docType;
     if (isPinned !== undefined) updateData.isPinned = isPinned;
     if (isArchived !== undefined) updateData.isArchived = isArchived;
     if (title !== undefined) updateData.title = title;
+    if (coverImage !== undefined) updateData.coverImage = coverImage;
     updateData.updatedAt = new Date();
 
     const updatedDoc = await DocModel.findByIdAndUpdate(
@@ -334,12 +336,14 @@ export const saveDoc = async (req: Request, res: Response, next: NextFunction): 
     }
     
     const finalCloudImages = [...imagesToRetain, ...newCloudImages];
+    const previewState = yjsState ? generatePreviewState(yjsState) : null;
     
     if (doc) {
       const isOwner = doc.user.toString() === userId.toString();
       
       const updateData: any = {
         yjsState: yjsState || doc.yjsState,
+        previewState: previewState || doc.previewState,
         title: isOwner ? (title || doc.title) : doc.title,
         docType: isOwner ? (docType !== undefined ? docType : doc.docType) : doc.docType,
         coverImage: coverImage !== undefined ? coverImage : doc.coverImage,
@@ -360,6 +364,7 @@ export const saveDoc = async (req: Request, res: Response, next: NextFunction): 
         user: userId,
         title: title || 'Untitled',
         yjsState: yjsState,
+        previewState: previewState,
         coverImage: coverImage || null,
         cloudImages: finalCloudImages,
       });

@@ -1,6 +1,7 @@
 import { DocumentHandler, CollabDocument, registerDocumentHandler } from './hocuspocus';
 import Doc from '../models/docSchema';
 import { batchDeleteFromCloud } from '../controllers/content.controller';
+import { generatePreviewState } from '../utils/previewUtils';
 import * as Y from 'yjs';
 
 function extractImageIdsFromYjsState(yjsStateBase64: string): string[] {
@@ -69,8 +70,10 @@ const docHandler: DocumentHandler = {
   },
 
   async save(docId: string, yjsState: string): Promise<void> {
+    const previewState = generatePreviewState(yjsState);
     await Doc.findByIdAndUpdate(docId, {
       yjsState,
+      previewState,
       updatedAt: new Date(),
     });
   },
