@@ -233,7 +233,6 @@ export const saveDoc = async (req: Request, res: Response, next: NextFunction): 
 
     let { title, coverImage, docType, content, imageNodeIds, allImageIds } = req.body;
     
-    
     content = parseJson<any>(content, null);
     imageNodeIds = parseJson<string[]>(imageNodeIds, []);
     allImageIds = parseJson<string[]>(allImageIds, []);
@@ -241,10 +240,7 @@ export const saveDoc = async (req: Request, res: Response, next: NextFunction): 
     const files = req.files as Record<string, Express.Multer.File[]> | undefined;
     const newCloudImages: { imageId: string; cloudUrl: string; cloudPublicId: string }[] = [];
     
-    
     if (files && imageNodeIds.length > 0 && content) {
-      console.log('[saveDoc] Processing', imageNodeIds.length, 'images');
-      
       const imageUrlMap: Record<string, { url: string; publicId: string }> = {};
       
       for (const imageId of imageNodeIds) {
@@ -261,13 +257,11 @@ export const saveDoc = async (req: Request, res: Response, next: NextFunction): 
         }
       }
       
-      
       const replaceImageUrls = (node: any): void => {
         if ((node.type === 'resizableImage' || node.type === 'image') && node.attrs?.imageId) {
           const imageData = imageUrlMap[node.attrs.imageId];
           if (imageData) {
             node.attrs.src = imageData.url;
-            delete node.attrs.imageId; 
           }
         }
         if (node.content && Array.isArray(node.content)) {
@@ -277,7 +271,6 @@ export const saveDoc = async (req: Request, res: Response, next: NextFunction): 
       
       replaceImageUrls(content);
       
-      
       for (const [imageId, data] of Object.entries(imageUrlMap)) {
         newCloudImages.push({
           imageId,
@@ -285,10 +278,7 @@ export const saveDoc = async (req: Request, res: Response, next: NextFunction): 
           cloudPublicId: data.publicId,
         });
       }
-      
-      console.log('[saveDoc] Uploaded', newCloudImages.length, 'images');
     }
-    
     
     let yjsState: string | null = null;
     if (content) {
@@ -298,9 +288,22 @@ export const saveDoc = async (req: Request, res: Response, next: NextFunction): 
       const StarterKit = require('@tiptap/starter-kit').default;
       const Image = require('@tiptap/extension-image').default;
       
+      const ExtendedImage = Image.extend({
+        addAttributes() {
+          return {
+            ...this.parent?.(),
+            width: { default: '100%' },
+            height: { default: 'auto' },
+            imageId: { default: null },
+            cloudPublicId: { default: null },
+            cloudProvider: { default: null },
+          };
+        },
+      });
+      
       const extensions = [
         StarterKit.configure({ heading: { levels: [1, 2, 3] } }),
-        Image,
+        ExtendedImage,
       ];
       
       const schema = getSchema(extensions);
@@ -308,40 +311,38 @@ export const saveDoc = async (req: Request, res: Response, next: NextFunction): 
       const state = Y.encodeStateAsUpdate(ydoc);
       yjsState = Buffer.from(state).toString('base64');
       ydoc.destroy();
-      
-      console.log('[saveDoc] Converted content to yjsState');
     }
     
-    
-    const oldImageIds = (doc?.cloudImages || []).map(img => img.imageId);
     const newImageIdsSet = new Set(allImageIds);
-    const imagesToDelete = oldImageIds.filter(id => !newImageIdsSet.has(id));
+    const existingCloudImages = doc?.cloudImages || [];
+    const imagesToDelete: typeof existingCloudImages = [];
+    const imagesToRetain: typeof existingCloudImages = [];
+    
+    for (const img of existingCloudImages) {
+      if (newImageIdsSet.has(img.imageId)) {
+        imagesToRetain.push(img);
+      } else {
+        imagesToDelete.push(img);
+      }
+    }
     
     if (imagesToDelete.length > 0) {
-      console.log('[saveDoc] Cleaning up', imagesToDelete.length, 'orphaned images');
-      const orphanedImages = (doc?.cloudImages || []).filter(img => imagesToDelete.includes(img.imageId));
-      const publicIds = orphanedImages.map(img => img.cloudPublicId);
-      
+      const publicIds = imagesToDelete.map(img => img.cloudPublicId);
       if (publicIds.length > 0) {
         await batchDeleteFromCloud(publicIds);
       }
     }
     
+    const finalCloudImages = [...imagesToRetain, ...newCloudImages];
     
-    const retainedImages = (doc?.cloudImages || []).filter(img => newImageIdsSet.has(img.imageId));
-    const finalCloudImages = [...retainedImages, ...newCloudImages];
-    
-    
-    const existingDoc = doc;
-    
-    if (existingDoc) {
-      const isOwner = existingDoc.user.toString() === userId.toString();
+    if (doc) {
+      const isOwner = doc.user.toString() === userId.toString();
       
       const updateData: any = {
-        yjsState: yjsState || existingDoc.yjsState,
-        title: isOwner ? (title || existingDoc.title) : existingDoc.title,
-        docType: isOwner ? (docType !== undefined ? docType : existingDoc.docType) : existingDoc.docType,
-        coverImage: coverImage !== undefined ? coverImage : existingDoc.coverImage,
+        yjsState: yjsState || doc.yjsState,
+        title: isOwner ? (title || doc.title) : doc.title,
+        docType: isOwner ? (docType !== undefined ? docType : doc.docType) : doc.docType,
+        coverImage: coverImage !== undefined ? coverImage : doc.coverImage,
         cloudImages: finalCloudImages,
         updatedAt: new Date(),
       };

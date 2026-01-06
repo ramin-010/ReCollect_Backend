@@ -32,6 +32,7 @@ router.post('/', authMiddleware, upload as RequestHandler, (async (req, res) => 
     const files = req.files as Record<string, any[]>;
     const imageFiles = files?.['image'];
     const docId = req.body.docId;
+    const imageId = req.body.imageId;
     
     if (!imageFiles || imageFiles.length === 0) {
         return res.status(400).json({ error: 'No image file uploaded' });
@@ -45,19 +46,17 @@ router.post('/', authMiddleware, upload as RequestHandler, (async (req, res) => 
         return res.status(500).json({ error: 'Upload provider failed to return URL' });
     }
 
-    // If docId provided, add to cloudImages array for cleanup tracking
-    if (docId) {
+    if (docId && imageId) {
         try {
             await Doc.findByIdAndUpdate(docId, {
                 $push: {
                     cloudImages: {
-                        imageId: cloudPublicId,
+                        imageId: imageId,
                         cloudUrl: cloudUrl,
                         cloudPublicId: cloudPublicId,
                     }
                 }
             });
-            console.log(`[Upload] Added image to cloudImages for doc ${docId}`);
         } catch (err) {
             console.error('[Upload] Failed to update cloudImages:', err);
         }
@@ -67,8 +66,8 @@ router.post('/', authMiddleware, upload as RequestHandler, (async (req, res) => 
         url: cloudUrl,
         publicId: cloudPublicId,
         provider: cloudProvider,
+        imageId: imageId,
     });
 }) as RequestHandler);
 
 export default router;
-

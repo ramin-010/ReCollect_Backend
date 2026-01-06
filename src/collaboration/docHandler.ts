@@ -3,28 +3,22 @@ import Doc from '../models/docSchema';
 import { batchDeleteFromCloud } from '../controllers/content.controller';
 import * as Y from 'yjs';
 
-/**
- * Extract cloudPublicIds from yjsState by decoding and traversing the document
- */
-function extractPublicIdsFromYjsState(yjsStateBase64: string): string[] {
+function extractImageIdsFromYjsState(yjsStateBase64: string): string[] {
   try {
     const ydoc = new Y.Doc();
     const state = Buffer.from(yjsStateBase64, 'base64');
     Y.applyUpdate(ydoc, state);
     
-    // Get the prosemirror fragment from Yjs
     const fragment = ydoc.getXmlFragment('default');
-    const publicIds: string[] = [];
+    const imageIds: string[] = [];
     
-    // Traverse the Yjs XML fragment to find images
     function traverse(element: any) {
       if (element.nodeName === 'resizableImage' || element.nodeName === 'image') {
         const attrs = element.getAttributes();
-        if (attrs.cloudPublicId) {
-          publicIds.push(attrs.cloudPublicId);
+        if (attrs.imageId) {
+          imageIds.push(attrs.imageId);
         }
       }
-      // Traverse children
       if (element.toArray) {
         for (const child of element.toArray()) {
           traverse(child);
@@ -34,9 +28,9 @@ function extractPublicIdsFromYjsState(yjsStateBase64: string): string[] {
     
     traverse(fragment);
     ydoc.destroy();
-    return publicIds;
+    return imageIds;
   } catch (err) {
-    console.error('[docHandler] Failed to extract publicIds from yjsState:', err);
+    console.error('[docHandler] Failed to extract imageIds from yjsState:', err);
     return [];
   }
 }
@@ -75,37 +69,34 @@ const docHandler: DocumentHandler = {
   },
 
   async save(docId: string, yjsState: string): Promise<void> {
-    // Extract current images from the yjsState being saved
-    const currentPublicIds = extractPublicIdsFromYjsState(yjsState);
-    const currentPublicIdsSet = new Set(currentPublicIds);
-    
-    // Get existing cloudImages from DB
-    const doc = await Doc.findById(docId) as any;
-    const existingImages = doc?.cloudImages || [];
-    
-    // Find orphaned images (in DB but not in current yjsState)
-    const orphanedImages = existingImages.filter(
-      (img: any) => !currentPublicIdsSet.has(img.cloudPublicId)
-    );
-    
-    // Delete orphaned images from Cloudinary
-    if (orphanedImages.length > 0) {
-      const publicIdsToDelete = orphanedImages.map((img: any) => img.cloudPublicId);
-      console.log(`[docHandler] Cleaning up ${orphanedImages.length} orphaned images`);
-      await batchDeleteFromCloud(publicIdsToDelete);
-    }
-    
-    // Update cloudImages to only contain current images
-    const updatedCloudImages = existingImages.filter(
-      (img: any) => currentPublicIdsSet.has(img.cloudPublicId)
-    );
-    
-    // Save yjsState and updated cloudImages
     await Doc.findByIdAndUpdate(docId, {
       yjsState,
-      cloudImages: updatedCloudImages,
       updatedAt: new Date(),
     });
+  },
+
+  async cleanup(docId: string): Promise<void> {
+    const doc = await Doc.findById(docId) as any;
+    if (!doc?.yjsState) return;
+    
+    const currentImageIds = extractImageIdsFromYjsState(doc.yjsState);
+    const currentImageIdsSet = new Set(currentImageIds);
+    const existingImages = doc?.cloudImages || [];
+    
+    const orphanedImages = existingImages.filter(
+      (img: any) => !currentImageIdsSet.has(img.imageId)
+    );
+    console.log('orphanedImages', orphanedImages, "length", orphanedImages.length);
+    if (orphanedImages.length > 0) {
+      const publicIdsToDelete = orphanedImages.map((img: any) => img.cloudPublicId);
+      await batchDeleteFromCloud(publicIdsToDelete);
+      
+      const updatedCloudImages = existingImages.filter(
+        (img: any) => currentImageIdsSet.has(img.imageId)
+      );
+      
+      await Doc.findByIdAndUpdate(docId, { cloudImages: updatedCloudImages });
+    }
   },
 };
 
@@ -114,4 +105,3 @@ export function registerDocHandler() {
 }
 
 export default docHandler;
-

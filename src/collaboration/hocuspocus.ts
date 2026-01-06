@@ -23,6 +23,7 @@ export interface DocumentHandler {
   authorize(userId: string, docId: string): Promise<boolean>;
   load(docId: string): Promise<CollabDocument | null>;
   save(docId: string, yjsState: string): Promise<void>;
+  cleanup?(docId: string): Promise<void>;
 }
 
 // ============================================
@@ -186,6 +187,18 @@ export const hocuspocusServer = new Server({
   async onDisconnect({ documentName, context }: { documentName: string; context: any }) {
     const parsed = parseDocumentName(documentName);
     console.log(`[Collab] Disconnected: ${parsed?.prefix}:${parsed?.id} - ${context?.user?.name}`);
+    
+    if (parsed) {
+      const handler = documentHandlers.get(parsed.prefix);
+      if (handler?.cleanup) {
+        try {
+          console.log(`[Collab] Cleanup: ${parsed.prefix}:${parsed.id}`);
+          await handler.cleanup(parsed.id);
+        } catch (err) {
+          console.error(`[Collab] Cleanup error for ${parsed.prefix}:${parsed.id}:`, err);
+        }
+      }
+    }
   },
 });
 
