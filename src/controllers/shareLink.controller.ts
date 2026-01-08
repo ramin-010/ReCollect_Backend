@@ -238,7 +238,10 @@ export const createDocShareLink = async(req: Request, res: Response, next: NextF
         }
         
         
-      //letting all to create share link
+      const isOwner = targetDoc.user.toString() === user.toString();
+        if (!isOwner) {
+            throw new ErrorResponse(403, "Only the document owner can generate share links");
+        }
 
         
         const isExist = await shareLinkSchema.findOne({
