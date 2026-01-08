@@ -1,7 +1,7 @@
 import { DocumentHandler, CollabDocument, registerDocumentHandler } from './hocuspocus';
 import Doc from '../models/docSchema';
 import { batchDeleteFromCloud } from '../controllers/content.controller';
-import { generatePreviewState } from '../utils/previewUtils';
+import { generatePreviewAndMetadata } from '../utils/previewUtils';
 import * as Y from 'yjs';
 
 function extractImageIdsFromYjsState(yjsStateBase64: string): string[] {
@@ -69,13 +69,23 @@ const docHandler: DocumentHandler = {
     }
   },
 
-  async save(docId: string, yjsState: string): Promise<void> {
-    const previewState = generatePreviewState(yjsState);
-    await Doc.findByIdAndUpdate(docId, {
+  async save(docId: string, yjsState: string): Promise<void> {    const { previewState, metadata } = generatePreviewAndMetadata(yjsState);
+    
+    const updateData: any = {
       yjsState,
       previewState,
       updatedAt: new Date(),
-    });
+    };
+    
+    if (metadata.title !== undefined) {
+      console.log("metadata.title", metadata.title)
+      updateData.title = metadata.title;
+    }
+    if (metadata.coverImage !== undefined) {
+      updateData.coverImage = metadata.coverImage;
+    }
+    
+    await Doc.findByIdAndUpdate(docId, updateData);
   },
 
   async cleanup(docId: string): Promise<void> {

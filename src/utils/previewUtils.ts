@@ -1,6 +1,6 @@
 import * as Y from 'yjs';
 
-const MAX_NODES = 8;
+const MAX_NODES = 6;
 const MAX_TEXT_LENGTH = 300;
 
 function truncateText(text: string, maxLength: number = MAX_TEXT_LENGTH): string {
@@ -62,7 +62,16 @@ function truncateNode(node: any): any {
   }
 }
 
-function yjsStateToJson(yjsStateBase64: string): any {
+// Result type for parsing Yjs state
+interface ParsedYjsState {
+  content: { type: string; content: any[] };
+  metadata: {
+    title?: string;
+    coverImage?: string | null;
+  };
+}
+
+function parseYjsState(yjsStateBase64: string): ParsedYjsState {
   const ydoc = new Y.Doc();
   const state = Buffer.from(yjsStateBase64, 'base64');
   Y.applyUpdate(ydoc, state);
@@ -73,22 +82,18 @@ function yjsStateToJson(yjsStateBase64: string): any {
   function extractPlainText(element: any): string {
     if (!element) return '';
     
-    // Check if it's Y.XmlText (text content)
     if (element instanceof Y.XmlText || element.constructor?.name === 'XmlText') {
       return element.toJSON ? element.toJSON() : (element.toString() || '');
     }
     
-    // For text strings
     if (typeof element === 'string') {
       return element;
     }
     
-    // For elements, check if they have a toJSON that returns string
     if (element.toJSON && typeof element.toJSON() === 'string') {
       return element.toJSON();
     }
     
-    // Recursively get text from children
     let text = '';
     if (element.toArray) {
       for (const child of element.toArray()) {
@@ -98,7 +103,6 @@ function yjsStateToJson(yjsStateBase64: string): any {
     return text;
   }
   
-  // Strip XML tags from text (e.g., "<bold>text</bold>" -> "text")
   function stripXmlTags(str: string): string {
     return str.replace(/<[^>]+>/g, '');
   }
@@ -109,16 +113,13 @@ function yjsStateToJson(yjsStateBase64: string): any {
     const constructorName = element.constructor?.name;
     const nodeName = element.nodeName;
     
-    // Check for Y.XmlText (text node)
     if (element instanceof Y.XmlText || constructorName === 'XmlText') {
       const rawText = element.toJSON ? element.toJSON() : element.toString();
       const text = stripXmlTags(rawText);
       return text ? { type: 'text', text } : null;
     }
     
-    // Get node name for XML elements
     if (!nodeName) {
-      // It might be a plain text string
       const str = element.toString ? element.toString() : String(element);
       if (str && !str.startsWith('<')) {
         return { type: 'text', text: str };
@@ -126,14 +127,12 @@ function yjsStateToJson(yjsStateBase64: string): any {
       return null;
     }
     
-    // Skip inline formatting marks - extract their text content only
     const inlineMarks = ['bold', 'italic', 'underline', 'strike', 'code', 'link', 'highlight', 'textStyle'];
     if (inlineMarks.includes(nodeName)) {
       const text = extractPlainText(element);
       return text ? { type: 'text', text } : null;
     }
     
-    // Get attributes
     const attrs: any = {};
     if (element.getAttributes) {
       const elementAttrs = element.getAttributes();
@@ -142,7 +141,6 @@ function yjsStateToJson(yjsStateBase64: string): any {
       });
     }
     
-    // Get children
     const content: any[] = [];
     if (element.toArray) {
       for (const child of element.toArray()) {
@@ -165,9 +163,35 @@ function yjsStateToJson(yjsStateBase64: string): any {
     }
   }
   
+  const metadataMap = ydoc.getMap('metadata');
+  const metadata: ParsedYjsState['metadata'] = {};
+  
+  if (metadataMap.size > 0) {
+    console.log("got the metadata")
+    const title = metadataMap.get('title');
+    const coverImage = metadataMap.get('coverImage');
+    
+    if (typeof title === 'string') {
+      metadata.title = title;
+    }
+    if (typeof coverImage === 'string' || coverImage === null) {
+      metadata.coverImage = coverImage as string | null;
+    }
+  }
+  
   ydoc.destroy();
-  return { type: 'doc', content: nodes };
+  
+  return {
+    content: { type: 'doc', content: nodes },
+    metadata
+  };
 }
+
+// Legacy function - still used by other code
+function yjsStateToJson(yjsStateBase64: string): any {
+  return parseYjsState(yjsStateBase64).content;
+}
+
 
 export function generatePreviewState(yjsState: string): string | null {
   if (!yjsState) return null;
@@ -189,5 +213,46 @@ export function generatePreviewState(yjsState: string): string | null {
   } catch (err) {
     console.error('[previewUtils] Failed to generate preview:', err);
     return null;
+  }
+}
+
+// Result type for preview + metadata extraction
+export interface PreviewAndMetadata {
+  previewState: string | null;
+  metadata: {
+    title?: string;
+    coverImage?: string | null;
+  };
+}
+
+/**
+ * Generate preview state AND extract metadata from Yjs state in a single parse.
+ * This is efficient because we only parse the Y.Doc once to get both values.
+ */
+export function generatePreviewAndMetadata(yjsState: string): PreviewAndMetadata {
+  if (!yjsState) {
+    return { previewState: null, metadata: {} };
+  }
+  
+  try {
+    const parsed = parseYjsState(yjsState);
+    const { content, metadata } = parsed;
+    
+    if (!content?.content || !Array.isArray(content.content)) {
+      return { previewState: null, metadata };
+    }
+    
+    const previewNodes = content.content
+      .slice(0, MAX_NODES)
+      .map(truncateNode)
+      .filter(Boolean);
+    
+    const previewDoc = { type: 'doc', content: previewNodes };
+    const previewState = JSON.stringify(previewDoc);
+    
+    return { previewState, metadata };
+  } catch (err) {
+    console.error('[previewUtils] Failed to generate preview and metadata:', err);
+    return { previewState: null, metadata: {} };
   }
 }
