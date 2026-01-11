@@ -369,6 +369,28 @@ export const saveSharedDoc = async (req: Request, res: Response, next: NextFunct
 
         await doc.save();
 
+        // Broadcast to owner (if they have the doc open) that a collaborator joined
+        try {
+            const { hocuspocusServer } = await import('../collaboration/hocuspocus');
+            const docId = (doc._id as any).toString();
+            const documentName = `doc_${docId}`;
+            
+            // Access documents via hocuspocus property
+            const serverAny = hocuspocusServer as any;
+            const activeDoc = serverAny.hocuspocus?.documents?.get(documentName);
+            if (activeDoc) {
+                activeDoc.broadcastStateless(
+                    JSON.stringify({ 
+                        type: 'COLLABORATOR_JOINED', 
+                        userId: userId.toString() 
+                    })
+                );
+                console.log(`[ShareLink] Broadcasted COLLABORATOR_JOINED to ${documentName}`);
+            }
+        } catch (broadcastErr) {
+            console.error('[ShareLink] Failed to broadcast:', broadcastErr);
+        }
+
         res.status(200).json({
             success: true,
             message: 'Document saved to your profile successfully'
