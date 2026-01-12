@@ -78,9 +78,31 @@ export function disconnectUser(docId: string, userId: string): boolean {
           const connUserId = connValue?.connection?.context?.user?.id;
           
           if (connUserId === userId) {
-            // connKey is the WebSocket - close it
+            // Found the user to remove!
+            
+            // 1. Broadcast to everyone else that this user is being removed
+            // We use the doc instance to broadcast a stateless message
+            const payload = JSON.stringify({
+              type: 'COLLABORATOR_REMOVED',
+              userId,
+              name: connValue?.connection?.context?.user?.name || 'Unknown'
+            });
+            
+            // Broadcast to all connections on this document
+            doc.connections.forEach((conn: any) => {
+               if (conn.connection && typeof conn.connection.sendStateless === 'function') {
+                   // Ensure we don't send to the user being removed (optional, but cleaner)
+                   // Actually, we can send to everyone, the removed user will be disconnected anyway
+                   conn.connection.sendStateless(payload);
+               } else if (conn.socket && typeof conn.socket.send === 'function') {
+                   // Fallback for raw socket if stateless not available
+                   // Note: Hocuspocus might expect specific frame for stateless
+               }
+            });
+
+            // 2. Disconnect the target user with code 4001
             if (typeof connKey.close === 'function') {
-              connKey.close();
+              connKey.close(4001, 'REMOVED_BY_OWNER');
             } else if (typeof connKey.terminate === 'function') {
               connKey.terminate();
             }
