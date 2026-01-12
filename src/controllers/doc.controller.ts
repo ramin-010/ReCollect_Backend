@@ -84,6 +84,7 @@ export const getAllDocs = async (req: Request, res: Response, next: NextFunction
     })
       .select('title previewState docType isPinned isArchived coverImage createdAt updatedAt user collaborators')
       .populate('user', 'name email')
+      .populate('collaborators.user', 'name email avatar')
       .sort({ updatedAt: -1 })
       .lean();
 
@@ -94,7 +95,8 @@ export const getAllDocs = async (req: Request, res: Response, next: NextFunction
       let role: 'owner' | 'editor' | 'viewer' = 'owner';
       if (!isOwner) {
         const collaborator = doc.collaborators?.find(
-          (c: any) => c.user?.toString() === userId.toString()
+          (c: any) => c.user?._id?.toString() === userId.toString() || 
+            c.user?.toString() === userId.toString()
         );
         role = collaborator?.role || 'viewer';
       }
@@ -124,7 +126,7 @@ export const getDoc = async (req: Request, res: Response, next: NextFunction): P
         { user: userId },
         { 'collaborators.user': userId }
       ]
-    }).populate('user', 'name email').lean();
+    }).populate('user', 'name email').populate('collaborators.user', 'name email avatar').lean();
 
     if (!doc) throw new ErrorResponse(404, "Doc not found");
 
@@ -488,8 +490,22 @@ export const removeCollaborator = async (req: Request, res: Response, next: Next
 
     if (!userId) throw new ErrorResponse(401, "Unauthorized");
 
-    const doc = await DocModel.findOne({ _id: id, user: userId });
-    if (!doc) throw new ErrorResponse(404, "Doc not found or you are not the owner");
+    // Find doc where user is owner OR is the collaborator trying to leave
+    const doc = await DocModel.findOne({
+      _id: id,
+      $or: [
+        { user: userId }, // Owner can remove anyone
+        { 'collaborators.user': userId } // Collaborator can leave (remove self)
+      ]
+    });
+
+    if (!doc) throw new ErrorResponse(404, "Doc not found");
+
+    // Permission check: Owner can remove anyone; Collaborator can only remove themselves
+    const isOwner = doc.user.toString() === userId.toString();
+    if (!isOwner && collaboratorId !== userId.toString()) {
+       throw new ErrorResponse(403, "Only the owner can remove other collaborators");
+    }
 
     const result = await DocModel.updateOne(
       { _id: id },
@@ -500,14 +516,21 @@ export const removeCollaborator = async (req: Request, res: Response, next: Next
       throw new ErrorResponse(404, "Collaborator not found");
     }
 
+    // Calculate remaining collaborators after removal
+    const remainingCount = (doc.collaborators?.length || 1) - 1;
+
+    // Detect if collaborator is leaving voluntarily vs owner kicking them
+    const isLeavingVoluntarily = collaboratorId === userId.toString();
+
     // Force disconnect if they're currently connected to Hocuspocus
     if (id && collaboratorId) {
-      disconnectUser(id, collaboratorId);
+      disconnectUser(id, collaboratorId, remainingCount, isLeavingVoluntarily, userId.toString());
     }
 
     res.status(200).json({
       success: true,
       message: 'Collaborator removed',
+      remainingCount,
     });
   } catch (err) {
     next(err);

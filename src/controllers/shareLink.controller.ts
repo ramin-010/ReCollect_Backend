@@ -243,7 +243,7 @@ export const createDocShareLink = async(req: Request, res: Response, next: NextF
             throw new ErrorResponse(403, "Only the document owner can generate share links");
         }
 
-        
+       
         const isExist = await shareLinkSchema.findOne({
             user: user,
             doc: docId,
@@ -251,6 +251,7 @@ export const createDocShareLink = async(req: Request, res: Response, next: NextF
             expiresAt: { $gt: new Date() }
         });
 
+        console.log('isExist', isExist)
         if (isExist) {
             return void res.status(200).json({
                 success: true,
@@ -332,6 +333,7 @@ export const saveSharedDoc = async (req: Request, res: Response, next: NextFunct
             type: 'doc',
             expiresAt: { $gt: new Date() }
         });
+        console.log('shareLink', shareLink)
 
         if (!shareLink || !shareLink.doc) {
             throw new ErrorResponse(404, 'Invalid or expired share link');

@@ -57,9 +57,11 @@ const activeConnections = new Map<string, any>();
 
 /**
  * Force disconnect a specific user from a document.
- * Called when owner removes a collaborator.
+ * Called when owner removes a collaborator or when a user leaves.
+ * @param isLeavingVoluntarily - true if user is leaving themselves, false if owner kicked them
+ * @param removedBy - ID of the user who initiated the removal (optional)
  */
-export function disconnectUser(docId: string, userId: string): boolean {
+export function disconnectUser(docId: string, userId: string, remainingCount: number = 0, isLeavingVoluntarily: boolean = false, removedBy?: string): boolean {
   const documentName = `doc_${docId}`;
   const key = `${documentName}:${userId}`;
   
@@ -80,12 +82,14 @@ export function disconnectUser(docId: string, userId: string): boolean {
           if (connUserId === userId) {
             // Found the user to remove!
             
-            // 1. Broadcast to everyone else that this user is being removed
-            // We use the doc instance to broadcast a stateless message
+            // Broadcast different message types based on how user is leaving
+            const messageType = isLeavingVoluntarily ? 'COLLABORATOR_LEFT' : 'COLLABORATOR_REMOVED';
             const payload = JSON.stringify({
-              type: 'COLLABORATOR_REMOVED',
+              type: messageType,
               userId,
-              name: connValue?.connection?.context?.user?.name || 'Unknown'
+              name: connValue?.connection?.context?.user?.name || 'Unknown',
+              remainingCount,
+              removedBy 
             });
             
             // Broadcast to all connections on this document
@@ -100,13 +104,18 @@ export function disconnectUser(docId: string, userId: string): boolean {
                }
             });
 
-            // 2. Disconnect the target user with code 4001
+            // 2. Disconnect the target user with appropriate close code
+            // 4001 = Removed by owner (triggers "Access Revoked" modal)
+            // 4002 = Left voluntarily (no modal needed)
+            const closeCode = isLeavingVoluntarily ? 4002 : 4001;
+            const closeReason = isLeavingVoluntarily ? 'LEFT_VOLUNTARILY' : 'REMOVED_BY_OWNER';
+            
             if (typeof connKey.close === 'function') {
-              connKey.close(4001, 'REMOVED_BY_OWNER');
+              connKey.close(closeCode, closeReason);
             } else if (typeof connKey.terminate === 'function') {
               connKey.terminate();
             }
-            console.log(`[Collab] Force disconnected user ${userId} from ${docId}`);
+            console.log(`[Collab] Force disconnected user ${userId} from ${docId} (${closeReason})`);
           }
         }
       }
