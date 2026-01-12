@@ -4,6 +4,7 @@ import DocModel, { IDoc } from '../models/docSchema';
 import ErrorResponse from '../utils/errorResponse';
 import cloudinary from '../utils/cloudinary';
 import { generatePreviewState } from '../utils/previewUtils';
+import { disconnectUser } from '../collaboration/hocuspocus';
 
 interface CloudFileOutput extends Express.Multer.File {
   cloudUrl: string;
@@ -497,6 +498,11 @@ export const removeCollaborator = async (req: Request, res: Response, next: Next
 
     if (result.modifiedCount === 0) {
       throw new ErrorResponse(404, "Collaborator not found");
+    }
+
+    // Force disconnect if they're currently connected to Hocuspocus
+    if (id && collaboratorId) {
+      disconnectUser(id, collaboratorId);
     }
 
     res.status(200).json({

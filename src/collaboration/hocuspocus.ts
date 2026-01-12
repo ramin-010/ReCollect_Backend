@@ -48,6 +48,59 @@ function parseDocumentName(documentName: string): { prefix: string; id: string }
 }
 
 // ============================================
+// CONNECTION REGISTRY
+// Track active connections to enable force-disconnect
+// ============================================
+
+// Map<"documentName:userId", connectionData>
+const activeConnections = new Map<string, any>();
+
+/**
+ * Force disconnect a specific user from a document.
+ * Called when owner removes a collaborator.
+ */
+export function disconnectUser(docId: string, userId: string): boolean {
+  const documentName = `doc_${docId}`;
+  const key = `${documentName}:${userId}`;
+  
+  try {
+    const server = hocuspocusServer as any;
+    
+    // Access documents from Hocuspocus server
+    const documents = server.hocuspocus?.documents instanceof Map 
+      ? server.hocuspocus.documents 
+      : server.documents;
+    
+    if (documents instanceof Map) {
+      const doc = documents.get(documentName);
+      if (doc?.connections instanceof Map) {
+        for (const [connKey, connValue] of doc.connections) {
+          const connUserId = connValue?.connection?.context?.user?.id;
+          
+          if (connUserId === userId) {
+            // connKey is the WebSocket - close it
+            if (typeof connKey.close === 'function') {
+              connKey.close();
+            } else if (typeof connKey.terminate === 'function') {
+              connKey.terminate();
+            }
+            console.log(`[Collab] Force disconnected user ${userId} from ${docId}`);
+          }
+        }
+      }
+    }
+    
+    // Clean up our registry
+    activeConnections.delete(key);
+    return true;
+    
+  } catch (err) {
+    console.error(`[Collab] Error disconnecting ${userId} from ${docId}:`, err);
+    return false;
+  }
+}
+
+// ============================================
 // USER UTILITIES
 // ============================================
 
@@ -133,6 +186,12 @@ export const hocuspocusServer = new Server({
       throw new Error('Not authorized to edit this document');
     }
 
+    // Register connection for potential force-disconnect
+    // We do this in onAuthenticate because user info is available here
+    const key = `${documentName}:${user.id}`;
+    activeConnections.set(key, { userId: user.id, documentName, user });
+    console.log(`[Collab] Registered connection in auth: ${key}`);
+
     return { user };
   },
 
@@ -178,15 +237,23 @@ export const hocuspocusServer = new Server({
     }
   },
 
-  // Connection logging
-  async onConnect({ documentName, context }: { documentName: string; context: any }) {
+  // Connection logging (registration happens in onAuthenticate)
+  async onConnect(data: any) {
+    const { documentName, context } = data;
     const parsed = parseDocumentName(documentName);
-    console.log(`[Collab] Connected: ${parsed?.prefix}:${parsed?.id} - ${context?.user?.name}`);
+    console.log(`[Collab] Connected: ${parsed?.prefix}:${parsed?.id} - ${context?.user?.name || '(pending auth)'}`);
   },
 
   async onDisconnect({ documentName, context }: { documentName: string; context: any }) {
     const parsed = parseDocumentName(documentName);
     console.log(`[Collab] Disconnected: ${parsed?.prefix}:${parsed?.id} - ${context?.user?.name}`);
+    
+    // Remove from connection registry
+    if (context?.user?.id) {
+      const key = `${documentName}:${context.user.id}`;
+      activeConnections.delete(key);
+      console.log(`[Collab] Unregistered connection: ${key}`);
+    }
     
     if (parsed) {
       const handler = documentHandlers.get(parsed.prefix);
