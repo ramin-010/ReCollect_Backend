@@ -433,7 +433,7 @@ export const sendAccessApprovedEmail = async (
                           </p>
                         </div>
                         
-                        <a href="${frontendUrl}/docs" 
+                        <a href="${frontendUrl}/?view=docs" 
                            style="display: inline-block; background-color: #111827; color: #ffffff; text-decoration: none; padding: 12px 24px; font-size: 14px; font-weight: 500; border-radius: 6px;">
                           Open Document
                         </a>
