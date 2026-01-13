@@ -77,15 +77,15 @@ export const createAccessRequest = async (req: Request, res: Response, next: Nex
       const requester = await UserModel.findById(userId).select('name email');
       if (!requester) throw new ErrorResponse(404, 'User not found');
 
-      // Send email to owner
+      // Send email to owner (fire-and-forget, don't block response)
       const owner = doc.user as unknown as { _id: mongoose.Types.ObjectId; name: string; email: string };
-      await sendAccessRequestEmail(
+      sendAccessRequestEmail(
         { name: owner.name, email: owner.email },
         { name: requester.name, email: requester.email },
         doc.title,
         docId || '',
         (existingRequest._id as mongoose.Types.ObjectId).toString()
-      );
+      ).catch(err => console.error('Failed to send access request email:', err));
 
       return void res.status(201).json({
         success: true,
@@ -107,15 +107,15 @@ export const createAccessRequest = async (req: Request, res: Response, next: Nex
     const requester = await UserModel.findById(userId).select('name email');
     if (!requester) throw new ErrorResponse(404, 'User not found');
 
-    // Send email to owner
+    // Send email to owner (fire-and-forget, don't block response)
     const owner = doc.user as unknown as { _id: mongoose.Types.ObjectId; name: string; email: string };
-    await sendAccessRequestEmail(
+    sendAccessRequestEmail(
       { name: owner.name, email: owner.email },
       { name: requester.name, email: requester.email },
       doc.title,
       docId || '',
       (accessRequest._id as mongoose.Types.ObjectId).toString()
-    );
+    ).catch(err => console.error('Failed to send access request email:', err));
 
     res.status(201).json({
       success: true,
@@ -197,14 +197,14 @@ export const approveAccessRequest = async (req: Request, res: Response, next: Ne
     // Get owner info for email
     const owner = await UserModel.findById(userId).select('name');
 
-    // Send approval email
+    // Send approval email (fire-and-forget, don't block response)
     const requester = accessRequest.user as unknown as { _id: mongoose.Types.ObjectId; name: string; email: string };
-    await sendAccessApprovedEmail(
+    sendAccessApprovedEmail(
       { name: requester.name, email: requester.email },
       owner?.name || 'The owner',
       doc.title,
       docId || ''
-    );
+    ).catch(err => console.error('Failed to send approval email:', err));
 
     res.status(200).json({
       success: true,
