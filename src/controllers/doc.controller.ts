@@ -522,6 +522,21 @@ export const removeCollaborator = async (req: Request, res: Response, next: Next
     // Detect if collaborator is leaving voluntarily vs owner kicking them
     const isLeavingVoluntarily = collaboratorId === userId.toString();
 
+    // If owner is kicking someone (not leaving voluntarily), add to ban list
+    if (!isLeavingVoluntarily) {
+      await DocModel.updateOne(
+        { _id: id },
+        { 
+          $addToSet: { 
+            bannedUsers: { 
+              user: new mongoose.Types.ObjectId(collaboratorId), 
+              bannedAt: new Date() 
+            } 
+          } 
+        }
+      );
+    }
+
     // Force disconnect if they're currently connected to Hocuspocus
     if (id && collaboratorId) {
       disconnectUser(id, collaboratorId, remainingCount, isLeavingVoluntarily, userId.toString());

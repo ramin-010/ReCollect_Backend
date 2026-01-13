@@ -47,7 +47,7 @@ const ShareLinkSchema = new Schema<ShareLink>({
         type : Date,
         default : ()=>{
             const date = new Date();
-            date.setDate(date.getDate() + 60);
+            date.setDate(date.getDate() + 3);
             return date;
         }
     }

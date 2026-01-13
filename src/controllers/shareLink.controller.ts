@@ -238,29 +238,23 @@ export const createDocShareLink = async(req: Request, res: Response, next: NextF
         }
         
         
-      const isOwner = targetDoc.user.toString() === user.toString();
+        const isOwner = targetDoc.user.toString() === user.toString();
         if (!isOwner) {
             throw new ErrorResponse(403, "Only the document owner can generate share links");
         }
 
-       
-        const isExist = await shareLinkSchema.findOne({
-            user: user,
-            doc: docId,
-            role: role,
-            expiresAt: { $gt: new Date() }
+        // Delete ALL existing share links for this doc (fresh start)
+        await shareLinkSchema.deleteMany({
+            doc: docId
         });
 
-        console.log('isExist', isExist)
-        if (isExist) {
-            return void res.status(200).json({
-                success: true,
-                data: {
-                    url: `${process.env.FRONTEND_URL}/${type}/${isExist.slug}`
-                }
-            });
-        }
+        // Clear the ban list (unban everyone with new link)
+        await DocModel.updateOne(
+            { _id: docId },
+            { $set: { bannedUsers: [] } }
+        );
 
+        // Create new link with fresh slug
         const slug = randomUUID();
 
         const dbData = {
@@ -279,7 +273,8 @@ export const createDocShareLink = async(req: Request, res: Response, next: NextF
             success: true,
             data: {
                 url: `${process.env.FRONTEND_URL}/${type}/${slug}`
-            }
+            },
+            message: 'New share link generated. Previous links invalidated.'
         });
 
     } catch (err: any) {
@@ -351,6 +346,15 @@ export const saveSharedDoc = async (req: Request, res: Response, next: NextFunct
                 success: false,
                 message: 'You are the owner of this document'
              });
+        }
+
+        // Check if user is banned
+        const isBanned = doc.bannedUsers?.some(b => b.user.toString() === userId.toString());
+        if (isBanned) {
+            return void res.status(403).json({
+                success: false,
+                message: 'Your access to this document has been revoked'
+            });
         }
 
         

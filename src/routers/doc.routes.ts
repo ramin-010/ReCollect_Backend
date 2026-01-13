@@ -5,6 +5,13 @@ import {
   saveDoc, getDoc, deleteDoc, getAllDocs, createDoc, updateDoc,
   getSharedByMe, updateCollaboratorRole, removeCollaborator 
 } from '../controllers/doc.controller';
+import {
+  createAccessRequest,
+  listAccessRequests,
+  approveAccessRequest,
+  rejectAccessRequest,
+  getAllPendingRequests
+} from '../controllers/accessRequest.controller';
 
 const router = express.Router();
 
@@ -36,6 +43,7 @@ const upload = upflyUpload({
 
 router.get('/', authMiddleware, getAllDocs as RequestHandler);           // GET /api/docs
 router.get('/shared-by-me', authMiddleware, getSharedByMe as RequestHandler); // GET /api/docs/shared-by-me
+router.get('/pending-requests', authMiddleware, getAllPendingRequests as RequestHandler); // GET /api/docs/pending-requests
 router.post('/', authMiddleware, createDoc as RequestHandler);            // POST /api/docs (create new)
 router.get('/:id', authMiddleware, getDoc as RequestHandler);             // GET /api/docs/:id
 router.patch('/:id', authMiddleware, updateDoc as RequestHandler);        // PATCH /api/docs/:id (update fields)
@@ -45,5 +53,11 @@ router.delete('/:id', authMiddleware, deleteDoc as RequestHandler);       // DEL
 // Collaborator management routes
 router.patch('/:id/collaborators/:collaboratorId', authMiddleware, updateCollaboratorRole as RequestHandler);
 router.delete('/:id/collaborators/:collaboratorId', authMiddleware, removeCollaborator as RequestHandler);
+
+// Access request routes
+router.post('/:id/request-access', authMiddleware, createAccessRequest as RequestHandler);
+router.get('/:id/requests', authMiddleware, listAccessRequests as RequestHandler);
+router.post('/:id/requests/:reqId/approve', authMiddleware, approveAccessRequest as RequestHandler);
+router.post('/:id/requests/:reqId/reject', authMiddleware, rejectAccessRequest as RequestHandler);
 
 export default router;

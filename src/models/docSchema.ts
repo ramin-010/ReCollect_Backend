@@ -23,6 +23,10 @@ export interface IDoc extends Document {
     role: 'editor' | 'viewer';
     addedAt: Date;
   }[];
+  bannedUsers: {
+    user: mongoose.Types.ObjectId;
+    bannedAt: Date;
+  }[];
 }
 
 const DocSchema: Schema = new Schema(
@@ -75,6 +79,12 @@ const DocSchema: Schema = new Schema(
         user: { type: Schema.Types.ObjectId, ref: 'User', required: true },
         role: { type: String, enum: ['editor', 'viewer'], default: 'editor' },
         addedAt: { type: Date, default: Date.now },
+      },
+    ],
+    bannedUsers: [
+      {
+        user: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+        bannedAt: { type: Date, default: Date.now },
       },
     ],
   },
