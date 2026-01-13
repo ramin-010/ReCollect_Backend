@@ -1,7 +1,6 @@
 import mongoose, { Document, mongo, Schema } from "mongoose";
 import { title } from "process";
 
-// Connection interface for embedded connections
 export interface IConnection {
     id: string;
     fromBlock: string;
@@ -20,21 +19,18 @@ export interface Content extends Document {
     title: string,
     description: string,
     body: mongoose.Types.ObjectId[],
-    connections: IConnection[],  // NEW: Embedded connections array
-    tags: mongoose.Types.ObjectId[],
+    connections: IConnection[],      tags: mongoose.Types.ObjectId[],
     links: string[],
     isPinned: boolean,
     isArchived: boolean,
     visibility: string
 }
 
-// Sub-schema for control points
 const ControlPointSchema = new Schema({
     x: { type: Number, required: true },
     y: { type: Number, required: true }
 }, { _id: false });
 
-// Sub-schema for connections (embedded, no ObjectId)
 const ConnectionSchema = new Schema({
     id: { type: String, required: true },
     fromBlock: { type: String, required: true },

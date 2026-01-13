@@ -1,12 +1,8 @@
 import mongoose, { Document, Schema } from 'mongoose';
 
 export interface IAccessRequest extends Document {
-  user: mongoose.Types.ObjectId;       // Requester
-  doc: mongoose.Types.ObjectId;        // Target document
-  shareLink: mongoose.Types.ObjectId;  // The link used to request
-  status: 'pending' | 'approved' | 'rejected';
-  role: 'editor' | 'viewer';           // Requested role (from link)
-  requestedAt: Date;
+  user: mongoose.Types.ObjectId;         doc: mongoose.Types.ObjectId;          shareLink: mongoose.Types.ObjectId;    status: 'pending' | 'approved' | 'rejected';
+  role: 'editor' | 'viewer';             requestedAt: Date;
   respondedAt?: Date;
 }
 
@@ -45,8 +41,5 @@ const AccessRequestSchema = new Schema<IAccessRequest>({
   },
 }, { timestamps: true });
 
-// Indexes for efficient queries
-AccessRequestSchema.index({ doc: 1, status: 1 });          // Find pending requests for a doc
-AccessRequestSchema.index({ user: 1, doc: 1 }, { unique: true }); // One request per user per doc
-
+AccessRequestSchema.index({ doc: 1, status: 1 });          AccessRequestSchema.index({ user: 1, doc: 1 }, { unique: true }); 
 export default mongoose.model<IAccessRequest>('AccessRequest', AccessRequestSchema);

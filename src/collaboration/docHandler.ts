@@ -46,7 +46,7 @@ const docHandler: DocumentHandler = {
       if (isOwner) return true;
 
       const collaborator = doc.collaborators?.find(
-        (c: any) => c.user.toString() === userId && c.role === 'editor'
+        (c: any) => c.user.toString() === userId // Allow both editors and viewers
       );
 
       return !!collaborator;

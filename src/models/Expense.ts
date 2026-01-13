@@ -20,7 +20,6 @@ const ExpenseSchema: Schema = new Schema({
   note: { type: String },
 }, { timestamps: true });
 
-// Index for efficient hquerying
 
 ExpenseSchema.index({ userId: 1, date: -1 });
 

@@ -3,7 +3,6 @@ import Expense, { IExpense } from '../models/Expense';
 import ExpenseCategory from '../models/expenseCategorySchema';
 import mongoose from 'mongoose';
 
-// Default categories - always available to all users
 const DEFAULT_CATEGORIES = [
   'transport',
   'grocery', 
@@ -11,11 +10,9 @@ const DEFAULT_CATEGORIES = [
   'shopping',
   'gym_health',
   'medicine',
-  'cheat_snacks',  // for snacks, junk food, guilty pleasures
-  'miscellaneous'
+  'cheat_snacks',    'miscellaneous'
 ];
 
-// Get all expenses for user
 export const getExpenses = async (req: Request, res: Response) => {
   try {
     const userId = req.user?._id as string;
@@ -34,7 +31,6 @@ export const getExpenses = async (req: Request, res: Response) => {
   }
 };
 
-// Add new expense
 export const addExpense = async (req: Request, res: Response) => {
   try {
     const userId = req.user?._id as string;
@@ -65,7 +61,6 @@ export const addExpense = async (req: Request, res: Response) => {
   }
 };
 
-// Delete expense
 export const deleteExpense = async (req: Request, res: Response) => {
   try {
     const userId = req.user?._id as string;
@@ -90,7 +85,6 @@ export const deleteExpense = async (req: Request, res: Response) => {
   }
 };
 
-// Get categories (default + user custom)
 export const getCategories = async (req: Request, res: Response) => {
   try {
     const userId = req.user?._id as string;
@@ -114,7 +108,6 @@ export const getCategories = async (req: Request, res: Response) => {
   }
 };
 
-// Add custom category
 export const addCategory = async (req: Request, res: Response) => {
   try {
     const userId = req.user?._id as string;
@@ -156,7 +149,6 @@ export const addCategory = async (req: Request, res: Response) => {
   }
 };
 
-// Delete custom category
 export const deleteCategory = async (req: Request, res: Response) => {
   try {
     const userId = req.user?._id as string;

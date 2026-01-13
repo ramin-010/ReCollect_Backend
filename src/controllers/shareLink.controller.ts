@@ -243,23 +243,19 @@ export const createDocShareLink = async(req: Request, res: Response, next: NextF
             throw new ErrorResponse(403, "Only the document owner can generate share links");
         }
 
-        // Delete ALL existing share links for this doc (fresh start)
-        await shareLinkSchema.deleteMany({
+                await shareLinkSchema.deleteMany({
             doc: docId
         });
 
-        // Clear the ban list (unban everyone with new link)
-        await DocModel.updateOne(
+                await DocModel.updateOne(
             { _id: docId },
             { $set: { bannedUsers: [] } }
         );
 
-        // Clear all access requests (fresh start)
-        const AccessRequest = (await import('../models/accessRequestSchema')).default;
+                const AccessRequest = (await import('../models/accessRequestSchema')).default;
         await AccessRequest.deleteMany({ doc: docId });
 
-        // Create new link with fresh slug
-        const slug = randomUUID();
+                const slug = randomUUID();
 
         const dbData = {
             user: user,
@@ -352,8 +348,7 @@ export const saveSharedDoc = async (req: Request, res: Response, next: NextFunct
              });
         }
 
-        // Check if user is banned
-        const isBanned = doc.bannedUsers?.some(b => b.user.toString() === userId.toString());
+                const isBanned = doc.bannedUsers?.some(b => b.user.toString() === userId.toString());
         if (isBanned) {
             return void res.status(403).json({
                 success: false,
@@ -379,14 +374,12 @@ export const saveSharedDoc = async (req: Request, res: Response, next: NextFunct
 
         await doc.save();
 
-        // Broadcast to owner (if they have the doc open) that a collaborator joined
-        try {
+                try {
             const { hocuspocusServer } = await import('../collaboration/hocuspocus');
             const docId = (doc._id as any).toString();
             const documentName = `doc_${docId}`;
             
-            // Access documents via hocuspocus property
-            const serverAny = hocuspocusServer as any;
+                        const serverAny = hocuspocusServer as any;
             const activeDoc = serverAny.hocuspocus?.documents?.get(documentName);
             if (activeDoc) {
                 activeDoc.broadcastStateless(

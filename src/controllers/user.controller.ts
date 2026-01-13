@@ -1,4 +1,3 @@
-// User Profile Controller with Upfly Integration
 import { Request, Response, NextFunction } from "express";
 import { z } from 'zod';
 import User from '../models/userSchema';
@@ -10,7 +9,6 @@ interface CloudFileOutput extends Express.Multer.File {
     cloudProvider: string,
     cloudPublicId: string
 }
-// Update profile schema
 const updateProfileSchema = z.object({
   name: z.string().min(1).max(50).optional(),
   email: z.string().email().optional(),
@@ -26,7 +24,6 @@ const updateProfileSchema = z.object({
 
 import { deleteFromCloud } from "./content.controller";
 
-// Get user profile
 export const getUserProfile = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
   try {
     const userId = req.user?._id;
@@ -46,7 +43,6 @@ export const getUserProfile = async (req: Request, res: Response, next: NextFunc
   }
 };
 
-// Update user profile
 export const updateUserProfile = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
   try {
     const userId = req.user?._id;
@@ -63,8 +59,7 @@ export const updateUserProfile = async (req: Request, res: Response, next: NextF
     
     const updateData = result.data;
     
-    // Check if email is being updated and is unique
-    if (updateData.email) {
+        if (updateData.email) {
       const existingUser = await User.findOne({ 
         email: updateData.email, 
         _id: { $ne: userId } 
@@ -94,7 +89,6 @@ export const updateUserProfile = async (req: Request, res: Response, next: NextF
   }
 };
 
-// Upload profile picture using Upfly
 export const uploadProfilePicture = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
   try {
     const userId = req.user?._id;
@@ -141,7 +135,6 @@ export const uploadProfilePicture = async (req: Request, res: Response, next: Ne
   }
 };
 
-// Delete user account
 export const deleteUserAccount = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
   try {
     if (!req.user) {
@@ -154,8 +147,7 @@ export const deleteUserAccount = async (req: Request, res: Response, next: NextF
       throw new ErrorResponse(400, "Password required to delete account");
     }
     
-    // Verify user password
-    const user = await User.findById(userId).select('+password');
+        const user = await User.findById(userId).select('+password');
     
     if (!user) {
       throw new ErrorResponse(404, "User not found");
@@ -167,11 +159,9 @@ export const deleteUserAccount = async (req: Request, res: Response, next: NextF
       throw new ErrorResponse(401, "Invalid password");
     }
     
-    // Delete user and all related data
-    await User.findByIdAndDelete(userId);
+        await User.findByIdAndDelete(userId);
     
-    // TODO: Delete all user's dashboards, contents, and share links
-    
+        
     res.status(200).json({
       success: true,
       message: "Account deleted successfully"
@@ -190,8 +180,7 @@ export const getUserSettings = async (req: Request, res: Response, next: NextFun
       throw new ErrorResponse(401, 'User not authenticated');
     }
 
-    // Fetch user with populated archived and favorite notes
-    const user = await User.findById(userId)
+        const user = await User.findById(userId)
       .populate({
         path: 'archivedNotes',
         select: 'title body links tags visibility description updatedAt isPinned isArchived connections',
@@ -227,16 +216,13 @@ export const getUserSettings = async (req: Request, res: Response, next: NextFun
       throw new ErrorResponse(404, 'User not found');
     }
 
-    // Import Dashboard model
-    const Dashboard = (await import('../models/dashboardSchema')).default;
+        const Dashboard = (await import('../models/dashboardSchema')).default;
 
-    // Get all content IDs
-    const archivedNoteIds = (user.archivedNotes || []).map((note: any) => note._id);
+        const archivedNoteIds = (user.archivedNotes || []).map((note: any) => note._id);
     const favoriteNoteIds = (user.favoriteNotes || []).map((note: any) => note._id);
     const allContentIds = [...new Set([...archivedNoteIds, ...favoriteNoteIds])];
 
-    // Find dashboards that contain these contents and create a map of contentId -> dashboardId
-    const dashboards = await Dashboard.find({
+        const dashboards = await Dashboard.find({
       user: userId,
       contents: { $in: allContentIds }
     }).select('_id contents').lean();
@@ -248,8 +234,7 @@ export const getUserSettings = async (req: Request, res: Response, next: NextFun
       });
     });
 
-    // Add DashId to each note
-    const enrichedArchivedNotes = (user.archivedNotes || []).map((note: any) => ({
+        const enrichedArchivedNotes = (user.archivedNotes || []).map((note: any) => ({
       ...note,
       DashId: contentToDashboardMap.get(note._id.toString()) || ''
     }));
@@ -273,7 +258,6 @@ export const getUserSettings = async (req: Request, res: Response, next: NextFun
   }
 };
 
-// Change password schema
 const changePasswordSchema = z.object({
   newPassword: z.string().min(8, { message: 'Password must be at least 8 characters long' }),
   confirmPassword: z.string()
@@ -282,7 +266,6 @@ const changePasswordSchema = z.object({
   path: ["confirmPassword"]
 });
 
-// Change password
 export const changePassword = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
   try {
     const userId = req.user?._id;
@@ -303,15 +286,13 @@ export const changePassword = async (req: Request, res: Response, next: NextFunc
 
     const { newPassword } = result.data;
 
-    // Find user and update password
-    const user = await User.findById(userId).select('+password');
+        const user = await User.findById(userId).select('+password');
     
     if (!user) {
       throw new ErrorResponse(404, 'User not found');
     }
 
-    // Update password (will be hashed by pre-save hook in userSchema)
-    user.password = newPassword;
+        user.password = newPassword;
     await user.save();
 
     res.status(200).json({

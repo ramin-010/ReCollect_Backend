@@ -25,8 +25,7 @@ export type ContentInput = {
     reminderData?: string,
     upsertBlocks?: string;
     finalBlockOrder?: string;
-    connections?: string;  // JSON string of IConnection[]
-}
+    connections?: string;  }
 
 type UpdateInput = Partial<ContentInput>
 
@@ -143,18 +142,15 @@ export const addContent = async (req: Request, res: Response, next: NextFunction
         const files = req.files as Record<string, Express.Multer.File[]>;
         const imageBlockIds = ParseJson<string[]>(data.imageBlockIds, []);
         
-        // Parse new format: body can be { blocks: [], connections: [] } or legacy array
-        const rawBody = ParseJson<any>(data.body, { blocks: [], connections: [] });
+                const rawBody = ParseJson<any>(data.body, { blocks: [], connections: [] });
         let blocks: IBlock[];
         let connections: IConnection[];
         
         if (Array.isArray(rawBody)) {
-            // Legacy format: array of blocks
-            blocks = rawBody;
+                        blocks = rawBody;
             connections = [];
         } else {
-            // New format: { blocks: [], connections: [] }
-            blocks = rawBody.blocks || [];
+                        blocks = rawBody.blocks || [];
             connections = rawBody.connections || [];
         }
         
@@ -300,8 +296,7 @@ export const addContent = async (req: Request, res: Response, next: NextFunction
         const contentResponse = content.toObject();
         contentResponse.body = populatedBody;
         contentResponse.tags = populatedTags;
-        // connections are already embedded in content
-
+        
         res.status(200).json({
             success: true,
             data: contentResponse,
@@ -505,8 +500,7 @@ export const updateContent = async (
             updateDbData.body = finalBlockOrderIds;
         }
         
-        // Handle connections update
-        if (data.connections !== undefined) {
+                if (data.connections !== undefined) {
             const connections = ParseJson<IConnection[]>(data.connections, []);
             updateDbData.connections = connections;
         }
@@ -557,31 +551,25 @@ export const updateContent = async (
             }
         }
 
-        // Sync User schema arrays when isPinned or isArchived changes
-        const userUpdateOps: any = {};
+                const userUpdateOps: any = {};
         
         if (data.isPinned !== undefined) {
             if (data.isPinned) {
-                // Add to favoriteNotes if not already there
-                userUpdateOps.$addToSet = { ...(userUpdateOps.$addToSet || {}), favoriteNotes: id };
+                                userUpdateOps.$addToSet = { ...(userUpdateOps.$addToSet || {}), favoriteNotes: id };
             } else {
-                // Remove from favoriteNotes
-                userUpdateOps.$pull = { ...(userUpdateOps.$pull || {}), favoriteNotes: id };
+                                userUpdateOps.$pull = { ...(userUpdateOps.$pull || {}), favoriteNotes: id };
             }
         }
         
         if (data.isArchived !== undefined) {
             if (data.isArchived) {
-                // Add to archivedNotes if not already there
-                userUpdateOps.$addToSet = { ...(userUpdateOps.$addToSet || {}), archivedNotes: id };
+                                userUpdateOps.$addToSet = { ...(userUpdateOps.$addToSet || {}), archivedNotes: id };
             } else {
-                // Remove from archivedNotes
-                userUpdateOps.$pull = { ...(userUpdateOps.$pull || {}), archivedNotes: id };
+                                userUpdateOps.$pull = { ...(userUpdateOps.$pull || {}), archivedNotes: id };
             }
         }
 
-        // Apply user updates if any
-        if (Object.keys(userUpdateOps).length > 0) {
+                if (Object.keys(userUpdateOps).length > 0) {
             await User.findByIdAndUpdate(user, userUpdateOps, { session });
         }
 
@@ -679,8 +667,7 @@ export const deleteContent = async (
 
             ContentModel.findByIdAndDelete(id).session(session),
 
-            // Remove from user's archivedNotes and favoriteNotes
-            User.findByIdAndUpdate(
+                        User.findByIdAndUpdate(
                 req.user?.id,
                 {
                     $pull: {

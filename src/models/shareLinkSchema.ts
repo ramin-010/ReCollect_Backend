@@ -57,11 +57,5 @@ ShareLinkSchema.index({user : 1, content : 1, dashboard : 1, expiresAt : 1})
 ShareLinkSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
 
-// ShareLinkSchema.pre('save', function(next){
-//     if(!this.slug){
-//         this.slug = randomUUID();
-//     }
-//     next();
-// })
 
 export default mongoose.model<ShareLink>('ShareLink', ShareLinkSchema)

@@ -9,12 +9,10 @@ import {
 
 const router = express.Router();
 
-// Cloudinary config
 const cloud_name = process.env.CLOUDINARY_CLOUD_NAME || '';
 const cloud_key = process.env.CLOUDINARY_API_KEY || '';
 const cloud_secret = process.env.CLOUDINARY_API_SECRET || '';
 
-// Upload middleware for drawing images and thumbnail
 const upload = upflyUpload({
   fields: {
     "image_*": {
@@ -46,16 +44,12 @@ const upload = upflyUpload({
   }
 });
 
-// All routes require authentication
 router.use(authMiddleware);
 
-// Sync a drawing to cloud (with image upload support)
 router.post('/sync', upload as RequestHandler, syncDrawing);
 
-// Get all cloud-synced drawings
 router.get('/', getCloudDrawings);
 
-// Delete a cloud-synced drawing
 router.delete('/:localId', deleteCloudDrawing);
 
 export default router;

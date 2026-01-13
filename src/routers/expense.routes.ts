@@ -11,12 +11,10 @@ import {
 
 const router = Router();
 
-// Expense routes
 router.get('/', authMiddleware, getExpenses);
 router.post('/', authMiddleware, addExpense);
 router.delete('/:id', authMiddleware, deleteExpense);
 
-// Category routes
 router.get('/categories', authMiddleware, getCategories);
 router.post('/categories', authMiddleware, addCategory);
 router.delete('/categories/:id', authMiddleware, deleteCategory);

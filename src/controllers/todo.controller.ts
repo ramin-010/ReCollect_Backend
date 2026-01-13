@@ -5,7 +5,6 @@ import ReminderModel from '../models/reminderSchema';
 import ErrorResponse from '../utils/errorResponse';
 import { scheduleReminder } from '../services/reminderService';
 
-// Get all todos for authenticated user
 export const getTodos = async (
     req: Request,
     res: Response,
@@ -28,7 +27,6 @@ export const getTodos = async (
     }
 };
 
-// Create a new todo
 export const createTodo = async (
     req: Request,
     res: Response,
@@ -60,8 +58,7 @@ export const createTodo = async (
 
         let reminderScheduleData = null;
 
-        // Create reminder if reminderDate is provided
-        if (reminderDate) {
+                if (reminderDate) {
             const parsedDate = new Date(reminderDate);
             
             if (isNaN(parsedDate.getTime())) {
@@ -100,8 +97,7 @@ export const createTodo = async (
 
         await session.commitTransaction();
 
-        // Schedule reminder outside transaction
-        if (reminderScheduleData) {
+                if (reminderScheduleData) {
             scheduleReminder(reminderScheduleData as any).catch(err => {
                 console.error("Failed to schedule todo reminder:", err);
             });
@@ -121,7 +117,6 @@ export const createTodo = async (
     }
 };
 
-// Update a todo
 export const updateTodo = async (
     req: Request,
     res: Response,
@@ -135,10 +130,7 @@ export const updateTodo = async (
         const { id } = req.params;
         const { text, isCompleted, reminderDate } = req.body;
 
-        // if (!mongoose.Types.ObjectId.isValid(id)) {
-        //     throw new ErrorResponse(400, "Invalid todo ID");
-        // }
-
+                        
         const existingTodo = await TodoModel.findOne({ 
             _id: id, 
             user: new mongoose.Types.ObjectId(userId) 
@@ -148,8 +140,7 @@ export const updateTodo = async (
             throw new ErrorResponse(404, "Todo not found");
         }
 
-        // Build update object
-        const updateData: Record<string, any> = {};
+                const updateData: Record<string, any> = {};
         if (text !== undefined) updateData.text = text.trim();
         if (isCompleted !== undefined) updateData.isCompleted = isCompleted;
         if (reminderDate !== undefined) {
@@ -168,17 +159,14 @@ export const updateTodo = async (
 
         let reminderScheduleData = null;
 
-        // Handle reminder updates
-        if (reminderDate !== undefined) {
-            // Delete existing reminder for this todo
-            await ReminderModel.deleteMany({ 
+                if (reminderDate !== undefined) {
+                        await ReminderModel.deleteMany({ 
                 todoId: id, 
                 user: userId,
                 type: 'todo'
             }).session(session);
 
-            // Create new reminder if date is provided
-            if (reminderDate) {
+                        if (reminderDate) {
                 const parsedDate = new Date(reminderDate);
                 
                 if (isNaN(parsedDate.getTime())) {
@@ -218,8 +206,7 @@ export const updateTodo = async (
 
         await session.commitTransaction();
 
-        // Schedule reminder outside transaction
-        if (reminderScheduleData) {
+                if (reminderScheduleData) {
             scheduleReminder(reminderScheduleData as any).catch(err => {
                 console.error("Failed to schedule todo reminder:", err);
             });
@@ -239,7 +226,6 @@ export const updateTodo = async (
     }
 };
 
-// Delete a todo
 export const deleteTodo = async (
     req: Request,
     res: Response,
@@ -252,10 +238,7 @@ export const deleteTodo = async (
         const userId = req.user?._id as string;
         const { id } = req.params;
 
-        // if (!mongoose.Types.ObjectId.isValid(id)) {
-        //     throw new ErrorResponse(400, "Invalid todo ID");
-        // }
-
+                        
         const todo = await TodoModel.findOne({ 
             _id: id, 
             user: new mongoose.Types.ObjectId(userId) 
@@ -266,10 +249,8 @@ export const deleteTodo = async (
         }
 
         await Promise.all([
-            // Delete the todo
-            TodoModel.findByIdAndDelete(id).session(session),
-            // Delete associated reminder
-            ReminderModel.deleteMany({ 
+                        TodoModel.findByIdAndDelete(id).session(session),
+                        ReminderModel.deleteMany({ 
                 todoId: id, 
                 user: userId,
                 type: 'todo'

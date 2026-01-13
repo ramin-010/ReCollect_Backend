@@ -490,19 +490,15 @@ export const removeCollaborator = async (req: Request, res: Response, next: Next
 
     if (!userId) throw new ErrorResponse(401, "Unauthorized");
 
-    // Find doc where user is owner OR is the collaborator trying to leave
-    const doc = await DocModel.findOne({
+        const doc = await DocModel.findOne({
       _id: id,
       $or: [
-        { user: userId }, // Owner can remove anyone
-        { 'collaborators.user': userId } // Collaborator can leave (remove self)
-      ]
+        { user: userId },         { 'collaborators.user': userId }       ]
     });
 
     if (!doc) throw new ErrorResponse(404, "Doc not found");
 
-    // Permission check: Owner can remove anyone; Collaborator can only remove themselves
-    const isOwner = doc.user.toString() === userId.toString();
+        const isOwner = doc.user.toString() === userId.toString();
     if (!isOwner && collaboratorId !== userId.toString()) {
        throw new ErrorResponse(403, "Only the owner can remove other collaborators");
     }
@@ -516,14 +512,11 @@ export const removeCollaborator = async (req: Request, res: Response, next: Next
       throw new ErrorResponse(404, "Collaborator not found");
     }
 
-    // Calculate remaining collaborators after removal
-    const remainingCount = (doc.collaborators?.length || 1) - 1;
+        const remainingCount = (doc.collaborators?.length || 1) - 1;
 
-    // Detect if collaborator is leaving voluntarily vs owner kicking them
-    const isLeavingVoluntarily = collaboratorId === userId.toString();
+        const isLeavingVoluntarily = collaboratorId === userId.toString();
 
-    // If owner is kicking someone (not leaving voluntarily), add to ban list
-    if (!isLeavingVoluntarily) {
+        if (!isLeavingVoluntarily) {
       await DocModel.updateOne(
         { _id: id },
         { 
@@ -537,8 +530,7 @@ export const removeCollaborator = async (req: Request, res: Response, next: Next
       );
     }
 
-    // Force disconnect if they're currently connected to Hocuspocus
-    if (id && collaboratorId) {
+        if (id && collaboratorId) {
       disconnectUser(id, collaboratorId, remainingCount, isLeavingVoluntarily, userId.toString());
     }
 

@@ -16,8 +16,7 @@ export interface CollabUser {
 export interface CollabDocument {
   id: string;
   yjsState: string | undefined;
-  // content?: any;   #legacy
-}
+  }
 
 export interface DocumentHandler {
   authorize(userId: string, docId: string): Promise<boolean>;
@@ -26,8 +25,6 @@ export interface DocumentHandler {
   cleanup?(docId: string): Promise<void>;
 }
 
-// ============================================
-// DOCUMENT HANDLER REGISTRY
 
 
 const documentHandlers = new Map<string, DocumentHandler>();
@@ -47,12 +44,7 @@ function parseDocumentName(documentName: string): { prefix: string; id: string }
   };
 }
 
-// ============================================
-// CONNECTION REGISTRY
-// Track active connections to enable force-disconnect
-// ============================================
 
-// Map<"documentName:userId", connectionData>
 const activeConnections = new Map<string, any>();
 
 /**
@@ -68,8 +60,7 @@ export function disconnectUser(docId: string, userId: string, remainingCount: nu
   try {
     const server = hocuspocusServer as any;
     
-    // Access documents from Hocuspocus server
-    const documents = server.hocuspocus?.documents instanceof Map 
+        const documents = server.hocuspocus?.documents instanceof Map 
       ? server.hocuspocus.documents 
       : server.documents;
     
@@ -80,10 +71,8 @@ export function disconnectUser(docId: string, userId: string, remainingCount: nu
           const connUserId = connValue?.connection?.context?.user?.id;
           
           if (connUserId === userId) {
-            // Found the user to remove!
-            
-            // Broadcast different message types based on how user is leaving
-            const messageType = isLeavingVoluntarily ? 'COLLABORATOR_LEFT' : 'COLLABORATOR_REMOVED';
+                        
+                        const messageType = isLeavingVoluntarily ? 'COLLABORATOR_LEFT' : 'COLLABORATOR_REMOVED';
             const payload = JSON.stringify({
               type: messageType,
               userId,
@@ -92,22 +81,14 @@ export function disconnectUser(docId: string, userId: string, remainingCount: nu
               removedBy 
             });
             
-            // Broadcast to all connections on this document
-            doc.connections.forEach((conn: any) => {
+                        doc.connections.forEach((conn: any) => {
                if (conn.connection && typeof conn.connection.sendStateless === 'function') {
-                   // Ensure we don't send to the user being removed (optional, but cleaner)
-                   // Actually, we can send to everyone, the removed user will be disconnected anyway
-                   conn.connection.sendStateless(payload);
+                                                         conn.connection.sendStateless(payload);
                } else if (conn.socket && typeof conn.socket.send === 'function') {
-                   // Fallback for raw socket if stateless not available
-                   // Note: Hocuspocus might expect specific frame for stateless
-               }
+                                                     }
             });
 
-            // 2. Disconnect the target user with appropriate close code
-            // 4001 = Removed by owner (triggers "Access Revoked" modal)
-            // 4002 = Left voluntarily (no modal needed)
-            const closeCode = isLeavingVoluntarily ? 4002 : 4001;
+                                                const closeCode = isLeavingVoluntarily ? 4002 : 4001;
             const closeReason = isLeavingVoluntarily ? 'LEFT_VOLUNTARILY' : 'REMOVED_BY_OWNER';
             
             if (typeof connKey.close === 'function') {
@@ -121,8 +102,7 @@ export function disconnectUser(docId: string, userId: string, remainingCount: nu
       }
     }
     
-    // Clean up our registry
-    activeConnections.delete(key);
+        activeConnections.delete(key);
     return true;
     
   } catch (err) {
@@ -131,9 +111,6 @@ export function disconnectUser(docId: string, userId: string, remainingCount: nu
   }
 }
 
-// ============================================
-// USER UTILITIES
-// ============================================
 
 import User from '../models/userSchema';
 
@@ -175,9 +152,6 @@ function getRandomColor(userId: string): string {
   return colors[Math.abs(hash) % colors.length]!;
 }
 
-// ============================================
-// HOCUSPOCUS SERVER CONFIGURATION
-// ============================================
 
 export const hocuspocusServer = new Server({
   port: parseInt(process.env.COLLAB_PORT || '1234'),
@@ -217,17 +191,14 @@ export const hocuspocusServer = new Server({
       throw new Error('Not authorized to edit this document');
     }
 
-    // Register connection for potential force-disconnect
-    // We do this in onAuthenticate because user info is available here
-    const key = `${documentName}:${user.id}`;
+            const key = `${documentName}:${user.id}`;
     activeConnections.set(key, { userId: user.id, documentName, user });
     console.log(`[Collab] Registered connection in auth: ${key}`);
 
     return { user };
   },
 
-  // Load document from database
-  async onLoadDocument({ documentName, document }) {
+    async onLoadDocument({ documentName, document }) {
     const parsed = parseDocumentName(documentName);
     if (!parsed) return document;
 
@@ -249,8 +220,7 @@ export const hocuspocusServer = new Server({
     return document;
   },
 
-  // Store document to database on changes
-  async onStoreDocument({ documentName, document }) {
+    async onStoreDocument({ documentName, document }) {
     const parsed = parseDocumentName(documentName);
     if (!parsed) return;
 
@@ -268,8 +238,7 @@ export const hocuspocusServer = new Server({
     }
   },
 
-  // Connection logging (registration happens in onAuthenticate)
-  async onConnect(data: any) {
+    async onConnect(data: any) {
     const { documentName, context } = data;
     const parsed = parseDocumentName(documentName);
     console.log(`[Collab] Connected: ${parsed?.prefix}:${parsed?.id} - ${context?.user?.name || '(pending auth)'}`);
@@ -279,8 +248,7 @@ export const hocuspocusServer = new Server({
     const parsed = parseDocumentName(documentName);
     console.log(`[Collab] Disconnected: ${parsed?.prefix}:${parsed?.id} - ${context?.user?.name}`);
     
-    // Remove from connection registry
-    if (context?.user?.id) {
+        if (context?.user?.id) {
       const key = `${documentName}:${context.user.id}`;
       activeConnections.delete(key);
       console.log(`[Collab] Unregistered connection: ${key}`);

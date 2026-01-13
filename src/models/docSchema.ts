@@ -6,14 +6,12 @@ export interface IDoc extends Document {
   user: mongoose.Types.ObjectId;
   title: string;
   yjsState?: string;
-  previewState?: string;  // Truncated JSON for list previews
-  docType: DocType;
+  previewState?: string;    docType: DocType;
   coverImage: string | null;
   isPinned: boolean;
   isArchived: boolean;
   cloudImages: {
-    imageId: string; // Unique ID for tracking (e.g., "img_123" or cloudinary URL)
-    cloudUrl: string;
+    imageId: string;     cloudUrl: string;
     cloudPublicId: string;
   }[];
   createdAt: Date;
@@ -91,7 +89,6 @@ const DocSchema: Schema = new Schema(
   { timestamps: true }
 );
 
-// Index for collaboration queries
 DocSchema.index({ 'collaborators.user': 1 });
 
 export default mongoose.model<IDoc>('Doc', DocSchema);
