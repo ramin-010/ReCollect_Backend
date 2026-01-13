@@ -254,6 +254,10 @@ export const createDocShareLink = async(req: Request, res: Response, next: NextF
             { $set: { bannedUsers: [] } }
         );
 
+        // Clear all access requests (fresh start)
+        const AccessRequest = (await import('../models/accessRequestSchema')).default;
+        await AccessRequest.deleteMany({ doc: docId });
+
         // Create new link with fresh slug
         const slug = randomUUID();
 

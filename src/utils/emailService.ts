@@ -343,7 +343,7 @@ export const sendAccessRequestEmail = async (
                           </p>
                         </div>
                         
-                        <a href="${frontendUrl}/docs?tab=requests" 
+                        <a href="${frontendUrl}/?view=docs&tab=requests" 
                            style="display: inline-block; background-color: #111827; color: #ffffff; text-decoration: none; padding: 12px 24px; font-size: 14px; font-weight: 500; border-radius: 6px; margin-right: 8px;">
                           View Request
                         </a>

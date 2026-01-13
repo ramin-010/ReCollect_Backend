@@ -49,7 +49,7 @@ export const createAccessRequest = async (req: Request, res: Response, next: Nex
       throw new ErrorResponse(403, 'Your access to this document has been revoked');
     }
 
-    // Check if request already exists
+    // Use findOneAndUpdate with upsert to handle all cases atomically
     const existingRequest = await AccessRequest.findOne({
       user: userId,
       doc: docId,
@@ -57,18 +57,44 @@ export const createAccessRequest = async (req: Request, res: Response, next: Nex
 
     if (existingRequest) {
       if (existingRequest.status === 'pending') {
+        // Already pending, just return
         return void res.status(200).json({
           success: true,
           message: 'You have already requested access. Please wait for approval.',
           status: 'pending'
         });
       }
-      if (existingRequest.status === 'rejected') {
-        throw new ErrorResponse(403, 'Your access request was previously denied');
-      }
+      
+      // For approved/rejected requests, update to pending (fresh request)
+      existingRequest.status = 'pending';
+      existingRequest.shareLink = shareLink._id as mongoose.Types.ObjectId;
+      existingRequest.role = shareLink.role || 'viewer';
+      existingRequest.requestedAt = new Date();
+      (existingRequest as any).respondedAt = undefined; // Clear respondedAt
+      await existingRequest.save();
+
+      // Get requester info for email
+      const requester = await UserModel.findById(userId).select('name email');
+      if (!requester) throw new ErrorResponse(404, 'User not found');
+
+      // Send email to owner
+      const owner = doc.user as unknown as { _id: mongoose.Types.ObjectId; name: string; email: string };
+      await sendAccessRequestEmail(
+        { name: owner.name, email: owner.email },
+        { name: requester.name, email: requester.email },
+        doc.title,
+        docId || '',
+        (existingRequest._id as mongoose.Types.ObjectId).toString()
+      );
+
+      return void res.status(201).json({
+        success: true,
+        message: 'Access request sent. The owner will be notified.',
+        status: 'pending'
+      });
     }
 
-    // Create the access request
+    // Create new access request
     const accessRequest = await AccessRequest.create({
       user: userId,
       doc: docId,
