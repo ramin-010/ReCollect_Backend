@@ -90,5 +90,8 @@ const DocSchema: Schema = new Schema(
 );
 
 DocSchema.index({ 'collaborators.user': 1 });
+// Compound indexes for faster gallery queries with sorting
+DocSchema.index({ user: 1, updatedAt: -1 });
+DocSchema.index({ 'collaborators.user': 1, updatedAt: -1 });
 
 export default mongoose.model<IDoc>('Doc', DocSchema);
