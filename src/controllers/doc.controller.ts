@@ -75,39 +75,79 @@ export const getAllDocs = async (req: Request, res: Response, next: NextFunction
   try {
     const userId = req.user?._id;
     if (!userId) throw new ErrorResponse(401, "Unauthorized");
-
-    // Run two separate queries in parallel - faster than $or
-    const [ownedDocs, collabDocs] = await Promise.all([
-      // Query 1: Docs owned by user (no populate needed)
-      DocModel.find({ user: userId })
-        .select('title previewState docType isPinned isArchived coverImage createdAt updatedAt user collaborators')
-        .lean(),
-      
-      // Query 2: Docs where user is a collaborator
-      DocModel.find({ 'collaborators.user': userId })
-        .select('title previewState docType isPinned isArchived coverImage createdAt updatedAt user collaborators')
-        .populate('collaborators.user', 'name email avatar')
-        .lean()
+    const docs = await DocModel.aggregate([
+      {
+        $match: {
+          $or: [
+            { user: userId },
+            { 'collaborators.user': userId }
+          ]
+        }
+      },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'collaborators.user',
+          foreignField: '_id',
+          as: 'collaboratorUsers',
+          pipeline: [
+            { $project: { name: 1, email: 1, avatar: 1 } }
+          ]
+        }
+      },
+      {
+        $project: {
+          title: 1,
+          previewState: 1,
+          docType: 1,
+          isPinned: 1,
+          isArchived: 1,
+          coverImage: 1,
+          createdAt: 1,
+          updatedAt: 1,
+          user: 1,
+          collaborators: {
+            $map: {
+              input: '$collaborators',
+              as: 'collab',
+              in: {
+                role: '$$collab.role',
+                addedAt: '$$collab.addedAt',
+                user: {
+                  $arrayElemAt: [
+                    {
+                      $filter: {
+                        input: '$collaboratorUsers',
+                        cond: { $eq: ['$$this._id', '$$collab.user'] }
+                      }
+                    },
+                    0
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      { $sort: { updatedAt: -1 } }
     ]);
-
-    // Merge results and add role
-    const ownedWithRole = ownedDocs.map((doc: any) => ({ ...doc, role: 'owner' as const }));
-    const collabWithRole = collabDocs.map((doc: any) => {
-      const collaborator = doc.collaborators?.find(
-        (c: any) => c.user?._id?.toString() === userId.toString() || 
-          c.user?.toString() === userId.toString()
-      );
-      return { ...doc, role: (collaborator?.role || 'viewer') as 'editor' | 'viewer' };
+    const docsWithRole = docs.map((doc: any) => {
+      const isOwner = doc.user?.toString() === userId.toString();
+      
+      let role: 'owner' | 'editor' | 'viewer' = 'owner';
+      if (!isOwner) {
+        const collaborator = doc.collaborators?.find(
+          (c: any) => c.user?._id?.toString() === userId.toString()
+        );
+        role = collaborator?.role || 'viewer';
+      }
+      
+      return { ...doc, role };
     });
-
-    // Combine and sort by updatedAt descending
-    const allDocs = [...ownedWithRole, ...collabWithRole].sort(
-      (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-    );
 
     res.status(200).json({
       success: true,
-      data: allDocs,
+      data: docsWithRole,
     });
   } catch (err) {
     next(err);
