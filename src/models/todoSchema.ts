@@ -38,8 +38,8 @@ export interface Todo extends Document {
   // Subtasks
   subtasks?: Subtask[];
   
-  // Attachments
-  attachments?: string[];
+  // Cloud Images for deletion tracking
+  cloudImages?: { imageId: string; cloudPublicId: string }[];
 
   // Labels
   labels?: { id: string; name: string; color: string }[];
@@ -85,6 +85,12 @@ const LabelSchema = new Schema({
   color: { type: String, required: true }
 }, { _id: false });
 
+// Cloud image schema (for deletion tracking)
+const CloudImageSchema = new Schema({
+  imageId: { type: String, required: true },
+  cloudPublicId: { type: String, required: true }
+}, { _id: false });
+
 const TodoSchema = new Schema<Todo>(
   {
     user: {
@@ -128,9 +134,9 @@ const TodoSchema = new Schema<Todo>(
       type: [SubtaskSchema],
       default: []
     },
-    // Attachments (Image URLs)
-    attachments: {
-      type: [String],
+    // Cloud images for deletion tracking
+    cloudImages: {
+      type: [CloudImageSchema],
       default: []
     },
     // Labels
