@@ -17,6 +17,10 @@ export interface User extends Document{
     cloudPublicId?: string,
     cloudProvider?: string,
     favoriteNotes?: string[]
+    // Ghost/Shadow User Support
+    status?: 'active' | 'pending';
+    isGhost?: boolean;
+
   comparePassword(enteredPassword: string): Promise<boolean>;
     getSignedJwtToken() : String
 }
@@ -75,6 +79,16 @@ const userSchema = new Schema<User>(
             default: '',
             required: false,
         },
+        // Ghost User Props
+        status: {
+            type: String,
+            enum: ['active', 'pending'],
+            default: 'active'
+        },
+        isGhost: {
+            type: Boolean,
+            default: false
+        }
     }, 
     {
         timestamps : true

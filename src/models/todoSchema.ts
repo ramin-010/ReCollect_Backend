@@ -1,14 +1,89 @@
-// Todo Schema for Task Management
+// Task Schema for Rich Task System
 import mongoose, { Document, Schema } from "mongoose";
+
+// Subtask interface
+export interface Subtask {
+  id: string;
+  text: string;
+  isCompleted: boolean;
+}
+
+// Reference to doc or content
+export interface TaskReference {
+  type: 'doc' | 'content';
+  refId: mongoose.Types.ObjectId;
+  title?: string;
+}
+
+// Recurrence pattern
+export interface TaskRecurrence {
+  pattern: 'daily' | 'weekly' | 'monthly';
+  interval?: number; // Every N days/weeks/months
+}
 
 export interface Todo extends Document {
   user: mongoose.Types.ObjectId;
-  text: string;
-  isCompleted: boolean;
+  title: string;
+  description?: string; // Rich text (TipTap JSON)
+  
+  // Status & Priority
+  status: 'pending' | 'complete';
+  priority: 'low' | 'medium' | 'high';
+  
+  // Dates
+  dueDate?: Date;
   reminderDate?: Date;
+  completedAt?: Date;
+  
+  // Subtasks
+  subtasks?: Subtask[];
+  
+  // Attachments
+  attachments?: string[];
+
+  // Labels
+  labels?: { id: string; name: string; color: string }[];
+  
+  // References (bi-directional linking)
+  references?: TaskReference[];
+  
+  // Recurrence
+  recurrence?: TaskRecurrence;
+
+  // Collaboration
+  assignee?: mongoose.Types.ObjectId;
+  assignedAt?: Date;
+  
+    // Legacy compat
   createdAt: Date;
   updatedAt: Date;
 }
+
+const SubtaskSchema = new Schema<Subtask>({
+  id: { type: String, required: true },
+  text: { type: String, required: true },
+  isCompleted: { type: Boolean, default: false }
+}, { _id: false });
+
+// Task reference schema
+const TaskReferenceSchema = new Schema<TaskReference>({
+  type: { type: String, enum: ['doc', 'content'], required: true },
+  refId: { type: mongoose.Schema.Types.ObjectId, required: true },
+  title: { type: String }
+}, { _id: false });
+
+// Recurrence schema
+const RecurrenceSchema = new Schema<TaskRecurrence>({
+  pattern: { type: String, enum: ['daily', 'weekly', 'monthly'], required: true },
+  interval: { type: Number, default: 1 }
+}, { _id: false });
+
+// Label schema
+const LabelSchema = new Schema({
+  id: { type: String, required: true },
+  name: { type: String, required: true },
+  color: { type: String, required: true }
+}, { _id: false });
 
 const TodoSchema = new Schema<Todo>(
   {
@@ -17,25 +92,91 @@ const TodoSchema = new Schema<Todo>(
       ref: 'User',
       required: true
     },
-    text: {
+    title: {
       type: String,
       required: true,
       trim: true
     },
-    isCompleted: {
-      type: Boolean,
-      default: false
+    description: {
+      type: String,
+      default: null
+    },
+    status: {
+      type: String,
+      enum: ['pending', 'complete'],
+      default: 'pending'
+    },
+    priority: {
+      type: String,
+      enum: ['low', 'medium', 'high'],
+      default: 'medium'
+    },
+    dueDate: {
+      type: Date,
+      default: null
     },
     reminderDate: {
       type: Date,
       default: null
-    }
+    },
+    completedAt: {
+      type: Date,
+      default: null
+    },
+    // Sub-items
+    subtasks: {
+      type: [SubtaskSchema],
+      default: []
+    },
+    // Attachments (Image URLs)
+    attachments: {
+      type: [String],
+      default: []
+    },
+    // Labels
+    labels: {
+      type: [LabelSchema],
+      default: []
+    },
+    // Recurrence
+    recurrence: {
+      type: RecurrenceSchema,
+      default: null
+    },
+    // Unified Collaboration (P2P)
+    assignee: {
+       type: mongoose.Schema.Types.ObjectId, 
+       ref: 'User',
+       default: null 
+    },
+    assignedAt: {
+       type: Date,
+       default: null
+    },
+    // Tracking & Refs
+    references: {
+      type: [TaskReferenceSchema],
+      default: []
+    },
   },
   { timestamps: true }
 );
 
-// Index for efficient queries
+// Indexes for efficient queries
 TodoSchema.index({ user: 1, createdAt: -1 });
-TodoSchema.index({ user: 1, isCompleted: 1 });
+TodoSchema.index({ user: 1, status: 1 });
+TodoSchema.index({ user: 1, priority: 1 });
+TodoSchema.index({ user: 1, dueDate: 1 });
+TodoSchema.index({ 'references.refId': 1 }); // For finding tasks by doc/content
+
+// Pre-save hook to sync completedAt with status
+TodoSchema.pre<Todo>('save', function(next) {
+  if (this.isModified('status')) {
+    if (this.status === 'complete' && !this.completedAt) {
+      this.completedAt = new Date();
+    }
+  }
+  next();
+});
 
 export default mongoose.model<Todo>('Todo', TodoSchema);
