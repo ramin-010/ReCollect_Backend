@@ -207,3 +207,129 @@ export const getTodos = async (
         next(err);
     }
 };
+
+
+// Update a todo (PATCH)
+export const updateTodo = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+): Promise<void> => {
+    try {
+        const userId = req.user?._id;
+        const { id } = req.params;
+
+        if (!userId) {
+            throw new ErrorResponse(401, "Unauthorized");
+        }
+
+        // Find the todo and check ownership
+        const existingTodo = await TodoModel.findOne({
+            _id: new mongoose.Types.ObjectId(id),
+            $or: [
+                { user: new mongoose.Types.ObjectId(String(userId)) },
+                { assignee: new mongoose.Types.ObjectId(String(userId)) }
+            ]
+        });
+
+        if (!existingTodo) {
+            throw new ErrorResponse(404, "Task not found or you don't have permission to update it");
+        }
+
+        // Allowed fields for update
+        const allowedUpdates = [
+            'title', 
+            'description', 
+            'status', 
+            'priority', 
+            'dueDate', 
+            'reminderDate', 
+            'subtasks', 
+            'labels',
+            'assignee',
+            'recurrence'
+        ];
+
+        const updates: Record<string, any> = {};
+        
+        for (const key of allowedUpdates) {
+            if (req.body[key] !== undefined) {
+                if (key === 'dueDate' || key === 'reminderDate') {
+                    updates[key] = req.body[key] ? new Date(req.body[key]) : null;
+                } else if (key === 'assignee') {
+                    updates[key] = req.body[key] ? new mongoose.Types.ObjectId(req.body[key]) : null;
+                    if (req.body[key]) {
+                        updates.assignedAt = new Date();
+                    }
+                } else {
+                    updates[key] = req.body[key];
+                }
+            }
+        }
+
+        // Handle status change to complete
+        if (updates.status === 'complete' && existingTodo.status !== 'complete') {
+            updates.completedAt = new Date();
+        } else if (updates.status === 'pending' && existingTodo.status === 'complete') {
+            updates.completedAt = null;
+        }
+
+        const updatedTodo = await TodoModel.findByIdAndUpdate(
+            id,
+            { $set: updates },
+            { new: true, runValidators: true }
+        ).lean();
+
+        if (!updatedTodo) {
+            throw new ErrorResponse(404, "Task not found");
+        }
+
+        res.status(200).json({
+            success: true,
+            data: updatedTodo,
+            message: 'Task updated successfully'
+        });
+    } catch (err) {
+        next(err);
+    }
+};
+
+
+// Delete a todo (DELETE)
+export const deleteTodo = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+): Promise<void> => {
+    try {
+        const userId = req.user?._id;
+        const { id } = req.params;
+
+        if (!userId) {
+            throw new ErrorResponse(401, "Unauthorized");
+        }
+
+
+        // Find and delete only if user owns it
+        const deletedTodo = await TodoModel.findOneAndDelete({
+            _id: new mongoose.Types.ObjectId(id),
+            user: new mongoose.Types.ObjectId(String(userId))
+        });
+
+        if (!deletedTodo) {
+            throw new ErrorResponse(404, "Task not found or you don't have permission to delete it");
+        }
+
+        // Also delete any associated reminders
+        await reminderSchema.deleteMany({
+            todoId: new mongoose.Types.ObjectId(id)
+        });
+
+        res.status(200).json({
+            success: true,
+            message: 'Task deleted successfully'
+        });
+    } catch (err) {
+        next(err);
+    }
+};
