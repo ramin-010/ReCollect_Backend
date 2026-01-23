@@ -215,10 +215,33 @@ export const sendTodoReminderEmail = async (
     // White text logo that works on dark backgrounds
     const logoUrl = 'https://res.cloudinary.com/dsfb3jjqx/image/upload/v1765101198/recollect/pyf5tmicuidnxtmi76e5.png';
 
+    // Priority styling
+    const priorityColors: Record<string, string> = {
+      low: '#10b981',    // green
+      medium: '#f59e0b', // amber
+      high: '#ef4444'    // red
+    };
+    const priorityColor = priorityColors[todo.priority] || '#6b7280';
+    const priorityLabel = (todo.priority || 'normal').toUpperCase();
+
+    // Labels generation
+    const labelsHtml = todo.labels?.map((l: any) => 
+      `<span style="display: inline-block; background-color: ${l.color}20; color: ${l.color}; border: 1px solid ${l.color}40; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 500; margin-left: 4px;">${l.name}</span>`
+    ).join('') || '';
+
+    // Description HTML handling - supports rich content including images
+    let descriptionHtml = '';
+    if (todo.description && todo.description.trim()) {
+        descriptionHtml = `
+        <div style="margin: 16px 0; padding: 12px 16px; background-color: #f3f4f6; border-radius: 6px; border-left: 3px solid #111827;">
+            <div style="font-size: 14px; color: #4b5563; line-height: 1.6;">${todo.description}</div>
+        </div>`;
+    }
+
     const mailOptions = {
       from: `"ReCollect" <${process.env.EMAIL_FROM || 'noreply@recollect.com'}>`,
       to: user.email,
-      subject: `Reminder: ${todo.text.substring(0, 50)}${todo.text.length > 50 ? '...' : ''}`,
+      subject: `Reminder: ${todo.title.substring(0, 50)}${todo.title.length > 50 ? '...' : ''}`,
       html: `
         <!DOCTYPE html>
         <html>
@@ -246,9 +269,21 @@ export const sendTodoReminderEmail = async (
                         <p style="margin: 0 0 8px; font-size: 12px; color: #6b7280; text-transform: uppercase; letter-spacing: 1px; font-weight: 600;">
                           Task Reminder
                         </p>
-                        <h1 style="margin: 0 0 16px; font-size: 20px; font-weight: 600; color: #111827; line-height: 1.4;">
-                          ${todo.text}
+                        
+                        <h1 style="margin: 0 0 12px; font-size: 20px; font-weight: 600; color: #111827; line-height: 1.4;">
+                          ${todo.title}
                         </h1>
+
+                        <!-- Meta Chips -->
+                        <div style="margin-bottom: 20px;">
+                            <span style="display: inline-block; background-color: ${priorityColor}20; color: ${priorityColor}; padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 700;">
+                                ${priorityLabel}
+                            </span>
+                            ${labelsHtml}
+                        </div>
+
+                        ${descriptionHtml}
+
                         <p style="margin: 0 0 24px; font-size: 15px; color: #6b7280; line-height: 1.5;">
                           Hi ${user.name}, this is a reminder for your scheduled task.
                         </p>

@@ -29,13 +29,10 @@ export const scheduleReminder = async ({
     reminderId, // New parameter
 }: ScheduleReminderDTO): Promise<void> => {
     try {
-        console.log(`[scheduleReminder] USE_BULLMQ: ${USE_BULLMQ}, remindAt: ${remindAt}, reminderId: ${reminderId}`);
 
-        // If reminderId is provided, use it directly (for new reminders)
         if (reminderId) {
             if (USE_BULLMQ && reminderQueue) {
                 const delay = new Date(remindAt).getTime() - Date.now();
-                console.log(`[BullMQ] Scheduling job with delay: ${delay}ms for reminder ${reminderId}`);
                 if (delay > 0) {
                     await reminderQueue.add(
                         "sendReminder",
@@ -52,7 +49,6 @@ export const scheduleReminder = async ({
             return;
         }
 
-        // Legacy path: search for existing reminder (for updates)
         const existingReminder = await Reminder.findOne({
             user: userId,
             content: contentId,
@@ -60,8 +56,6 @@ export const scheduleReminder = async ({
         });
 
         if (existingReminder) {
-            console.log(`✓ Found existing reminder ${existingReminder._id}`);
-            // Update existing reminder
             existingReminder.reminderDate = remindAt;
             existingReminder.message = message;
             existingReminder.emailSent = false;
@@ -89,6 +83,38 @@ export const scheduleReminder = async ({
         }
     } catch (error) {
         console.error("Error scheduling reminder:", error);
+        throw error;
+    }
+};
+
+// DTO for todo reminders
+interface ScheduleTodoReminderDTO {
+    reminderId: string | mongoose.Types.ObjectId;
+    remindAt: Date;
+}
+
+/**
+ * Schedule a todo reminder via BullMQ or let cron handle it
+ * Simpler than scheduleReminder since we already have the reminder ID from creation
+ */
+export const scheduleTodoReminder = async ({
+    reminderId,
+    remindAt,
+}: ScheduleTodoReminderDTO): Promise<void> => {
+    try {
+        if (USE_BULLMQ && reminderQueue) {
+            const delay = new Date(remindAt).getTime() - Date.now();
+            if (delay > 0) {
+                await reminderQueue.add(
+                    "sendReminder",
+                    { reminderId: String(reminderId) },
+                    { delay, jobId: `reminder-${String(reminderId)}` }
+                );
+            }
+        }
+        // If not using BullMQ, cron will pick up pending reminders
+    } catch (error) {
+        console.error("Error scheduling todo reminder:", error);
         throw error;
     }
 };

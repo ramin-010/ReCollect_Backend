@@ -2,6 +2,8 @@ import { Request, Response, NextFunction } from 'express';
 import mongoose from 'mongoose';
 import TodoModel, { Todo } from '../models/todoSchema';
 import ErrorResponse from '../utils/errorResponse';
+import reminderSchema from '../models/reminderSchema';
+import { scheduleTodoReminder } from '../services/reminderService';
 
 interface CloudFileOutput extends Express.Multer.File {
   cloudUrl: string;
@@ -25,16 +27,11 @@ export const createTodo = async (
     res: Response,
     next: NextFunction
 ): Promise<void> => {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+    
     try {
         const userId = req.user?._id as string;
-        
-        console.log('[createTodo] ========== START ==========');
-        console.log('[createTodo] User ID:', userId);
-        console.log('[createTodo] Request body keys:', Object.keys(req.body));
-        console.log('[createTodo] Has files:', !!req.files);
-        if (req.files) {
-            console.log('[createTodo] File keys:', Object.keys(req.files));
-        }
 
         let { 
             title, 
@@ -50,45 +47,30 @@ export const createTodo = async (
             imageNodeIds
         } = req.body;
 
-        console.log('[createTodo] Title:', title);
-        console.log('[createTodo] Description length:', description?.length || 0);
-        console.log('[createTodo] imageNodeIds (raw):', imageNodeIds);
-
         subtasks = parseJson<any[]>(subtasks, []);
         labels = parseJson<any[]>(labels, []);
         recurrence = parseJson<any>(recurrence, null);
         imageNodeIds = parseJson<string[]>(imageNodeIds, []);
 
-        console.log('[createTodo] imageNodeIds (parsed):', imageNodeIds);
-        console.log('[createTodo] imageNodeIds length:', imageNodeIds.length);
-
         if (!title || !title.trim()) {
             throw new ErrorResponse(400, "Task title is required");
         }
 
+        // Process uploaded images
         const files = req.files as Record<string, Express.Multer.File[]> | undefined;
         const cloudImages: { imageId: string; cloudUrl: string; cloudPublicId: string }[] = [];
         
-        console.log('[createTodo] Condition check - files:', !!files, ', imageNodeIds.length:', imageNodeIds.length, ', description:', !!description);
-        
         if (files && imageNodeIds.length > 0 && description) {
-            console.log('[createTodo] Processing images...');
-
             const imageUrlMap: Record<string, { url: string; publicId: string }> = {};
             
             for (const imageId of imageNodeIds) {
                 const fieldName = `image_${imageId}`;
-                console.log('[createTodo] Looking for field:', fieldName);
-                
                 const fileArray = files[fieldName];
-                console.log('[createTodo] Found file array:', !!fileArray, 'Length:', fileArray?.length || 0);
                 
                 if (fileArray && fileArray.length > 0) {
                     const file = fileArray[0] as CloudFileOutput;
-                    console.log('[createTodo] File properties - cloudUrl:', !!file.cloudUrl, 'cloudPublicId:', !!file.cloudPublicId);
                     
                     if (file.cloudUrl && file.cloudPublicId) {
-                        console.log('[createTodo] Adding to imageUrlMap:', imageId, '->', file.cloudUrl.substring(0, 50));
                         imageUrlMap[imageId] = {
                             url: file.cloudUrl,
                             publicId: file.cloudPublicId,
@@ -101,21 +83,17 @@ export const createTodo = async (
                     }
                 }
             }
-            
-            console.log('[createTodo] Total cloudImages:', cloudImages.length);
-            console.log('[createTodo] Replacing placeholders in description...');
 
+            // Replace placeholders with actual URLs
             for (const [imageId, data] of Object.entries(imageUrlMap)) {
                 const placeholder = `__PENDING_UPLOAD_${imageId}__`;
-                console.log('[createTodo] Replacing placeholder:', placeholder);
                 description = description.replace(placeholder, data.url);
             }
-            
-            console.log('[createTodo] Description after replacement (first 100 chars):', description?.substring(0, 100));
-        } else {
-            console.log('[createTodo] Skipping image processing - condition not met');
         }
 
+        // Parse reminder date
+        const parsedReminderDate = reminderDate ? new Date(reminderDate) : null;
+        
         const todoData = {
             user: new mongoose.Types.ObjectId(userId),
             title: title.trim(),
@@ -123,7 +101,7 @@ export const createTodo = async (
             status: status || 'pending',
             priority: priority || 'medium',
             dueDate: dueDate ? new Date(dueDate) : null,
-            reminderDate: reminderDate ? new Date(reminderDate) : null,
+            reminderDate: parsedReminderDate,
             subtasks: subtasks || [],
             labels: labels || [],
             recurrence: recurrence || null,
@@ -132,17 +110,50 @@ export const createTodo = async (
             assignedAt: assignee ? new Date() : null
         };
 
-        console.log('[createTodo] Final cloudImages count:', todoData.cloudImages.length);
-        console.log('[createTodo] Creating todo in database...');
-
-        const todo = await TodoModel.create(todoData);
+        // Create todo within transaction
+        const [todo] = await TodoModel.create([todoData], { session });
         
         if (!todo) {
             throw new ErrorResponse(400, "Failed to create task");
         }
 
-        console.log('[createTodo] Todo created successfully:', todo._id);
-        console.log('[createTodo] ========== END ==========');
+        // Create reminder document if reminderDate is provided
+        let reminderScheduleData: { reminderId: mongoose.Types.ObjectId; remindAt: Date } | null = null;
+        
+        if (parsedReminderDate) {
+            if (isNaN(parsedReminderDate.getTime())) {
+                throw new ErrorResponse(400, "Invalid reminder date");
+            }
+
+            const reminderPayload = {
+                user: new mongoose.Types.ObjectId(userId),
+                type: 'todo' as const,
+                todoId: todo._id as mongoose.Types.ObjectId,
+                reminderDate: parsedReminderDate,
+                message: `Reminder: ${title.trim()}`,
+                emailSent: false,
+                status: 'pending' as const,
+            };
+
+            const [createdReminder] = await reminderSchema.create([reminderPayload], { session });
+            
+            if (!createdReminder) {
+                throw new ErrorResponse(400, "Failed to create reminder");
+            }
+
+            reminderScheduleData = {
+                reminderId: createdReminder._id as mongoose.Types.ObjectId,
+                remindAt: parsedReminderDate,
+            };
+        }
+
+        await session.commitTransaction();
+
+        if (reminderScheduleData) {
+            scheduleTodoReminder(reminderScheduleData).catch(err => {
+                console.error("Failed to schedule todo reminder:", err);
+            });
+        }
 
         res.status(201).json({
             success: true,
@@ -151,8 +162,10 @@ export const createTodo = async (
         });
 
     } catch (err) {
-        console.error('[createTodo] ERROR:', err);
+        await session.abortTransaction();
         next(err);
+    } finally {
+        session.endSession();
     }
 };
 
@@ -166,19 +179,16 @@ export const getTodos = async (
         const userId = req.user?._id as string;
         const { status, priority } = req.query;
 
-
         const query: Record<string, any> = {
             $or: [
                 { user: new mongoose.Types.ObjectId(userId) },
                 { assignee: new mongoose.Types.ObjectId(userId) }
             ]
         };
-        
 
         if (status && ['pending', 'complete'].includes(status as string)) {
             query.status = status;
         }
-        
 
         if (priority && ['low', 'medium', 'high'].includes(priority as string)) {
             query.priority = priority;

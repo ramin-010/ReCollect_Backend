@@ -34,11 +34,10 @@ export const startCronScheduler = () => {
                     let emailSent = false;
 
                     if (reminderType === 'todo') {
-                        // Handle todo reminder
                         const reminder = await Reminder.findById(reminderId)
                             .populate([
                                 { path: "user", select: "email name" },
-                                { path: "todoId", select: "text isCompleted" }
+                                { path: "todoId", select: "title status description priority labels" }
                             ])
                             .lean();
 
