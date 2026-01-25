@@ -5,6 +5,7 @@ import ErrorResponse from '../utils/errorResponse';
 import reminderSchema from '../models/reminderSchema';
 import { scheduleTodoReminder } from '../services/reminderService';
 import cloudinary from '../utils/cloudinary';
+import TagsModel from '../models/tagsSchema';
 
 interface CloudFileOutput extends Express.Multer.File {
     cloudUrl: string;
@@ -69,7 +70,7 @@ export const createTodo = async (
             dueDate,
             reminderDate,
             subtasks,
-            labels,
+            tags, 
             assignee,
             recurrence,
             imageNodeIds,
@@ -78,7 +79,7 @@ export const createTodo = async (
 
         subtasks = parseJson<any[]>(subtasks, []);
         references = parseJson<any[]>(references, []);
-        labels = parseJson<any[]>(labels, []);
+        tags = parseJson<string[]>(tags, []);
         recurrence = parseJson<any>(recurrence, null);
         imageNodeIds = parseJson<string[]>(imageNodeIds, []);
 
@@ -127,6 +128,23 @@ export const createTodo = async (
             title: ref.title || undefined
         }));
         
+        // Process Tags
+        let populatedTags: mongoose.Types.ObjectId[] = [];
+        if (tags && tags.length > 0) {
+            const existingTags = await TagsModel.find({ name: { $in: tags } }).session(session).lean();
+            const existingTagNames = new Set(existingTags.map(t => t.name));
+            const newTagNames = tags.filter((name: string) => !existingTagNames.has(name));
+
+            let newTags: any[] = [];
+            if (newTagNames.length > 0) {
+                newTags = await TagsModel.insertMany(
+                    newTagNames.map((name: string) => ({ name })),
+                    { session, ordered: false }
+                );
+            }
+            populatedTags = [...existingTags, ...newTags].map(t => t._id as mongoose.Types.ObjectId);
+        }
+        
         const todoData = {
             user: new mongoose.Types.ObjectId(userId),
             title: title.trim(),
@@ -136,7 +154,7 @@ export const createTodo = async (
             dueDate: dueDate ? new Date(dueDate) : null,
             reminderDate: parsedReminderDate,
             subtasks: subtasks || [],
-            labels: labels || [],
+            tags: populatedTags,
             recurrence: recurrence || null,
             cloudImages: cloudImages.map(img => ({ imageId: img.imageId, cloudPublicId: img.cloudPublicId })),
             assignee: assignee ? new mongoose.Types.ObjectId(assignee) : null,
@@ -237,6 +255,7 @@ export const getTodos = async (
 
         const todos = await TodoModel.find(query)
             .sort({ createdAt: -1 })
+            .populate('tags', 'name') // Populate tags for frontend
             .lean();
 
         res.status(200).json({
@@ -286,7 +305,7 @@ export const updateTodo = async (
             'dueDate', 
             'reminderDate', 
             'subtasks', 
-            'labels',
+            'tags', 
             'assignee',
             'recurrence',
             'references',
@@ -350,8 +369,27 @@ export const updateTodo = async (
                     if (req.body[key]) {
                         updates.assignedAt = new Date();
                     }
-                } else if (key === 'subtasks' || key === 'labels' || key === 'references' || key === 'recurrence') {
+                } else if (key === 'subtasks' || key === 'references' || key === 'recurrence') {
                      updates[key] = parseJson(req.body[key], null); 
+                } else if (key === 'tags') {
+                     // Process Tags Update
+                     const rawTags = parseJson<string[]>(req.body.tags, []);
+                     if (rawTags.length > 0) {
+                        const existingTags = await TagsModel.find({ name: { $in: rawTags } }).session(session).lean();
+                        const existingTagNames = new Set(existingTags.map(t => t.name));
+                        const newTagNames = rawTags.filter((name: string) => !existingTagNames.has(name));
+
+                        let newTags: any[] = [];
+                        if (newTagNames.length > 0) {
+                            newTags = await TagsModel.insertMany(
+                                newTagNames.map((name: string) => ({ name })),
+                                { session, ordered: false }
+                            );
+                        }
+                        updates.tags = [...existingTags, ...newTags].map(t => t._id as mongoose.Types.ObjectId);
+                     } else {
+                        updates.tags = [];
+                     }
                 } else {
                     updates[key] = req.body[key];
                 }

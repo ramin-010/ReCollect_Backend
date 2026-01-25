@@ -41,8 +41,8 @@ export interface Todo extends Document {
   // Cloud Images for deletion tracking
   cloudImages?: { imageId: string; cloudPublicId: string }[];
 
-  // Labels
-  labels?: { id: string; name: string; color: string }[];
+  // Tags (Unified)
+  tags?: mongoose.Types.ObjectId[];
   
   // References (bi-directional linking)
   references?: TaskReference[];
@@ -78,12 +78,7 @@ const RecurrenceSchema = new Schema<TaskRecurrence>({
   interval: { type: Number, default: 1 }
 }, { _id: false });
 
-// Label schema
-const LabelSchema = new Schema({
-  id: { type: String, required: true },
-  name: { type: String, required: true },
-  color: { type: String, required: true }
-}, { _id: false });
+
 
 // Cloud image schema (for deletion tracking)
 const CloudImageSchema = new Schema({
@@ -139,11 +134,11 @@ const TodoSchema = new Schema<Todo>(
       type: [CloudImageSchema],
       default: []
     },
-    // Labels
-    labels: {
-      type: [LabelSchema],
-      default: []
-    },
+    // Unified Tags (References)
+    tags: [{
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Tags'
+    }],
     // Recurrence
     recurrence: {
       type: RecurrenceSchema,

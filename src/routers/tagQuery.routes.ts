@@ -4,6 +4,6 @@ import express from 'express';
 const router = express.Router();
 
 
-router.get('/tags', tagSearchQuery)
+router.get('/tagQuery/search', tagSearchQuery)
 
 export default router
