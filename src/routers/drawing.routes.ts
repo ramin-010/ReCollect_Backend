@@ -4,8 +4,20 @@ import { upflyUpload } from 'upfly';
 import {
   syncDrawing,
   getCloudDrawings,
-  deleteCloudDrawing
+  deleteCloudDrawing,
+  getDrawing,
+  createDrawingShareLink,
+  getSharedDrawingBySlug,
+  updateCollaboratorRole,
+  removeCollaborator
 } from '../controllers/drawing.controller';
+import {
+  createDrawingAccessRequest,
+  listDrawingAccessRequests,
+  approveDrawingAccessRequest,
+  rejectDrawingAccessRequest,
+  getAllPendingDrawingRequests
+} from '../controllers/drawingAccess.controller';
 
 const router = express.Router();
 
@@ -49,7 +61,21 @@ router.use(authMiddleware);
 router.post('/sync', upload as RequestHandler, syncDrawing);
 
 router.get('/', getCloudDrawings);
+router.get('/pending-requests', getAllPendingDrawingRequests as RequestHandler); // Must be before /:id generic route
 
-router.delete('/:localId', deleteCloudDrawing);
+router.get('/:id', getDrawing as RequestHandler);
+router.delete('/:localId', deleteCloudDrawing); // Keeping this for backward compat if clients use localId
+
+// Collaboration Routes
+router.get('/shared/:slug', getSharedDrawingBySlug as RequestHandler);
+router.post('/:id/link', createDrawingShareLink as RequestHandler);
+router.patch('/:id/collaborators/:collaboratorId', updateCollaboratorRole as RequestHandler);
+router.delete('/:id/collaborators/:collaboratorId', removeCollaborator as RequestHandler);
+
+// Access Request Routes
+router.post('/:id/request-access', createDrawingAccessRequest as RequestHandler);
+router.get('/:id/requests', listDrawingAccessRequests as RequestHandler);
+router.post('/:id/requests/:reqId/approve', approveDrawingAccessRequest as RequestHandler);
+router.post('/:id/requests/:reqId/reject', rejectDrawingAccessRequest as RequestHandler);
 
 export default router;

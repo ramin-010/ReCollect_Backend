@@ -86,6 +86,7 @@ export const createTodo = async (
         if (!title || !title.trim()) {
             throw new ErrorResponse(400, "Task title is required");
         }
+        console.log("diescroption 22",description)
 
         const files = req.files as Record<string, Express.Multer.File[]> | undefined;
         const cloudImages: { imageId: string; cloudUrl: string; cloudPublicId: string }[] = [];
@@ -317,7 +318,7 @@ export const updateTodo = async (
         
         const imageNodeIds = req.body.imageNodeIds ? parseJson<string[]>(req.body.imageNodeIds, []) : [];
         const files = req.files as Record<string, Express.Multer.File[]> | undefined;
-        
+
         const newCloudImages: { imageId: string; cloudPublicId: string }[] = [];
 
         if (files && imageNodeIds.length > 0 && description) {
@@ -363,14 +364,32 @@ export const updateTodo = async (
 
             if (req.body[key] !== undefined) {
                 if (key === 'dueDate' || key === 'reminderDate') {
-                    updates[key] = req.body[key] ? new Date(req.body[key]) : null;
+                    const rawValue = req.body[key];
+                    if (rawValue === 'null' || !rawValue) {
+                        updates[key] = null;
+                    } else {
+                        const date = new Date(rawValue);
+                        updates[key] = isNaN(date.getTime()) ? null : date;
+                    }
                 } else if (key === 'assignee') {
-                    updates[key] = req.body[key] ? new mongoose.Types.ObjectId(req.body[key]) : null;
-                    if (req.body[key]) {
+                    const rawAssignee = req.body[key];
+                    if (rawAssignee === 'null' || !rawAssignee) {
+                        updates[key] = null;
+                    } else {
+                        updates[key] = new mongoose.Types.ObjectId(rawAssignee);
                         updates.assignedAt = new Date();
                     }
                 } else if (key === 'subtasks' || key === 'references' || key === 'recurrence') {
-                     updates[key] = parseJson(req.body[key], null); 
+                     const parsed = parseJson(req.body[key], null) as any;
+                     if (key === 'references' && Array.isArray(parsed)) {
+                         updates[key] = parsed.map((ref: any) => ({
+                             type: ref.type,
+                             refId: new mongoose.Types.ObjectId(ref.refId),
+                             title: ref.title || undefined
+                         }));
+                     } else {
+                         updates[key] = parsed;
+                     }
                 } else if (key === 'tags') {
                      // Process Tags Update
                      const rawTags = parseJson<string[]>(req.body.tags, []);
