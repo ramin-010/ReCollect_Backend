@@ -59,8 +59,7 @@ app.use('/api', tagQueryRouter)
 import otpRoutes from './routers/otp.routes'
 app.use('/api', otpRoutes);
 
-import drawingRoutes from './routers/drawing.routes';
-app.use('/api/drawings', drawingRoutes);
+
 
 
 import todoRoutes from './routers/todo.routes';
@@ -75,6 +74,9 @@ app.use('/api', userRoutes);
 
 import docRoutes from './routers/doc.routes';
 app.use('/api/docs', docRoutes);
+
+import drawingRoutes from './routers/drawing.routes';
+app.use('/api/drawings', drawingRoutes);
 
 import uploadRoutes from './routers/upload.routes';
 app.use('/api/collab/upload', uploadRoutes);

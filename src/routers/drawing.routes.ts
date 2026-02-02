@@ -1,26 +1,18 @@
-import express, { RequestHandler } from 'express';
-import authMiddleware from '../middlwares/auth';
+import { Router, RequestHandler } from 'express';
 import { upflyUpload } from 'upfly';
+import protect from '../middlwares/auth';
 import {
-  syncDrawing,
-  getCloudDrawings,
-  deleteCloudDrawing,
+  getAllDrawings,
   getDrawing,
-  createDrawingShareLink,
-  getSharedDrawingBySlug,
-  updateCollaboratorRole,
-  removeCollaborator
+  createDrawing,
+  saveDrawing,
+  updateDrawing,
+  deleteDrawing,
 } from '../controllers/drawing.controller';
-import {
-  createDrawingAccessRequest,
-  listDrawingAccessRequests,
-  approveDrawingAccessRequest,
-  rejectDrawingAccessRequest,
-  getAllPendingDrawingRequests
-} from '../controllers/drawingAccess.controller';
 
-const router = express.Router();
+const router = Router();
 
+// Upfly config for image uploads (matches docs pattern)
 const cloud_name = process.env.CLOUDINARY_CLOUD_NAME || '';
 const cloud_key = process.env.CLOUDINARY_API_KEY || '';
 const cloud_secret = process.env.CLOUDINARY_API_SECRET || '';
@@ -30,19 +22,6 @@ const upload = upflyUpload({
     "image_*": {
       output: 'memory',
       format: 'webp',
-      quality: 50,
-      cloudStorage: true,
-      cloudProvider: "cloudinary",
-      cloudConfig: {
-        cloud_name: cloud_name,
-        api_key: cloud_key,
-        api_secret: cloud_secret,
-        folder: 'recollect/drawings'
-      }
-    },
-    "thumbnail": {
-      output: 'memory',
-      format: 'webp',
       quality: 60,
       cloudStorage: true,
       cloudProvider: "cloudinary",
@@ -50,32 +29,21 @@ const upload = upflyUpload({
         cloud_name: cloud_name,
         api_key: cloud_key,
         api_secret: cloud_secret,
-        folder: 'recollect/drawings/thumbnails'
+        folder: 'recollect-drawings'
       }
-    }
-  }
+    },
+  },
 });
 
-router.use(authMiddleware);
+// All routes require authentication
+router.use(protect);
 
-router.post('/sync', upload as RequestHandler, syncDrawing);
-
-router.get('/', getCloudDrawings);
-router.get('/pending-requests', getAllPendingDrawingRequests as RequestHandler); // Must be before /:id generic route
-
+// CRUD routes
+router.get('/', getAllDrawings as RequestHandler);
 router.get('/:id', getDrawing as RequestHandler);
-router.delete('/:localId', deleteCloudDrawing); // Keeping this for backward compat if clients use localId
-
-// Collaboration Routes
-router.get('/shared/:slug', getSharedDrawingBySlug as RequestHandler);
-router.post('/:id/link', createDrawingShareLink as RequestHandler);
-router.patch('/:id/collaborators/:collaboratorId', updateCollaboratorRole as RequestHandler);
-router.delete('/:id/collaborators/:collaboratorId', removeCollaborator as RequestHandler);
-
-// Access Request Routes
-router.post('/:id/request-access', createDrawingAccessRequest as RequestHandler);
-router.get('/:id/requests', listDrawingAccessRequests as RequestHandler);
-router.post('/:id/requests/:reqId/approve', approveDrawingAccessRequest as RequestHandler);
-router.post('/:id/requests/:reqId/reject', rejectDrawingAccessRequest as RequestHandler);
+router.post('/', createDrawing as RequestHandler);
+router.post('/:id/save', upload as RequestHandler, saveDrawing as RequestHandler);
+router.patch('/:id', updateDrawing as RequestHandler);
+router.delete('/:id', deleteDrawing as RequestHandler);
 
 export default router;

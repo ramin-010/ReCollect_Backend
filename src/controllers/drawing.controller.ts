@@ -1,6 +1,7 @@
-import { Request, Response, NextFunction } from "express";
-import Drawing from "../models/drawingSchema";
-import ErrorResponse from "../utils/errorResponse";
+import { Request, Response, NextFunction } from 'express';
+import Drawing from '../models/drawingSchema';
+import ErrorResponse from '../utils/errorResponse';
+import cloudinary from '../utils/cloudinary';
 
 interface CloudFileOutput extends Express.Multer.File {
   cloudUrl: string;
@@ -8,146 +9,368 @@ interface CloudFileOutput extends Express.Multer.File {
   cloudPublicId: string;
 }
 
-const ParseJson = <T>(data: any, fallback: T): T => {
+// Helper: Delete from Cloudinary
+const deleteFromCloud = async (publicId: string): Promise<void> => {
+  return new Promise((resolve, reject) => {
+    cloudinary.uploader.destroy(publicId, { invalidate: true }, (err: any, result: any) => {
+      if (err) {
+        console.error("[drawing] Cloud deletion error:", err);
+        reject(err);
+      } else {
+        console.log("[drawing] Cloud deletion result:", result);
+        resolve();
+      }
+    });
+  });
+};
+
+const batchDeleteFromCloud = async (publicIds: string[]): Promise<void> => {
+  if (publicIds.length === 0) return;
+  const deletePromises = publicIds.map(id =>
+    deleteFromCloud(id).catch(err => {
+      console.error(`[drawing] Failed to delete ${id}:`, err);
+    })
+  );
+  await Promise.allSettled(deletePromises);
+};
+
+const parseJson = <T>(data: any, fallback: T): T => {
   try {
     if (typeof data === "object" && data !== null) return data as T;
     if (typeof data === "string") return JSON.parse(data) as T;
     return fallback;
-  } catch (err) {
+  } catch {
     return fallback;
   }
 };
 
-const MAX_FREE_DRAWINGS = 3;
-
-export const syncDrawing = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
+/**
+ * Get all drawings for current user
+ */
+export const getAllDrawings = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const userId = req.user?._id;
-    const { localId, name } = req.body;
-    let data = ParseJson<any>(req.body.data, {});
-    const imageFileIds = ParseJson<string[]>(req.body.imageFileIds, []);
+    if (!userId) throw new ErrorResponse(401, 'Unauthorized');
 
-    if (!localId || !name) {
-      throw new ErrorResponse(400, "localId and name are required");
-    }
-
-        const existingDrawing = await Drawing.findOne({ user: userId, localId });
-    
-    if (!existingDrawing) {
-            const currentCount = await Drawing.countDocuments({ user: userId });
-      if (currentCount >= MAX_FREE_DRAWINGS) {
-        throw new ErrorResponse(403, `Free users can only sync up to ${MAX_FREE_DRAWINGS} drawings. Delete an existing cloud drawing to sync a new one.`);
-      }
-    }
-
-        const files = req.files as Record<string, Express.Multer.File[]>;
-    
-        if (imageFileIds.length > 0 && files && data.files) {
-      for (const fileId of imageFileIds) {
-        const fieldname = `image_${fileId}`;
-        const fileArray = files[fieldname];
-        
-        if (fileArray && fileArray.length > 0) {
-          const uploadedFile = fileArray[0] as CloudFileOutput;
-          
-          if (data.files[fileId]) {
-            data.files[fileId] = {
-              ...data.files[fileId],
-              dataURL: uploadedFile.cloudUrl,
-              cloudPublicId: uploadedFile.cloudPublicId,
-              isCloudUploaded: true
-            };
-          }
-        }
-      }
-    }
-
-        let thumbnailUrl = req.body.thumbnail || '';
-    if (files && files['thumbnail'] && files['thumbnail'].length > 0) {
-      const thumbnailFile = files['thumbnail'][0] as CloudFileOutput;
-      thumbnailUrl = thumbnailFile.cloudUrl;
-    }
-
-        const drawing = await Drawing.findOneAndUpdate(
-      { user: userId, localId },
-      { 
-        user: userId,
-        localId,
-        name,
-        data: data || {},
-        thumbnail: thumbnailUrl
-      },
-      { 
-        new: true, 
-        upsert: true,
-        setDefaultsOnInsert: true
-      }
-    );
-
-    res.status(200).json({
-      success: true,
-      data: {
-        _id: drawing._id,
-        localId: drawing.localId,
-        name: drawing.name,
-        thumbnail: drawing.thumbnail,
-        updatedAt: drawing.updatedAt
-      },
-      message: 'Drawing synced to cloud successfully'
-    });
-  } catch (err: any) {
-        if (err.code === 11000) {
-      return res.status(200).json({
-        success: true,
-        message: 'Drawing already synced'
-      });
-    }
-    next(err);
-  }
-};
-
-export const getCloudDrawings = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
-  try {
-    const userId = req.user?._id;
-
-    const drawings = await Drawing.find({ user: userId })
+    const drawings = await Drawing.find({
+      $or: [
+        { user: userId },
+        { 'collaborators.user': userId }
+      ]
+    })
+      .populate('collaborators.user', 'name email avatar')
       .sort({ updatedAt: -1 })
       .lean();
 
+    // Add role to each drawing
+    const drawingsWithRole = drawings.map((drawing: any) => {
+      const isOwner = drawing.user?.toString() === userId.toString();
+      let role: 'owner' | 'editor' | 'viewer' = 'owner';
+      if (!isOwner) {
+        const collaborator = drawing.collaborators?.find(
+          (c: any) => c.user?._id?.toString() === userId.toString()
+        );
+        role = collaborator?.role || 'viewer';
+      }
+      return { ...drawing, role };
+    });
+
     res.status(200).json({
       success: true,
-      data: drawings.map(d => ({
-        id: d.localId,
-        _id: d._id,
-        name: d.name,
-        data: d.data,
-        thumbnail: d.thumbnail,
-        createdAt: d.createdAt,
-        updatedAt: d.updatedAt,
-        isCloudSynced: true
-      }))
+      data: drawingsWithRole,
     });
-  } catch (err: any) {
+  } catch (err) {
     next(err);
   }
 };
 
-export const deleteCloudDrawing = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
+/**
+ * Get single drawing
+ */
+export const getDrawing = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
+    const { id } = req.params;
     const userId = req.user?._id;
-    const { localId } = req.params;
+    if (!userId) throw new ErrorResponse(401, 'Unauthorized');
 
-    const result = await Drawing.findOneAndDelete({ user: userId, localId });
+    const drawing = await Drawing.findOne({
+      _id: id,
+      $or: [
+        { user: userId },
+        { 'collaborators.user': userId }
+      ]
+    })
+      .populate('user', 'name email')
+      .populate('collaborators.user', 'name email avatar')
+      .lean();
 
-    if (!result) {
-      throw new ErrorResponse(404, "Drawing not found in cloud");
+    if (!drawing) throw new ErrorResponse(404, 'Drawing not found');
+
+    const isOwner = (drawing as any).user?._id?.toString() === userId.toString() ||
+                    (drawing as any).user?.toString() === userId.toString();
+    let role: 'owner' | 'editor' | 'viewer' = 'owner';
+    if (!isOwner) {
+      const collaborator = (drawing as any).collaborators?.find(
+        (c: any) => c.user?._id?.toString() === userId.toString()
+      );
+      role = collaborator?.role || 'viewer';
     }
+
+    // Log fetched size for analysis
+    const yjsSizeKB = (drawing as any).yjsState 
+      ? (Buffer.byteLength((drawing as any).yjsState, 'utf8') / 1024).toFixed(2) 
+      : '0';
+    console.log(`[Drawing API] GET ${id} | yjsState: ${yjsSizeKB} KB`);
 
     res.status(200).json({
       success: true,
-      message: 'Drawing removed from cloud'
+      data: drawing,
+      role,
     });
-  } catch (err: any) {
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * Create a new drawing
+ */
+export const createDrawing = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const userId = req.user?._id;
+    if (!userId) throw new ErrorResponse(401, 'Unauthorized');
+
+    const { name, localId } = req.body;
+
+    const newDrawing = await Drawing.create({
+      user: userId,
+      name: name || 'Untitled Drawing',
+      localId: localId || `drawing_${Date.now()}`,
+      yjsState: undefined,
+      collaborators: [],
+      cloudImages: [],
+    });
+
+    res.status(201).json({
+      success: true,
+      data: newDrawing.toObject(),
+      message: 'Drawing created successfully',
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * Save drawing yjsState with image handling
+ */
+export const saveDrawing = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const userId = req.user?._id;
+    if (!userId) throw new ErrorResponse(401, 'Unauthorized');
+
+    const drawing = await Drawing.findOne({
+      _id: id,
+      $or: [
+        { user: userId },
+        { 'collaborators.user': userId }
+      ]
+    });
+
+    if (!drawing) throw new ErrorResponse(404, 'Drawing not found');
+
+    const isOwner = drawing.user.toString() === userId.toString();
+    const collaborator = drawing.collaborators?.find(
+      (c) => c.user.toString() === userId.toString()
+    );
+
+    // Viewers cannot save
+    if (!isOwner && collaborator?.role === 'viewer') {
+      throw new ErrorResponse(403, 'Viewers cannot edit this drawing');
+    }
+
+    let { yjsState, name, thumbnail, imageFileIds, allImageIds } = req.body;
+    
+    // Parse JSON fields
+    imageFileIds = parseJson<string[]>(imageFileIds, []);
+    allImageIds = parseJson<string[]>(allImageIds, []);
+
+    // Log incoming size
+    const incomingYjsSizeKB = yjsState ? (Buffer.byteLength(yjsState, 'utf8') / 1024).toFixed(2) : '0';
+    console.log(`[Drawing API] SAVE ${id} | START | yjsState: ${incomingYjsSizeKB} KB | images: ${imageFileIds.length} new, ${allImageIds.length} total`);
+
+    // Process uploaded images from Upfly
+    const files = req.files as Record<string, Express.Multer.File[]> | undefined;
+    const newCloudImages: { imageId: string; cloudUrl: string; cloudPublicId: string }[] = [];
+    const imageUrlMap: Record<string, { url: string; publicId: string }> = {};
+
+    if (files && imageFileIds.length > 0) {
+      for (const imageId of imageFileIds) {
+        const fieldName = `image_${imageId}`;
+        const fileArray = files[fieldName];
+        if (fileArray && fileArray.length > 0) {
+          const file = fileArray[0] as CloudFileOutput;
+          if (file.cloudUrl && file.cloudPublicId) {
+            imageUrlMap[imageId] = {
+              url: file.cloudUrl,
+              publicId: file.cloudPublicId,
+            };
+            // console.log(`[Drawing API] Uploaded image ${imageId} -> ${file.cloudUrl}`);
+            
+            // Track new cloud images
+            newCloudImages.push({
+              imageId,
+              cloudUrl: file.cloudUrl,
+              cloudPublicId: file.cloudPublicId,
+            });
+          }
+        }
+      }
+      
+      // Note: We do NOT modify the binary yjsState here to replace URLs.
+      // Instead, we store the mapping in `cloudImages` and the frontend
+      // hydrates the file URLs from `cloudImages` on load.
+      // This avoids risking corruption of the binary Yjs update blob.
+    }
+
+    // Cleanup orphaned images (images that were removed from the drawing)
+    const newImageIdsSet = new Set(allImageIds);
+    const existingCloudImages = drawing.cloudImages || [];
+    const imagesToDelete: typeof existingCloudImages = [];
+    const imagesToRetain: typeof existingCloudImages = [];
+
+    for (const img of existingCloudImages) {
+      if (newImageIdsSet.has(img.imageId)) {
+        imagesToRetain.push(img);
+      } else {
+        imagesToDelete.push(img);
+      }
+    }
+    // Log cleanup details
+    console.log(`[Drawing API] SAVE ${id} | CLEANUP | existing: ${existingCloudImages.length}, retain: ${imagesToRetain.length}, delete: ${imagesToDelete.length}, new: ${newCloudImages.length}`);
+    
+    if (imagesToDelete.length > 0) {
+      const publicIds = imagesToDelete.map(img => img.cloudPublicId);
+      console.log(`[Drawing API] SAVE ${id} | DELETING orphaned images:`, publicIds);
+      await batchDeleteFromCloud(publicIds);
+      console.log(`[Drawing API] SAVE ${id} | Deleted ${publicIds.length} orphaned images`);
+    }
+
+    const finalCloudImages = [...imagesToRetain, ...newCloudImages];
+
+    // Build update data
+    const updateData: any = {
+      updatedAt: new Date(),
+      cloudImages: finalCloudImages,
+    };
+    if (yjsState !== undefined) updateData.yjsState = yjsState;
+    if (name !== undefined) updateData.name = name;
+    if (thumbnail !== undefined) updateData.thumbnail = thumbnail;
+    
+    // Log final size before DB save
+    const finalYjsSizeKB = yjsState ? (Buffer.byteLength(yjsState, 'utf8') / 1024).toFixed(2) : '0';
+    console.log(`[Drawing API] SAVE ${id} | DB_WRITE | yjsState: ${finalYjsSizeKB} KB | cloudImages: ${finalCloudImages.length}`);
+
+    const updatedDrawing = await Drawing.findByIdAndUpdate(
+      id,
+      updateData,
+      { new: true, runValidators: true }
+    ).lean();
+
+    if (!updatedDrawing) throw new ErrorResponse(404, 'Drawing not found');
+
+    console.log(`[Drawing API] SAVE ${id} | Success | cloudImages: ${finalCloudImages.length}`);
+
+    res.status(200).json({
+      success: true,
+      data: updatedDrawing,
+      imageUrlMap, // Return URL map so frontend can update local state
+      message: 'Drawing saved successfully',
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * Update drawing metadata (name, etc)
+ */
+export const updateDrawing = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const userId = req.user?._id;
+    if (!userId) throw new ErrorResponse(401, 'Unauthorized');
+
+    const drawing = await Drawing.findOne({
+      _id: id,
+      user: userId, // Only owner can update metadata
+    });
+
+    if (!drawing) throw new ErrorResponse(404, 'Drawing not found or not authorized');
+
+    const { name } = req.body;
+
+    const updateData: any = { updatedAt: new Date() };
+    if (name !== undefined) updateData.name = name;
+
+    const updatedDrawing = await Drawing.findByIdAndUpdate(
+      id,
+      updateData,
+      { new: true, runValidators: true }
+    ).lean();
+
+    res.status(200).json({
+      success: true,
+      data: updatedDrawing,
+      message: 'Drawing updated successfully',
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * Delete drawing with image cleanup
+ */
+export const deleteDrawing = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const userId = req.user?._id;
+    if (!userId) throw new ErrorResponse(401, 'Unauthorized');
+
+    console.log(`[Drawing API] DELETE ${id} | START | user: ${userId}`);
+
+    const drawing = await Drawing.findOne({
+      _id: id,
+      user: userId, // Only owner can delete
+    });
+
+    if (!drawing) {
+      console.log(`[Drawing API] DELETE ${id} | NOT FOUND or not authorized`);
+      throw new ErrorResponse(404, 'Drawing not found or not authorized');
+    }
+
+    console.log(`[Drawing API] DELETE ${id} | Found drawing: "${drawing.name}" | cloudImages: ${drawing.cloudImages?.length || 0}`);
+
+    // Cleanup all cloud images
+    if (drawing.cloudImages && drawing.cloudImages.length > 0) {
+      const publicIds = drawing.cloudImages.map(img => img.cloudPublicId);
+      console.log(`[Drawing API] DELETE ${id} | CLEANUP | Deleting ${publicIds.length} cloud images:`, publicIds);
+      await batchDeleteFromCloud(publicIds);
+      console.log(`[Drawing API] DELETE ${id} | CLEANUP | Deleted ${publicIds.length} cloud images`);
+    } else {
+      console.log(`[Drawing API] DELETE ${id} | CLEANUP | No cloud images to delete`);
+    }
+
+    await Drawing.findByIdAndDelete(id);
+    console.log(`[Drawing API] DELETE ${id} | COMPLETE | Removed from database`);
+
+    res.status(200).json({
+      success: true,
+      message: 'Drawing deleted successfully',
+    });
+  } catch (err) {
     next(err);
   }
 };
