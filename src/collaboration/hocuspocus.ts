@@ -19,7 +19,7 @@ export interface CollabDocument {
   }
 
 export interface DocumentHandler {
-  authorize(userId: string, docId: string): Promise<boolean>;
+  authorize(userId: string | null, docId: string, shareToken?: string): Promise<boolean>;
   load(docId: string): Promise<CollabDocument | null>;
   save(docId: string, yjsState: string): Promise<void>;
   cleanup?(docId: string): Promise<void>;
@@ -31,7 +31,7 @@ const documentHandlers = new Map<string, DocumentHandler>();
 
 export function registerDocumentHandler(prefix: string, handler: DocumentHandler) {
   documentHandlers.set(prefix, handler);
-  console.log(`[Collab] Registered handler for: ${prefix}`);
+
 }
 
 function parseDocumentName(documentName: string): { prefix: string; id: string } | null {
@@ -96,7 +96,6 @@ export function disconnectUser(docId: string, userId: string, remainingCount: nu
             } else if (typeof connKey.terminate === 'function') {
               connKey.terminate();
             }
-            console.log(`[Collab] Force disconnected user ${userId} from ${docId} (${closeReason})`);
           }
         }
       }
@@ -155,27 +154,10 @@ function getRandomColor(userId: string): string {
 
 export const hocuspocusServer = new Server({
   port: parseInt(process.env.COLLAB_PORT || '1234'),
+  debounce: 2000,
+  maxDebounce: 10000,
   
   async onAuthenticate({ token, documentName, request }) {
-    let authToken = token;
-
-    if (!authToken && request && (request as any).headers?.cookie) {
-      const cookies = (request as any).headers.cookie.split(';');
-      const tokenCookie = cookies.find((c: string) => c.trim().startsWith('token='));
-      if (tokenCookie) {
-        authToken = tokenCookie.split('=')[1].trim();
-      }
-    }
-
-    if (!authToken) {
-      throw new Error('No token provided');
-    }
-
-    const user = await authenticateUser(authToken);
-    if (!user) {
-      throw new Error('Invalid token');
-    }
-
     const parsed = parseDocumentName(documentName);
     if (!parsed) {
       throw new Error('Invalid document name format');
@@ -185,36 +167,82 @@ export const hocuspocusServer = new Server({
     if (!handler) {
       throw new Error(`No handler registered for: ${parsed.prefix}`);
     }
+    let shareToken: string | undefined;
+    if (request) {
+      const url = new URL(request.url || '', `http://${request.headers?.host || 'localhost'}`);
+      shareToken = url.searchParams.get('shareToken') || undefined;
+    }
+    let authToken = token;
+    if (!authToken && request && (request as any).headers?.cookie) {
+      const cookies = (request as any).headers.cookie.split(';');
+      const tokenCookie = cookies.find((c: string) => c.trim().startsWith('token='));
+      if (tokenCookie) {
+        authToken = tokenCookie.split('=')[1].trim();
+      }
+    }
+    let user: CollabUser | null = null;
+    if (authToken) {
+      user = await authenticateUser(authToken);
+    }
+    if (user) {
+      const canEdit = await handler.authorize(user.id, parsed.id, shareToken);
+      if (!canEdit) {
+        throw new Error('Not authorized to edit this document');
+      }
 
-    const canEdit = await handler.authorize(user.id, parsed.id);
-    if (!canEdit) {
-      throw new Error('Not authorized to edit this document');
+      const key = `${documentName}:${user.id}`;
+      activeConnections.set(key, { userId: user.id, documentName, user });
+      
+      return { user };
+    }
+    if (shareToken && parsed.prefix === 'drawing') {
+      const canAccess = await handler.authorize(null, parsed.id, shareToken);
+      
+      if (!canAccess) {
+        throw new Error('Invalid or disabled share link');
+      }
+      const guestId = `guest_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const guestNames = ['Fox', 'Owl', 'Bear', 'Wolf', 'Deer', 'Hawk', 'Lynx', 'Raven', 'Seal', 'Otter'];
+      const randomName = guestNames[Math.floor(Math.random() * guestNames.length)];
+      
+      const guestUser: CollabUser = {
+        id: guestId,
+        name: `Guest ${randomName}`,
+        email: '',
+        avatar: undefined,
+        color: getRandomColor(guestId),
+      };
+
+      const key = `${documentName}:${guestId}`;
+      activeConnections.set(key, { userId: guestId, documentName, user: guestUser, isGuest: true });
+      
+      return { user: guestUser, isGuest: true };
     }
 
-            const key = `${documentName}:${user.id}`;
-    activeConnections.set(key, { userId: user.id, documentName, user });
-    console.log(`[Collab] Registered connection in auth: ${key}`);
 
-    return { user };
+    throw new Error('Authentication required');
   },
 
-    async onLoadDocument({ documentName, document }) {
+
+
+  async onLoadDocument({ documentName, document }) {
     const parsed = parseDocumentName(documentName);
     if (!parsed) return document;
 
     const handler = documentHandlers.get(parsed.prefix);
     if (!handler) return document;
-
+    
     try {
+
+
       const doc = await handler.load(parsed.id);
       
       if (doc?.yjsState) {
         const state = Buffer.from(doc.yjsState, 'base64');
         Y.applyUpdate(document, state);
-        console.log(`[Collab] Loaded ${parsed.prefix}:${parsed.id}`);
       }
     } catch (error) {
-      console.error(`[Collab] Error loading ${parsed.prefix}:${parsed.id}:`, error);
+      console.error(`[Hocuspocus] ❌ Error loading ${parsed.prefix}:${parsed.id}:`, error);
     }
 
     return document;
@@ -232,7 +260,6 @@ export const hocuspocusServer = new Server({
       const stateBase64 = Buffer.from(state).toString('base64');
       
       await handler.save(parsed.id, stateBase64);
-      console.log(`[Collab] Saved ${parsed.prefix}:${parsed.id}`);
     } catch (error) {
       console.error(`[Collab] Error saving ${parsed.prefix}:${parsed.id}:`, error);
     }

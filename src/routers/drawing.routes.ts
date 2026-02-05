@@ -1,6 +1,7 @@
 import { Router, RequestHandler } from 'express';
 import { upflyUpload } from 'upfly';
 import protect from '../middlwares/auth';
+
 import {
   getAllDrawings,
   getDrawing,
@@ -8,6 +9,10 @@ import {
   saveDrawing,
   updateDrawing,
   deleteDrawing,
+  enableShare,
+  disableShare,
+  getSharedDrawing,
+  getShareStatus,
 } from '../controllers/drawing.controller';
 
 const router = Router();
@@ -35,15 +40,21 @@ const upload = upflyUpload({
   },
 });
 
-// All routes require authentication
-router.use(protect);
+// ========== PUBLIC ROUTE (no auth) ==========
+console.log('[drawing.routes] Registering PUBLIC route: /public/shared/:token (NO AUTH)');
+router.get('/public/shared/:token', getSharedDrawing as RequestHandler);
 
-// CRUD routes
-router.get('/', getAllDrawings as RequestHandler);
-router.get('/:id', getDrawing as RequestHandler);
-router.post('/', createDrawing as RequestHandler);
-router.post('/:id/save', upload as RequestHandler, saveDrawing as RequestHandler);
-router.patch('/:id', updateDrawing as RequestHandler);
-router.delete('/:id', deleteDrawing as RequestHandler);
+// ========== PROTECTED ROUTES (require auth) ==========
+router.get('/', protect, getAllDrawings as RequestHandler);
+router.get('/:id', protect, getDrawing as RequestHandler);
+router.post('/', protect, createDrawing as RequestHandler);
+router.post('/:id/save', protect, upload as RequestHandler, saveDrawing as RequestHandler);
+router.patch('/:id', protect, updateDrawing as RequestHandler);
+router.delete('/:id', protect, deleteDrawing as RequestHandler);
+
+// Share management routes (owner only)
+router.get('/:id/share', protect, getShareStatus as RequestHandler);
+router.post('/:id/share', protect, enableShare as RequestHandler);
+router.delete('/:id/share', protect, disableShare as RequestHandler);
 
 export default router;

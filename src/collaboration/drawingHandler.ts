@@ -9,24 +9,56 @@ import * as Y from 'yjs';
 const drawingHandler: DocumentHandler = {
   /**
    * Authorize user to access the drawing.
-   * Owner and collaborators (editors/viewers) can access.
+   * - Owner and collaborators (editors/viewers) can access
+   * - Anonymous users with valid shareToken can access
    */
-  async authorize(userId: string, drawingId: string): Promise<boolean> {
+  async authorize(userId: string | null, drawingId: string, shareToken?: string): Promise<boolean> {
+    console.log('[drawingHandler] === AUTHORIZE ===');
+    console.log('[drawingHandler] userId:', userId);
+    console.log('[drawingHandler] drawingId:', drawingId);
+    console.log('[drawingHandler] shareToken:', shareToken ? shareToken.slice(0, 8) + '...' : 'none');
+    
     try {
       const drawing = await Drawing.findById(drawingId);
-      if (!drawing) return false;
-
-      // Owner can always access
+      if (!drawing) {
+        console.log('[drawingHandler] ❌ Drawing not found');
+        return false;
+      }
+      console.log('[drawingHandler] Drawing found:', drawing.name);
+      console.log('[drawingHandler] Drawing shareEnabled:', drawing.shareEnabled);
+      console.log('[drawingHandler] Drawing shareToken:', drawing.shareToken ? drawing.shareToken.slice(0, 8) + '...' : 'none');
+      if (shareToken) {
+        const tokenMatches = drawing.shareToken === shareToken;
+        const isEnabled = drawing.shareEnabled;
+        console.log('[drawingHandler] Token matches:', tokenMatches);
+        console.log('[drawingHandler] Share enabled:', isEnabled);
+        
+        const isValidShare = tokenMatches && isEnabled;
+        if (isValidShare) {
+          console.log(`[drawingHandler] ✅ Share token valid for ${drawingId}`);
+          return true;
+        } else {
+          console.log(`[drawingHandler] ❌ Share token invalid - matches: ${tokenMatches}, enabled: ${isEnabled}`);
+        }
+      }
+      if (!userId) {
+        console.log('[drawingHandler] ❌ No userId and no valid share token');
+        return false;
+      }
       const isOwner = drawing.user.toString() === userId;
-      if (isOwner) return true;
-
-      // Check if user is a collaborator
+      console.log('[drawingHandler] Is owner:', isOwner);
+      if (isOwner) {
+        console.log('[drawingHandler] ✅ Owner authorized');
+        return true;
+      }
       const collaborator = drawing.collaborators?.find(
         (c: any) => c.user.toString() === userId
       );
+      console.log('[drawingHandler] Is collaborator:', !!collaborator);
 
       return !!collaborator;
-    } catch {
+    } catch (err) {
+      console.error('[drawingHandler] ❌ Error:', err);
       return false;
     }
   },
@@ -69,7 +101,6 @@ const drawingHandler: DocumentHandler = {
    * Could be used to clean orphaned images in the future.
    */
   async cleanup(drawingId: string): Promise<void> {
-    // Future: clean orphaned images from Excalidraw elements
     console.log(`[drawingHandler] Cleanup for drawing ${drawingId}`);
   },
 };

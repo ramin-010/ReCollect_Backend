@@ -374,3 +374,162 @@ export const deleteDrawing = async (req: Request, res: Response, next: NextFunct
     next(err);
   }
 };
+
+/**
+ * Generate a unique share token
+ */
+function generateShareToken(): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let token = '';
+  for (let i = 0; i < 16; i++) {
+    token += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return token;
+}
+
+/**
+ * Enable sharing and generate share token (owner only)
+ */
+export const enableShare = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const userId = req.user?._id;
+    if (!userId) throw new ErrorResponse(401, 'Unauthorized');
+
+    console.log(`[Drawing API] ENABLE_SHARE ${id} | user: ${userId}`);
+
+    const drawing = await Drawing.findOne({
+      _id: id,
+      user: userId, // Only owner can enable sharing
+    });
+
+    if (!drawing) throw new ErrorResponse(404, 'Drawing not found or not authorized');
+
+    // Generate new token if not exists or if sharing was disabled
+    let shareToken = drawing.shareToken;
+    if (!shareToken) {
+      shareToken = generateShareToken();
+    }
+
+    await Drawing.findByIdAndUpdate(id, {
+      shareToken,
+      shareEnabled: true,
+    });
+
+    console.log(`[Drawing API] ENABLE_SHARE ${id} | token: ${shareToken}`);
+
+    res.status(200).json({
+      success: true,
+      shareToken,
+      shareEnabled: true,
+      message: 'Sharing enabled',
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * Disable sharing (owner only)
+ */
+export const disableShare = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const userId = req.user?._id;
+    if (!userId) throw new ErrorResponse(401, 'Unauthorized');
+
+    console.log(`[Drawing API] DISABLE_SHARE ${id} | user: ${userId}`);
+
+    const drawing = await Drawing.findOne({
+      _id: id,
+      user: userId, // Only owner can disable sharing
+    });
+
+    if (!drawing) throw new ErrorResponse(404, 'Drawing not found or not authorized');
+
+    await Drawing.findByIdAndUpdate(id, {
+      shareEnabled: false,
+      // Keep the token so URL stays the same if re-enabled
+    });
+
+    console.log(`[Drawing API] DISABLE_SHARE ${id} | Success`);
+
+    res.status(200).json({
+      success: true,
+      shareEnabled: false,
+      message: 'Sharing disabled',
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * Get drawing by share token (public, no auth required)
+ */
+export const getSharedDrawing = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  console.log('[Drawing API] GET_SHARED ROUTE HIT - this should appear if route works');
+  try {
+    const { token } = req.params;
+    
+    console.log(`[Drawing API] GET_SHARED | token: ${token}`);
+
+    const drawing = await Drawing.findOne({
+      shareToken: token,
+      shareEnabled: true,
+    })
+      .populate('user', 'name email avatar')
+      .lean();
+
+    if (!drawing) {
+      console.log(`[Drawing API] GET_SHARED | token: ${token} | NOT FOUND or sharing disabled`);
+      throw new ErrorResponse(404, 'Drawing not found or sharing is disabled');
+    }
+
+    // Log size for analysis
+    const yjsSizeKB = (drawing as any).yjsState 
+      ? (Buffer.byteLength((drawing as any).yjsState, 'utf8') / 1024).toFixed(2) 
+      : '0';
+    console.log(`[Drawing API] GET_SHARED | token: ${token} | yjsState: ${yjsSizeKB} KB | name: "${drawing.name}"`);
+
+    // Return drawing data (no cloudImages in response for guests)
+    res.status(200).json({
+      success: true,
+      data: {
+        _id: drawing._id,
+        name: drawing.name,
+        yjsState: drawing.yjsState,
+        owner: (drawing as any).user,
+        cloudImages: drawing.cloudImages, // Guests need this to render images
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * Get share status for a drawing (owner only)
+ */
+export const getShareStatus = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const userId = req.user?._id;
+    if (!userId) throw new ErrorResponse(401, 'Unauthorized');
+
+    const drawing = await Drawing.findOne({
+      _id: id,
+      user: userId,
+    }).select('shareToken shareEnabled').lean();
+
+    if (!drawing) throw new ErrorResponse(404, 'Drawing not found or not authorized');
+
+    res.status(200).json({
+      success: true,
+      shareToken: drawing.shareEnabled ? drawing.shareToken : null,
+      shareEnabled: drawing.shareEnabled,
+    });
+  } catch (err) {
+    next(err);
+  }
+};

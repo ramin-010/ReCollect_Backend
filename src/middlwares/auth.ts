@@ -7,6 +7,7 @@ dotenv.config();
 import User from '../models/userSchema'
 
 const authMiddleware = async (req: Request, res: Response, next: NextFunction) : Promise<void>=> {
+    console.log("this is auth middleware")
     try {
         const token = req.cookies?.token;
 

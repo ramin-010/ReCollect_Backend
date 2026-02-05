@@ -37,8 +37,11 @@ function extractImageIdsFromYjsState(yjsStateBase64: string): string[] {
 }
 
 const docHandler: DocumentHandler = {
-  async authorize(userId: string, docId: string): Promise<boolean> {
+  async authorize(userId: string | null, docId: string, _shareToken?: string): Promise<boolean> {
     try {
+      // Docs don't support anonymous access
+      if (!userId) return false;
+      
       const doc = await Doc.findById(docId);
       if (!doc) return false;
 

@@ -20,6 +20,8 @@ export interface IDrawing extends Document {
   thumbnail: string;
   collaborators: ICollaborator[];
   cloudImages: ICloudImage[];  // Track uploaded images for cleanup
+  shareToken?: string;         // Unique token for anonymous share links
+  shareEnabled: boolean;       // Toggle sharing on/off
   createdAt: Date;
   updatedAt: Date;
 }
@@ -84,6 +86,15 @@ const drawingSchema = new Schema<IDrawing>(
     cloudImages: {
       type: [cloudImageSchema],
       default: []
+    },
+    shareToken: {
+      type: String,
+      unique: true,
+      sparse: true  // Allow multiple null values
+    },
+    shareEnabled: {
+      type: Boolean,
+      default: false
     }
   },
   {
