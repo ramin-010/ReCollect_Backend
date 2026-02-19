@@ -1,9 +1,10 @@
 import Reminder from "../models/reminderSchema";
 import { Queue } from "bullmq";
-import { redis } from "../server/redis";
+// import { redis } from "../server/redis";
 import mongoose from "mongoose";
 
-export const USE_BULLMQ = process.env.USE_BULLMQ === "true";
+// Force disable BullMQ/Redis as per user request to rely on DB polling
+export const USE_BULLMQ = false; // process.env.USE_BULLMQ === "true";
 
 interface ScheduleReminderDTO {
     userId: string | mongoose.Types.ObjectId;
@@ -17,8 +18,13 @@ interface ScheduleReminderDTO {
 // BullMQ queue - always initialize (will be used if USE_BULLMQ is true)
 let reminderQueue: Queue | null = null;
 
-reminderQueue = new Queue("reminder", { connection: redis });
-console.log("✓ BullMQ reminder queue initialized");
+// Initialized only if enabled
+if (USE_BULLMQ) {
+    // Dynamic import to avoid Redis connection when disabled
+    const { redis } = require("../server/redis"); 
+    reminderQueue = new Queue("reminder", { connection: redis });
+    console.log("✓ BullMQ reminder queue initialized");
+}
 
 export const scheduleReminder = async ({
     userId,

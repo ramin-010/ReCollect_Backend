@@ -24,7 +24,10 @@ ConnectDb();
 const allowOrigin = [
     'http://localhost:3005',
     'http://localhost:5173',
-    'http://192.168.40.58:3005'
+    'http://192.168.40.58:3005',
+    'https://re-collect.in',
+    'https://api.re-collect.in',
+    'https://www.re-collect.in'
 ].filter(Boolean)
 
 app.use(cors({
