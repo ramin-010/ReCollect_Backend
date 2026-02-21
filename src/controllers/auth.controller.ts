@@ -102,9 +102,10 @@ function sendTokenResponse(user: UserType, statusCode: number, res: Response): v
         throw new ErrorResponse(400, 'JWT_COOKIE_EXPIRE is undefined')
     }
     const JWT_COOKIE_EXPIRE = parseInt(process.env.JWT_COOKIE_EXPIRE);
+    const maxAge = JWT_COOKIE_EXPIRE * 24 * 60 * 60 * 1000;
 
     const options: CookieOptions = {
-        expires: new Date(Date.now() + JWT_COOKIE_EXPIRE * 24 * 60 * 60 * 1000),
+        expires: new Date(Date.now() + maxAge),
         httpOnly: true,
         secure: true,
         sameSite: 'lax'
@@ -112,16 +113,33 @@ function sendTokenResponse(user: UserType, statusCode: number, res: Response): v
     const userObj = user.toObject();
     delete userObj.password;
 
-    res.status(statusCode).cookie('token', token, options).json({
-        success: true,
-        data: userObj
-    })
+    res.status(statusCode)
+        .cookie('token', token, options)
+        // Non-HTTP-only hint cookie — readable by frontend JS for instant routing
+        .cookie('auth_hint', '1', {
+            httpOnly: false,
+            secure: true,
+            sameSite: 'lax',
+            expires: new Date(Date.now() + maxAge),
+        })
+        .json({
+            success: true,
+            data: userObj
+        })
 }
 
 export const logout = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
     try {
         res.cookie('token', '', {
             httpOnly: true,
+            expires: new Date(0),
+            secure: true,
+            sameSite: 'none'
+        });
+
+        // Clear the auth hint cookie too
+        res.cookie('auth_hint', '', {
+            httpOnly: false,
             expires: new Date(0),
             secure: true,
             sameSite: 'none'
