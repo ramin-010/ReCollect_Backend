@@ -4,6 +4,7 @@ import User, { User as UserType } from '../models/userSchema'
 import ErrorResponse from "../utils/errorResponse";
 import Dashboard from '../models/dashboardSchema'
 import { createAndSendOtp, verifyOtpInternal, deleteOtp } from './otp.controller';
+import { OAuth2Client } from 'google-auth-library';
 
 const userSignupSchema = z.object({
     name: z.string().min(1, { message: 'Name cannot be empty' }),
@@ -312,6 +313,66 @@ export const resetPassword = async (req: Request, res: Response, next: NextFunct
             message: 'Password reset successful. You can now login with your new password.'
         });
 
+    } catch (err: any) {
+        next(err);
+    }
+};
+
+// --- Google OAuth ---
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT);
+
+export const googleLogin = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
+    try {
+        const { credential } = req.body;
+
+        if (!credential) {
+            throw new ErrorResponse(400, 'Google credential token is required');
+        }
+
+        // Verify the Google ID token
+        const clientId = process.env.GOOGLE_CLIENT;
+        if (!clientId) {
+            throw new ErrorResponse(500, 'Google Client ID is not configured');
+        }
+
+        const ticket = await googleClient.verifyIdToken({
+            idToken: credential,
+            audience: clientId,
+        });
+
+        const payload = ticket.getPayload();
+        if (!payload || !payload.email) {
+            throw new ErrorResponse(400, 'Invalid Google token');
+        }
+
+        const { email, name, sub: googleId, picture } = payload;
+
+        // Check if user already exists
+        let user = await User.findOne({ email: email.toLowerCase() }).exec();
+
+        if (user) {
+            // User exists — update googleId if not already set
+            if (!user.googleId) {
+                user.googleId = googleId;
+                user.authProvider = 'google';
+                if (picture && !user.avatar) {
+                    user.avatar = picture;
+                }
+                await user.save();
+            }
+        } else {
+            // Create a new user (no password needed for Google auth)
+            user = await User.create({
+                email: email.toLowerCase(),
+                name: name || 'Google User',
+                googleId,
+                authProvider: 'google',
+                avatar: picture || '',
+                password: `google_${googleId}_${Date.now()}`, // placeholder, never used for login
+            });
+        }
+
+        sendTokenResponse(user, 200, res);
     } catch (err: any) {
         next(err);
     }

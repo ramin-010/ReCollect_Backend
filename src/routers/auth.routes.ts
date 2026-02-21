@@ -1,6 +1,6 @@
 import express from 'express';
 const router = express.Router();
-import {Getme, Signup, login, logout, preSignup, verifySignup, forgotPassword, resetPassword} from '../controllers/auth.controller'
+import {Getme, Signup, login, logout, preSignup, verifySignup, forgotPassword, resetPassword, googleLogin} from '../controllers/auth.controller'
 import authMiddleware from '../middlwares/auth'
 
 
@@ -14,6 +14,9 @@ router.post('/verify-signup', verifySignup);
 
 router.post('/forgot-password', forgotPassword);
 router.post('/reset-password', resetPassword);
+
+// Google OAuth
+router.post('/auth/google', googleLogin);
 
 
 export default router

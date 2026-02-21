@@ -17,6 +17,9 @@ export interface User extends Document{
     cloudPublicId?: string,
     cloudProvider?: string,
     favoriteNotes?: string[]
+    // Google OAuth
+    googleId?: string;
+    authProvider?: 'local' | 'google';
     // Ghost/Shadow User Support
     status?: 'active' | 'pending';
     isGhost?: boolean;
@@ -53,7 +56,7 @@ const userSchema = new Schema<User>(
         },
         password : {
             type : String,
-            required : true,
+            required : false,
             minLength : 6,
             select : false
         },
@@ -88,6 +91,16 @@ const userSchema = new Schema<User>(
         isGhost: {
             type: Boolean,
             default: false
+        },
+        googleId: {
+            type: String,
+            default: '',
+            sparse: true
+        },
+        authProvider: {
+            type: String,
+            enum: ['local', 'google'],
+            default: 'local'
         }
     }, 
     {
