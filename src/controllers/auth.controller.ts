@@ -104,12 +104,17 @@ function sendTokenResponse(user: UserType, statusCode: number, res: Response): v
     const JWT_COOKIE_EXPIRE = parseInt(process.env.JWT_COOKIE_EXPIRE);
     const maxAge = JWT_COOKIE_EXPIRE * 24 * 60 * 60 * 1000;
 
+    const isProduction = process.env.NODE_ENV === 'production';
+    const cookieDomain = isProduction ? '.re-collect.in' : undefined;
+
     const options: CookieOptions = {
         expires: new Date(Date.now() + maxAge),
         httpOnly: true,
-        secure: true,
-        sameSite: 'lax'
+        secure: isProduction, // Needs to be false for local HTTP testing
+        sameSite: isProduction ? 'none' : 'lax', // Needs to be 'none' for cross-domain API 
+        domain: cookieDomain
     }
+    
     const userObj = user.toObject();
     delete userObj.password;
 
@@ -118,9 +123,10 @@ function sendTokenResponse(user: UserType, statusCode: number, res: Response): v
         // Non-HTTP-only hint cookie — readable by frontend JS for instant routing
         .cookie('auth_hint', '1', {
             httpOnly: false,
-            secure: true,
-            sameSite: 'lax',
+            secure: isProduction,
+            sameSite: isProduction ? 'none' : 'lax',
             expires: new Date(Date.now() + maxAge),
+            domain: cookieDomain
         })
         .json({
             success: true,
@@ -130,19 +136,24 @@ function sendTokenResponse(user: UserType, statusCode: number, res: Response): v
 
 export const logout = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
     try {
+        const isProduction = process.env.NODE_ENV === 'production';
+        const cookieDomain = isProduction ? '.re-collect.in' : undefined;
+        
         res.cookie('token', '', {
             httpOnly: true,
             expires: new Date(0),
-            secure: true,
-            sameSite: 'none'
+            secure: isProduction,
+            sameSite: isProduction ? 'none' : 'lax',
+            domain: cookieDomain
         });
 
         // Clear the auth hint cookie too
         res.cookie('auth_hint', '', {
             httpOnly: false,
             expires: new Date(0),
-            secure: true,
-            sameSite: 'none'
+            secure: isProduction,
+            sameSite: isProduction ? 'none' : 'lax',
+            domain: cookieDomain
         });
 
         res.status(200).json({
