@@ -352,29 +352,58 @@ const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT);
 
 export const googleLogin = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
     try {
-        const { credential } = req.body;
+        const { credential, accessToken } = req.body;
 
-        if (!credential) {
-            throw new ErrorResponse(400, 'Google credential token is required');
+        if (!credential && !accessToken) {
+            throw new ErrorResponse(400, 'Google credential token or access token is required');
         }
 
-        // Verify the Google ID token
-        const clientId = process.env.GOOGLE_CLIENT;
-        if (!clientId) {
-            throw new ErrorResponse(500, 'Google Client ID is not configured');
+        let email: string, name: string, googleId: string, picture: string | undefined;
+
+        if (credential) {
+            // Verify the Google ID token
+            const clientId = process.env.GOOGLE_CLIENT;
+            if (!clientId) {
+                throw new ErrorResponse(500, 'Google Client ID is not configured');
+            }
+
+            const ticket = await googleClient.verifyIdToken({
+                idToken: credential,
+                audience: clientId,
+            });
+
+            const payload = ticket.getPayload();
+            if (!payload || !payload.email) {
+                throw new ErrorResponse(400, 'Invalid Google token');
+            }
+
+            email = payload.email;
+            name = payload.name || 'Google User';
+            googleId = payload.sub;
+            picture = payload.picture;
+        } else {
+            // Verify the access token
+            const response = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+                headers: {
+                    Authorization: `Bearer ${accessToken}`
+                }
+            });
+
+            if (!response.ok) {
+                throw new ErrorResponse(400, 'Invalid Google access token');
+            }
+
+            const payload = await response.json();
+            
+            if (!payload || !payload.email) {
+                throw new ErrorResponse(400, 'Invalid Google user info payload');
+            }
+
+            email = payload.email;
+            name = payload.name || 'Google User';
+            googleId = payload.sub;
+            picture = payload.picture;
         }
-
-        const ticket = await googleClient.verifyIdToken({
-            idToken: credential,
-            audience: clientId,
-        });
-
-        const payload = ticket.getPayload();
-        if (!payload || !payload.email) {
-            throw new ErrorResponse(400, 'Invalid Google token');
-        }
-
-        const { email, name, sub: googleId, picture } = payload;
 
         // Check if user already exists
         let user = await User.findOne({ email: email.toLowerCase() }).exec();
