@@ -104,12 +104,17 @@ function sendTokenResponse(user: UserType, statusCode: number, res: Response): v
     const JWT_COOKIE_EXPIRE = parseInt(process.env.JWT_COOKIE_EXPIRE);
     const maxAge = JWT_COOKIE_EXPIRE * 24 * 60 * 60 * 1000;
 
+    const isProduction = process.env.NODE_ENV === 'production';
+    const cookieDomain = isProduction ? '.re-collect.in' : undefined;
+
     const options: CookieOptions = {
         expires: new Date(Date.now() + maxAge),
         httpOnly: true,
-        secure: true,
-        sameSite: 'lax'
+        secure: isProduction, // Needs to be false for local HTTP testing
+        sameSite: isProduction ? 'none' : 'lax', // Needs to be 'none' for cross-domain API 
+        domain: cookieDomain
     }
+    
     const userObj = user.toObject();
     delete userObj.password;
 
@@ -118,9 +123,10 @@ function sendTokenResponse(user: UserType, statusCode: number, res: Response): v
         // Non-HTTP-only hint cookie — readable by frontend JS for instant routing
         .cookie('auth_hint', '1', {
             httpOnly: false,
-            secure: true,
-            sameSite: 'lax',
+            secure: isProduction,
+            sameSite: isProduction ? 'none' : 'lax',
             expires: new Date(Date.now() + maxAge),
+            domain: cookieDomain
         })
         .json({
             success: true,
@@ -130,19 +136,24 @@ function sendTokenResponse(user: UserType, statusCode: number, res: Response): v
 
 export const logout = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
     try {
+        const isProduction = process.env.NODE_ENV === 'production';
+        const cookieDomain = isProduction ? '.re-collect.in' : undefined;
+        
         res.cookie('token', '', {
             httpOnly: true,
             expires: new Date(0),
-            secure: true,
-            sameSite: 'none'
+            secure: isProduction,
+            sameSite: isProduction ? 'none' : 'lax',
+            domain: cookieDomain
         });
 
         // Clear the auth hint cookie too
         res.cookie('auth_hint', '', {
             httpOnly: false,
             expires: new Date(0),
-            secure: true,
-            sameSite: 'none'
+            secure: isProduction,
+            sameSite: isProduction ? 'none' : 'lax',
+            domain: cookieDomain
         });
 
         res.status(200).json({
@@ -341,29 +352,58 @@ const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT);
 
 export const googleLogin = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
     try {
-        const { credential } = req.body;
+        const { credential, accessToken } = req.body;
 
-        if (!credential) {
-            throw new ErrorResponse(400, 'Google credential token is required');
+        if (!credential && !accessToken) {
+            throw new ErrorResponse(400, 'Google credential token or access token is required');
         }
 
-        // Verify the Google ID token
-        const clientId = process.env.GOOGLE_CLIENT;
-        if (!clientId) {
-            throw new ErrorResponse(500, 'Google Client ID is not configured');
+        let email: string, name: string, googleId: string, picture: string | undefined;
+
+        if (credential) {
+            // Verify the Google ID token
+            const clientId = process.env.GOOGLE_CLIENT;
+            if (!clientId) {
+                throw new ErrorResponse(500, 'Google Client ID is not configured');
+            }
+
+            const ticket = await googleClient.verifyIdToken({
+                idToken: credential,
+                audience: clientId,
+            });
+
+            const payload = ticket.getPayload();
+            if (!payload || !payload.email) {
+                throw new ErrorResponse(400, 'Invalid Google token');
+            }
+
+            email = payload.email;
+            name = payload.name || 'Google User';
+            googleId = payload.sub;
+            picture = payload.picture;
+        } else {
+            // Verify the access token
+            const response = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+                headers: {
+                    Authorization: `Bearer ${accessToken}`
+                }
+            });
+
+            if (!response.ok) {
+                throw new ErrorResponse(400, 'Invalid Google access token');
+            }
+
+            const payload = await response.json();
+            
+            if (!payload || !payload.email) {
+                throw new ErrorResponse(400, 'Invalid Google user info payload');
+            }
+
+            email = payload.email;
+            name = payload.name || 'Google User';
+            googleId = payload.sub;
+            picture = payload.picture;
         }
-
-        const ticket = await googleClient.verifyIdToken({
-            idToken: credential,
-            audience: clientId,
-        });
-
-        const payload = ticket.getPayload();
-        if (!payload || !payload.email) {
-            throw new ErrorResponse(400, 'Invalid Google token');
-        }
-
-        const { email, name, sub: googleId, picture } = payload;
 
         // Check if user already exists
         let user = await User.findOne({ email: email.toLowerCase() }).exec();
