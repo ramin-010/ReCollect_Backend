@@ -81,6 +81,12 @@ app.use('/api/docs', docRoutes);
 import drawingRoutes from './routers/drawing.routes';
 app.use('/api/drawings', drawingRoutes);
 
+import slideRoutes from './routers/slide.routes';
+app.use('/api/slides', slideRoutes);
+
+import livekitRoutes from './routers/livekit.routes';
+app.use('/api/livekit', livekitRoutes);
+
 import uploadRoutes from './routers/upload.routes';
 app.use('/api/collab/upload', uploadRoutes);
 
