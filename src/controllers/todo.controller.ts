@@ -245,7 +245,7 @@ export const getTodos = async (
             query.priority = priority;
         }
 
-        if (refType && refId && ['doc', 'content'].includes(refType as string)) {
+        if (refType && refId && ['doc', 'content', 'slide'].includes(refType as string)) {
             query['references'] = {
                 $elemMatch: {
                     type: refType,

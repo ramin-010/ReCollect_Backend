@@ -10,7 +10,7 @@ export interface Subtask {
 
 // Reference to doc or content
 export interface TaskReference {
-  type: 'doc' | 'content';
+  type: 'doc' | 'content' | 'slide';
   refId: mongoose.Types.ObjectId;
   title?: string;
 }
@@ -67,7 +67,7 @@ const SubtaskSchema = new Schema<Subtask>({
 
 // Task reference schema
 const TaskReferenceSchema = new Schema<TaskReference>({
-  type: { type: String, enum: ['doc', 'content'], required: true },
+  type: { type: String, enum: ['doc', 'content', 'slide'], required: true },
   refId: { type: mongoose.Schema.Types.ObjectId, required: true },
   title: { type: String }
 }, { _id: false });
