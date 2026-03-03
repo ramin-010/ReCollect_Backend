@@ -84,6 +84,9 @@ app.use('/api/drawings', drawingRoutes);
 import slideRoutes from './routers/slide.routes';
 app.use('/api/slides', slideRoutes);
 
+import slideAiRoutes from './routers/slideAi.routes';
+app.use('/api/slides/ai', slideAiRoutes);
+
 import livekitRoutes from './routers/livekit.routes';
 app.use('/api/livekit', livekitRoutes);
 
