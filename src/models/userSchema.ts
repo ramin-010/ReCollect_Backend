@@ -20,6 +20,10 @@ export interface User extends Document{
     // Google OAuth
     googleId?: string;
     authProvider?: 'local' | 'google';
+    // Gmail API
+    gmailConnected?: boolean;
+    gmailRefreshToken?: string;
+    gmailEmail?: string;
     // Ghost/Shadow User Support
     status?: 'active' | 'pending';
     isGhost?: boolean;
@@ -101,6 +105,19 @@ const userSchema = new Schema<User>(
             type: String,
             enum: ['local', 'google'],
             default: 'local'
+        },
+        // Gmail API fields
+        gmailConnected: {
+            type: Boolean,
+            default: false
+        },
+        gmailRefreshToken: {
+            type: String,
+            default: ''
+        },
+        gmailEmail: {
+            type: String,
+            default: ''
         }
     }, 
     {

@@ -93,6 +93,9 @@ app.use('/api/livekit', livekitRoutes);
 import uploadRoutes from './routers/upload.routes';
 app.use('/api/collab/upload', uploadRoutes);
 
+import emailRoutes from './routers/email.routes';
+app.use('/api/email', emailRoutes);
+
 
 
 
