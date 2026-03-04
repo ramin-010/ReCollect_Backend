@@ -500,3 +500,109 @@ export const sendAccessApprovedEmail = async (
     return false;
   }
 };
+
+// Email when a task is assigned to someone
+export const sendTaskAssignmentEmail = async (
+  assignee: { name: string; email: string },
+  assigner: { name: string; email: string },
+  taskTitle: string,
+  isGhostUser: boolean
+): Promise<boolean> => {
+  try {
+    const transporter = createTransporter();
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const logoUrl = 'https://res.cloudinary.com/dsfb3jjqx/image/upload/v1765101198/recollect/pyf5tmicuidnxtmi76e5.png';
+
+    const subject = isGhostUser
+      ? `${assigner.name} assigned you a task on ReCollect`
+      : `New task assigned: ${taskTitle.substring(0, 50)}`;
+
+    const bodyContent = isGhostUser
+      ? `
+        <p style="margin: 0 0 16px; font-size: 15px; color: #6b7280; line-height: 1.5;">
+          Hi, <strong>${assigner.name}</strong> (${assigner.email}) has assigned you a task on ReCollect:
+        </p>
+        <div style="margin: 0 0 24px; padding: 12px 16px; background-color: #f9fafb; border-left: 3px solid #111827; border-radius: 0 6px 6px 0;">
+          <p style="margin: 0; font-size: 16px; color: #111827; font-weight: 500;">
+            ✅ ${taskTitle}
+          </p>
+        </div>
+        <p style="margin: 0 0 24px; font-size: 15px; color: #6b7280; line-height: 1.5;">
+          Sign up for ReCollect to view and manage your assigned tasks.
+        </p>
+        <a href="${frontendUrl}/register" 
+           style="display: inline-block; background-color: #111827; color: #ffffff; text-decoration: none; padding: 12px 24px; font-size: 14px; font-weight: 500; border-radius: 6px;">
+          Sign Up to View Task
+        </a>
+      `
+      : `
+        <p style="margin: 0 0 16px; font-size: 15px; color: #6b7280; line-height: 1.5;">
+          Hi ${assignee.name}, <strong>${assigner.name}</strong> has assigned you a new task:
+        </p>
+        <div style="margin: 0 0 24px; padding: 12px 16px; background-color: #f9fafb; border-left: 3px solid #111827; border-radius: 0 6px 6px 0;">
+          <p style="margin: 0; font-size: 16px; color: #111827; font-weight: 500;">
+            ✅ ${taskTitle}
+          </p>
+        </div>
+        <a href="${frontendUrl}/dashboard?view=todos" 
+           style="display: inline-block; background-color: #111827; color: #ffffff; text-decoration: none; padding: 12px 24px; font-size: 14px; font-weight: 500; border-radius: 6px;">
+          View Task
+        </a>
+      `;
+
+    const mailOptions = {
+      from: `"ReCollect" <${process.env.EMAIL_FROM || 'noreply@recollect.com'}>`,
+      to: assignee.email,
+      subject,
+      html: `
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Task Assignment</title>
+          </head>
+          <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f5f5f5;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+              <tr>
+                <td align="center" style="padding:0px;">
+                  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width: 500px;">
+                    <tr>
+                      <td style="background-color: #111827; padding: 10px 20px;">
+                        <img src="${logoUrl}" alt="ReCollect" height="70" style="display: block;" />
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style="background-color: #ffffff; padding: 32px;">
+                        <p style="margin: 0 0 8px; font-size: 12px; color: #6b7280; text-transform: uppercase; letter-spacing: 1px; font-weight: 600;">
+                          Task Assignment
+                        </p>
+                        <h1 style="margin: 0 0 16px; font-size: 20px; font-weight: 600; color: #111827; line-height: 1.4;">
+                          ${isGhostUser ? "You've been invited!" : "New task for you"}
+                        </h1>
+                        ${bodyContent}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style="background-color: #ffffff; padding: 24px 32px; border-top: 1px solid #e5e5e5; border-radius: 0 0 8px 8px;">
+                        <p style="margin: 0; font-size: 12px; color: #9ca3af; line-height: 1.5;">
+                          ReCollect · <a href="${frontendUrl}/dashboard" style="color: #9ca3af; text-decoration: none;">Manage notifications</a>
+                        </p>
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
+          </body>
+        </html>
+      `
+    };
+
+    await transporter.sendMail(mailOptions);
+    return true;
+  } catch (error) {
+    console.error('Failed to send task assignment email:', error);
+    return false;
+  }
+};

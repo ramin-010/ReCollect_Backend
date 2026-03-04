@@ -303,3 +303,47 @@ export const changePassword = async (req: Request, res: Response, next: NextFunc
     next(err);
   }
 };
+
+/**
+ * GET /api/user/search?q=...
+ * Searches users by name or email (for assignee picker)
+ * Returns only non-ghost, active users
+ */
+export const searchUsers = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
+  try {
+    const currentUserId = req.user?._id;
+    const { q } = req.query;
+
+    if (!q || typeof q !== 'string' || q.trim().length < 2) {
+      return res.status(200).json({
+        success: true,
+        data: []
+      });
+    }
+
+    const searchRegex = new RegExp(q.trim(), 'i');
+
+    const users = await User.find({
+      $and: [
+        { _id: { $ne: currentUserId } },            // Exclude self
+        { isGhost: { $ne: true } },                   // Exclude ghost users
+        {
+          $or: [
+            { name: searchRegex },
+            { email: searchRegex }
+          ]
+        }
+      ]
+    })
+    .select('name email avatar')
+    .limit(10)
+    .lean();
+
+    res.status(200).json({
+      success: true,
+      data: users
+    });
+  } catch (err: any) {
+    next(err);
+  }
+};

@@ -1,28 +1,30 @@
 // ===========================================================================
-// Google AI Studio Provider — Secondary fallback for slide generation
+// Google AI Studio Provider — Secondary fallback for AI generation
 // Free tier (Gemma 3): 14.4K RPD, 15K TPM
 // Uses official @google/generative-ai SDK
 // ===========================================================================
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { SYSTEM_PROMPT } from './systemPrompt';
 import dotenv from 'dotenv';
 dotenv.config();
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 
-// Default model — Gemma 3 27B (IT) is generous on the free tier
 const DEFAULT_MODEL = 'gemma-3-27b-it';
 
 /**
- * Generate slide content using Google AI Studio (Gemini/Gemma).
- * @param prompt - The user's slide generation prompt
+ * Generate content using Google AI Studio (Gemini/Gemma).
+ * @param prompt - The user's generation prompt
+ * @param systemPrompt - The system prompt that defines output format and behavior
  * @param model - The specific model to use
- * @returns Raw JSON string of the generated presentation
- * @throws Error on rate limit (429), auth failure, or other API errors
+ * @returns Raw string of the generated content
  */
-export async function generateWithGoogle(prompt: string, model: string = DEFAULT_MODEL): Promise<string> {
-  console.log(`🤖 AI Slide Generation (Google AI Studio) — Model: ${model}, Prompt: "${prompt.slice(0, 80)}..."`);
+export async function generateWithGoogle(
+  prompt: string,
+  systemPrompt: string,
+  model: string = DEFAULT_MODEL
+): Promise<string> {
+  console.log(`🤖 AI Generation (Google AI Studio) — Model: ${model}, Prompt: "${prompt.slice(0, 80)}..."`);
 
   const isGemma = model.toLowerCase().includes('gemma');
 
@@ -35,11 +37,11 @@ export async function generateWithGoogle(prompt: string, model: string = DEFAULT
       ...(isGemma ? {} : { responseMimeType: "application/json" }),
     },
     // Only Gemini supports native system instructions on this API.
-    ...(isGemma ? {} : { systemInstruction: SYSTEM_PROMPT })
+    ...(isGemma ? {} : { systemInstruction: systemPrompt })
   });
 
   const parts = isGemma
-    ? [{ text: `${SYSTEM_PROMPT}\n\n---\n\nUser request: ${prompt}\n\nRespond ONLY with valid JSON matching the schema. No extra text.` }]
+    ? [{ text: `${systemPrompt}\n\n---\n\nUser request: ${prompt}\n\nRespond ONLY with valid JSON matching the schema. No extra text.` }]
     : [{ text: prompt }];
 
   const result = await generativeModel.generateContent({

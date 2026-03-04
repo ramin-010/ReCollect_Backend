@@ -8,13 +8,17 @@ import {
   uploadProfilePicture,
   deleteUserAccount,
   getUserSettings,
-  changePassword
+  changePassword,
+  searchUsers
 } from '../controllers/user.controller';
 
 const router = express.Router();
 
 // All routes require authentication
 router.use(authMiddleware);
+
+// User search (for assignee picker)
+router.get('/search', searchUsers);
 
 // Profile routes
 router.get('/profile', getUserProfile);

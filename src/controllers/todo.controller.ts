@@ -1,6 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
 import mongoose from 'mongoose';
 import TodoModel from '../models/todoSchema';
+import WorkspaceModel from '../models/workspaceSchema';
+import ActivityLogModel from '../models/activityLogSchema';
 import ErrorResponse from '../utils/errorResponse';
 import reminderSchema from '../models/reminderSchema';
 import { scheduleTodoReminder } from '../services/reminderService';
@@ -200,6 +202,17 @@ export const createTodo = async (
 
         await session.commitTransaction();
 
+        // Log workspace activity (fire and forget, outside transaction)
+        if (todo.visibility === 'workspace' && todo.workspace) {
+            ActivityLogModel.create({
+                workspace: todo.workspace,
+                actor: new mongoose.Types.ObjectId(userId),
+                action: 'task_created',
+                targetTask: todo._id,
+                metadata: todo.title,
+            }).catch(err => console.error('[activity] Failed to log task_created:', err));
+        }
+
         if (reminderScheduleData) {
             scheduleTodoReminder(reminderScheduleData).catch(err => {
                 console.error("Failed to schedule todo reminder:", err);
@@ -230,10 +243,19 @@ export const getTodos = async (
         const userId = req.user?._id as string;
         const { status, priority, refType, refId } = req.query;
 
+        const oid = new mongoose.Types.ObjectId(userId);
+
+        // Find workspace IDs the user belongs to
+        const userWorkspaces = await WorkspaceModel.find({
+            $or: [{ owner: oid }, { 'members.user': oid }]
+        }).select('_id').lean();
+        const workspaceIds = userWorkspaces.map(w => w._id);
+
         const query: Record<string, any> = {
             $or: [
-                { user: new mongoose.Types.ObjectId(userId) },
-                { assignee: new mongoose.Types.ObjectId(userId) }
+                { user: oid },
+                { assignee: oid },
+                ...(workspaceIds.length > 0 ? [{ workspace: { $in: workspaceIds }, visibility: 'workspace' }] : [])
             ]
         };
 
@@ -464,6 +486,32 @@ export const updateTodo = async (
         }
         
         await session.commitTransaction();
+
+        // Log workspace activity (fire and forget, outside transaction)
+        if (existingTodo.visibility === 'workspace' && existingTodo.workspace) {
+            const wsId = existingTodo.workspace;
+            const actorId = new mongoose.Types.ObjectId(String(userId));
+
+            if (updates.status === 'complete' && existingTodo.status !== 'complete') {
+                ActivityLogModel.create({
+                    workspace: wsId, actor: actorId, action: 'task_completed',
+                    targetTask: existingTodo._id, metadata: existingTodo.title,
+                }).catch(err => console.error('[activity]', err));
+            } else if (updates.status && updates.status !== existingTodo.status) {
+                ActivityLogModel.create({
+                    workspace: wsId, actor: actorId, action: 'task_status_changed',
+                    targetTask: existingTodo._id, metadata: `${existingTodo.status} → ${updates.status}`,
+                }).catch(err => console.error('[activity]', err));
+            }
+
+            if (updates.assignee && updates.assignee.toString() !== existingTodo.assignee?.toString()) {
+                ActivityLogModel.create({
+                    workspace: wsId, actor: actorId, action: 'task_assigned',
+                    targetTask: existingTodo._id, targetUser: updates.assignee,
+                    metadata: existingTodo.title,
+                }).catch(err => console.error('[activity]', err));
+            }
+        }
 
         if (reminderScheduleData) {
             scheduleTodoReminder(reminderScheduleData).catch(err => console.error(err));
