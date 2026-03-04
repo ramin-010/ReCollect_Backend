@@ -240,11 +240,26 @@ export const verifySignup = async (req: Request, res: Response, next: NextFuncti
             });
         }
 
-        const user = await User.create({
-            email: email.toLowerCase(),
-            name: storedOtp.signupData.name,
-            password: storedOtp.signupData.password
-        });
+        // Check if a ghost user exists with this email — merge instead of creating new
+        let user = await User.findOne({ email: email.toLowerCase() }).select('+password');
+
+        if (user && user.isGhost) {
+            // Claim the ghost account
+            user.name = storedOtp.signupData.name;
+            user.password = storedOtp.signupData.password;
+            user.isGhost = false;
+            user.status = 'active';
+            await user.save();
+            console.log(`[auth] Ghost user claimed via email signup: ${email}`);
+        } else if (user) {
+            throw new ErrorResponse(400, 'User already exists');
+        } else {
+            user = await User.create({
+                email: email.toLowerCase(),
+                name: storedOtp.signupData.name,
+                password: storedOtp.signupData.password
+            });
+        }
 
         await deleteOtp(storedOtp._id as string);
 
@@ -409,6 +424,12 @@ export const googleLogin = async (req: Request, res: Response, next: NextFunctio
         let user = await User.findOne({ email: email.toLowerCase() }).exec();
 
         if (user) {
+            // Ghost user claiming
+            if (user.isGhost) {
+                user.isGhost = false;
+                user.status = 'active';
+                console.log(`[auth] Ghost user claimed via Google: ${email}`);
+            }
             // User exists — update googleId if not already set
             if (!user.googleId) {
                 user.googleId = googleId;
@@ -416,6 +437,9 @@ export const googleLogin = async (req: Request, res: Response, next: NextFunctio
                 if (picture && !user.avatar) {
                     user.avatar = picture;
                 }
+                await user.save();
+            } else {
+                // Save in case only ghost fields changed
                 await user.save();
             }
         } else {

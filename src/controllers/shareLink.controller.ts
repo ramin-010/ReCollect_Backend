@@ -403,3 +403,91 @@ export const saveSharedDoc = async (req: Request, res: Response, next: NextFunct
         next(err);
     }
 }
+
+type slideInput = {
+    type: 'slide',
+    slideId: string,
+    role?: 'editor' | 'viewer'
+}
+
+import SlideDeck from '../models/slideSchema';
+
+export const createSlideShareLink = async(req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const user = req.user?._id as string;
+        const { type, slideId, role = 'viewer' }: slideInput = req.body;
+
+        if (!slideId || !slideId.trim()) {
+            throw new ErrorResponse(400, "Missing slide deck ID");
+        }
+        if (!type?.trim() || type.toLowerCase() !== 'slide') {
+            throw new ErrorResponse(400, 'Type should be slide');
+        }
+
+        const targetSlide = await SlideDeck.findById(slideId);
+        if (!targetSlide) {
+            throw new ErrorResponse(404, "Slide Deck not found");
+        }
+        
+        const isOwner = targetSlide.user.toString() === user.toString();
+        if (!isOwner) {
+            throw new ErrorResponse(403, "Only the slide deck owner can generate share links");
+        }
+
+        await shareLinkSchema.deleteMany({ slide: slideId });
+
+        const slug = randomUUID();
+
+        const dbData = {
+            user: user,
+            type: type,
+            slide: slideId,
+            role: role,
+            slug: slug
+        };
+        const link = await shareLinkSchema.create(dbData);
+        if (!link) {
+            throw new ErrorResponse(400, 'Unable to generate the public url');
+        }
+        
+        res.status(200).json({
+            success: true,
+            data: {
+                url: `${process.env.FRONTEND_URL}/${type}/${slug}`
+            },
+            message: 'New share link generated. Previous links invalidated.'
+        });
+
+    } catch (err: any) {
+        next(err);
+    }
+}
+
+export const fetchSlideLink = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const { slug } = req.params;
+
+        const slideLink = await shareLinkSchema.findOne({
+            slug,
+            type: 'slide',
+            expiresAt: { $gt: new Date() }
+        })
+        .populate({
+            path: 'slide',
+            select: 'name content previewContent deckType isPinned createdAt updatedAt cloudImages'
+        });
+
+        if (!slideLink) {
+            throw new ErrorResponse(404, 'URL is expired or not found');
+        }
+
+        res.status(200).json({
+            success: true,
+            data: slideLink,
+            message: 'Successfully fetched the slide deck'
+        });
+
+    } catch (err: any) {
+        next(err);
+    }
+}
