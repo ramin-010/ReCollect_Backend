@@ -73,10 +73,12 @@ export const createTodo = async (
             reminderDate,
             subtasks,
             tags, 
-            assignee,
+            assignees, // Now an array of User IDs or Emails
             recurrence,
             imageNodeIds,
-            references
+            references,
+            workspace,
+            visibility
         } = req.body;
 
         subtasks = parseJson<any[]>(subtasks, []);
@@ -160,9 +162,11 @@ export const createTodo = async (
             tags: populatedTags,
             recurrence: recurrence || null,
             cloudImages: cloudImages.map(img => ({ imageId: img.imageId, cloudPublicId: img.cloudPublicId })),
-            assignee: assignee ? new mongoose.Types.ObjectId(assignee) : null,
-            assignedAt: assignee ? new Date() : null,
-            references: parsedReferences
+            assignees: Array.isArray(assignees) ? assignees.map((id: string) => new mongoose.Types.ObjectId(id)) : [],
+            assignedAt: assignees && assignees.length > 0 ? new Date() : null,
+            references: parsedReferences,
+            workspace: workspace ? new mongoose.Types.ObjectId(workspace) : null,
+            visibility: visibility || 'private',
         };
 
         const [todo] = await TodoModel.create([todoData], { session });
@@ -251,24 +255,24 @@ export const getTodos = async (
         }).select('_id').lean();
         const workspaceIds = userWorkspaces.map(w => w._id);
 
-        const query: Record<string, any> = {
-            $or: [
-                { user: oid },
-                { assignee: oid },
-                ...(workspaceIds.length > 0 ? [{ workspace: { $in: workspaceIds }, visibility: 'workspace' }] : [])
-            ]
-        };
+            const matchFilter: any = {
+                $or: [
+                    { user: new mongoose.Types.ObjectId(String(userId)) },
+                    { assignees: new mongoose.Types.ObjectId(String(userId)) },
+                    ...(workspaceIds.length > 0 ? [{ workspace: { $in: workspaceIds }, visibility: 'workspace' }] : [])
+                ]
+            };
 
         if (status && ['pending', 'complete'].includes(status as string)) {
-            query.status = status;
+            matchFilter.status = status;
         }
 
         if (priority && ['low', 'medium', 'high'].includes(priority as string)) {
-            query.priority = priority;
+            matchFilter.priority = priority;
         }
 
         if (refType && refId && ['doc', 'content', 'slide'].includes(refType as string)) {
-            query['references'] = {
+            matchFilter['references'] = {
                 $elemMatch: {
                     type: refType,
                     refId: new mongoose.Types.ObjectId(refId as string)
@@ -276,10 +280,11 @@ export const getTodos = async (
             };
         }
 
-        const todos = await TodoModel.find(query)
-            .sort({ createdAt: -1 })
-            .populate('tags', 'name') // Populate tags for frontend
-            .lean();
+            const todos = await TodoModel.find(matchFilter)
+                .populate('tags', 'name color')
+                .populate('assignees', 'name email avatar')
+                .sort({ updatedAt: -1 })
+                .exec();
 
         res.status(200).json({
             success: true,
@@ -302,19 +307,19 @@ export const updateTodo = async (
 
     try {
         const userId = req.user?._id;
-        const { id } = req.params;
+        const { id: todoId } = req.params;
 
         if (!userId) {
             throw new ErrorResponse(401, "Unauthorized");
         }
 
-        const existingTodo = await TodoModel.findOne({
-            _id: new mongoose.Types.ObjectId(id),
-            $or: [
-                { user: new mongoose.Types.ObjectId(String(userId)) },
-                { assignee: new mongoose.Types.ObjectId(String(userId)) }
-            ]
-        }).session(session);
+            const existingTodo = await TodoModel.findOne({
+                _id: todoId,
+                $or: [
+                    { user: new mongoose.Types.ObjectId(String(userId)) },
+                    { assignees: new mongoose.Types.ObjectId(String(userId)) }
+                ]
+            }).session(session);
 
         if (!existingTodo) {
             throw new ErrorResponse(404, "Task not found or you don't have permission to update it");
@@ -329,13 +334,15 @@ export const updateTodo = async (
             'reminderDate', 
             'subtasks', 
             'tags', 
-            'assignee',
+            'assignees',
             'recurrence',
             'references',
-            'imageNodeIds'
+            'imageNodeIds',
+            'visibility'
         ];
 
         const updates: Record<string, any> = {};
+        const todoUpdates: Record<string, any> = {}; // To hold updates for $set
         let description = req.body.description;
         
         const imageNodeIds = req.body.imageNodeIds ? parseJson<string[]>(req.body.imageNodeIds, []) : [];
@@ -372,7 +379,7 @@ export const updateTodo = async (
         }
         
         if (description !== undefined) {
-             updates.description = description;
+             todoUpdates.description = description;
         }
 
         if (newCloudImages.length > 0) {
@@ -385,36 +392,36 @@ export const updateTodo = async (
              if (key === 'description') continue;
 
             if (req.body[key] !== undefined) {
+                const value = req.body[key];
                 if (key === 'dueDate' || key === 'reminderDate') {
-                    const rawValue = req.body[key];
-                    if (rawValue === 'null' || !rawValue) {
-                        updates[key] = null;
+                    if (value === 'null' || !value) {
+                        todoUpdates[key] = null;
                     } else {
-                        const date = new Date(rawValue);
-                        updates[key] = isNaN(date.getTime()) ? null : date;
+                        const date = new Date(value);
+                        todoUpdates[key] = isNaN(date.getTime()) ? null : date;
                     }
-                } else if (key === 'assignee') {
-                    const rawAssignee = req.body[key];
-                    if (rawAssignee === 'null' || !rawAssignee) {
-                        updates[key] = null;
+                } else if (key === 'assignees') {
+                    if (Array.isArray(value)) {
+                        todoUpdates.assignees = value.map((id: string) => new mongoose.Types.ObjectId(id));
+                        todoUpdates.assignedAt = value.length > 0 ? new Date() : null;
                     } else {
-                        updates[key] = new mongoose.Types.ObjectId(rawAssignee);
-                        updates.assignedAt = new Date();
+                        todoUpdates.assignees = [];
+                        todoUpdates.assignedAt = null;
                     }
                 } else if (key === 'subtasks' || key === 'references' || key === 'recurrence') {
-                     const parsed = parseJson(req.body[key], null) as any;
+                     const parsed = parseJson(value, null) as any;
                      if (key === 'references' && Array.isArray(parsed)) {
-                         updates[key] = parsed.map((ref: any) => ({
+                         todoUpdates[key] = parsed.map((ref: any) => ({
                              type: ref.type,
                              refId: new mongoose.Types.ObjectId(ref.refId),
                              title: ref.title || undefined
                          }));
                      } else {
-                         updates[key] = parsed;
+                         todoUpdates[key] = parsed;
                      }
                 } else if (key === 'tags') {
                      // Process Tags Update
-                     const rawTags = parseJson<string[]>(req.body.tags, []);
+                     const rawTags = parseJson<string[]>(value, []);
                      if (rawTags.length > 0) {
                         const existingTags = await TagsModel.find({ name: { $in: rawTags } }).session(session).lean();
                         const existingTagNames = new Set(existingTags.map(t => t.name));
@@ -427,28 +434,31 @@ export const updateTodo = async (
                                 { session, ordered: false }
                             );
                         }
-                        updates.tags = [...existingTags, ...newTags].map(t => t._id as mongoose.Types.ObjectId);
+                        todoUpdates.tags = [...existingTags, ...newTags].map(t => t._id as mongoose.Types.ObjectId);
                      } else {
-                        updates.tags = [];
+                        todoUpdates.tags = [];
                      }
                 } else {
-                    updates[key] = req.body[key];
+                    todoUpdates[key] = value;
                 }
             }
         }
 
-        if (updates.status === 'complete' && existingTodo.status !== 'complete') {
-            updates.completedAt = new Date();
-        } else if (updates.status === 'pending' && existingTodo.status === 'complete') {
-            updates.completedAt = null;
+        if (todoUpdates.status === 'complete' && existingTodo.status !== 'complete') {
+            todoUpdates.completedAt = new Date();
+        } else if (todoUpdates.status === 'pending' && existingTodo.status === 'complete') {
+            todoUpdates.completedAt = null;
         }
+
+        // Merge todoUpdates into updates
+        updates.$set = todoUpdates;
 
         let reminderScheduleData = null;
         
         if (req.body.reminderDate !== undefined) {
              await reminderSchema.deleteMany({ todoId: existingTodo._id }).session(session);
              
-             const newDate = updates.reminderDate;
+             const newDate = todoUpdates.reminderDate;
              if (newDate) {
                  if (isNaN(new Date(newDate).getTime())) throw new ErrorResponse(400, "Invalid reminder date");
                  
@@ -457,7 +467,7 @@ export const updateTodo = async (
                      type: 'todo',
                      todoId: existingTodo._id,
                      reminderDate: newDate,
-                     message: `Reminder: ${(updates.title || existingTodo.title).trim()}`,
+                     message: `Reminder: ${(todoUpdates.title || existingTodo.title).trim()}`,
                      emailSent: false,
                      status: 'pending'
                  }], { session });
@@ -474,13 +484,11 @@ export const updateTodo = async (
         }
 
         const updatedTodo = await TodoModel.findByIdAndUpdate(
-            id,
-            updates.$push ? { $set: updates, $push: updates.$push } : { $set: updates },
+            todoId,
+            updates,
             { new: true, runValidators: true, session }
         ).lean();
         
-        if (updates.$push) delete updates.$push;
-
         if (!updatedTodo) {
             throw new ErrorResponse(404, "Task not found");
         }
@@ -491,26 +499,35 @@ export const updateTodo = async (
         if (existingTodo.visibility === 'workspace' && existingTodo.workspace) {
             const wsId = existingTodo.workspace;
             const actorId = new mongoose.Types.ObjectId(String(userId));
+            const updatesLog: Promise<any>[] = [];
 
-            if (updates.status === 'complete' && existingTodo.status !== 'complete') {
-                ActivityLogModel.create({
+            if (todoUpdates.status === 'complete' && existingTodo.status !== 'complete') {
+                updatesLog.push(ActivityLogModel.create({
                     workspace: wsId, actor: actorId, action: 'task_completed',
                     targetTask: existingTodo._id, metadata: existingTodo.title,
-                }).catch(err => console.error('[activity]', err));
-            } else if (updates.status && updates.status !== existingTodo.status) {
-                ActivityLogModel.create({
+                }));
+            } else if (todoUpdates.status && todoUpdates.status !== existingTodo.status) {
+                updatesLog.push(ActivityLogModel.create({
                     workspace: wsId, actor: actorId, action: 'task_status_changed',
-                    targetTask: existingTodo._id, metadata: `${existingTodo.status} → ${updates.status}`,
-                }).catch(err => console.error('[activity]', err));
+                    targetTask: existingTodo._id, metadata: `${existingTodo.status} → ${todoUpdates.status}`,
+                }));
             }
 
-            if (updates.assignee && updates.assignee.toString() !== existingTodo.assignee?.toString()) {
-                ActivityLogModel.create({
-                    workspace: wsId, actor: actorId, action: 'task_assigned',
-                    targetTask: existingTodo._id, targetUser: updates.assignee,
-                    metadata: existingTodo.title,
-                }).catch(err => console.error('[activity]', err));
+            // Task assigned
+            if (todoUpdates.assignees && Array.isArray(todoUpdates.assignees)) {
+                // Determine new assignees
+                const existingAssigneeStrs = existingTodo.assignees ? existingTodo.assignees.map(a => a.toString()) : [];
+                const newAssignees = todoUpdates.assignees.filter((id: any) => !existingAssigneeStrs.includes(id.toString()));
+                
+                for (const newAssigneeId of newAssignees) {
+                    updatesLog.push(ActivityLogModel.create({
+                        workspace: wsId, actor: actorId, action: 'task_assigned',
+                        targetTask: existingTodo._id, targetUser: new mongoose.Types.ObjectId(newAssigneeId),
+                        metadata: existingTodo.title
+                    }));
+                }
             }
+            Promise.all(updatesLog).catch(err => console.error('[activity] Failed to log updates:', err));
         }
 
         if (reminderScheduleData) {

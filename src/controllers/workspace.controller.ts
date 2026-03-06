@@ -4,6 +4,7 @@ import WorkspaceModel from '../models/workspaceSchema';
 import UserModel from '../models/userSchema';
 import TodoModel from '../models/todoSchema';
 import ActivityLogModel from '../models/activityLogSchema';
+import NotificationModel from '../models/notificationSchema';
 import ErrorResponse from '../utils/errorResponse';
 import { sendTaskAssignmentEmail } from '../utils/emailService';
 
@@ -102,7 +103,7 @@ export const getWorkspace: RequestHandler = async (req, res, next) => {
 /**
  * POST /api/workspaces/:id/members
  * Body: { email: string }
- * Invite a member (creates ghost user if needed)
+ * Sends an invite notification to the user instead of directly adding them
  */
 export const inviteMember: RequestHandler = async (req, res, next) => {
     try {
@@ -158,25 +159,38 @@ export const inviteMember: RequestHandler = async (req, res, next) => {
             throw new ErrorResponse(400, 'User is already a member of this workspace');
         }
 
-        workspace.members.push({
-            user: targetUser._id as mongoose.Types.ObjectId,
-            role: 'member',
-            joinedAt: new Date()
+        // Check if there's already a pending invite for this user + workspace
+        const existingInvite = await NotificationModel.findOne({
+            recipient: targetUser._id,
+            type: 'workspace_invite',
+            status: 'pending',
+            'metadata.workspaceId': workspace._id,
         });
 
-        await workspace.save();
+        if (existingInvite) {
+            throw new ErrorResponse(400, 'An invite is already pending for this user');
+        }
 
-        // Log activity
-        await ActivityLogModel.create({
-            workspace: workspace._id,
-            actor: new mongoose.Types.ObjectId(userId),
-            action: 'member_joined',
-            targetUser: targetUser._id,
-            metadata: targetUser.name,
+        // Get sender info
+        const currentUser = await UserModel.findById(userId).select('name email');
+
+        // ── Create a notification instead of directly adding ──
+        await NotificationModel.create({
+            recipient: targetUser._id,
+            sender: new mongoose.Types.ObjectId(userId),
+            category: 'actionable',
+            type: 'workspace_invite',
+            title: `Workspace Invite`,
+            message: `${currentUser?.name || 'Someone'} invited you to join "${workspace.name}"`,
+            metadata: {
+                workspaceId: workspace._id,
+                workspaceName: workspace.name,
+                role: 'member',
+            },
+            status: 'pending',
         });
 
         // Send invitation email (fire and forget)
-        const currentUser = await UserModel.findById(userId).select('name email');
         sendTaskAssignmentEmail(
             { name: targetUser.name, email: targetUser.email },
             { name: currentUser?.name || 'Someone', email: currentUser?.email || '' },
@@ -184,18 +198,11 @@ export const inviteMember: RequestHandler = async (req, res, next) => {
             isNewGhost
         ).catch(err => console.error('[workspace] Invite email failed:', err));
 
-        // Return updated workspace
-        const updated = await WorkspaceModel.findById(workspaceId)
-            .populate('owner', 'name email avatar')
-            .populate('members.user', 'name email avatar')
-            .lean();
-
         res.status(200).json({
             success: true,
-            data: updated,
             message: isNewGhost
                 ? `Invitation sent to ${normalizedEmail}`
-                : `${targetUser.name} added to workspace`
+                : `Invite sent to ${targetUser.name}`,
         });
     } catch (err) {
         next(err);
@@ -310,7 +317,7 @@ export const getWorkspaceTasks: RequestHandler = async (req, res, next) => {
         })
             .sort({ createdAt: -1 })
             .populate('tags', 'name')
-            .populate('assignee', 'name email avatar')
+            .populate('assignees', 'name email avatar')
             .populate('user', 'name email avatar')
             .lean();
 

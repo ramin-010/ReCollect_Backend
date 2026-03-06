@@ -51,7 +51,7 @@ export interface Todo extends Document {
   recurrence?: TaskRecurrence;
 
   // Collaboration
-  assignee?: mongoose.Types.ObjectId;
+  assignees?: mongoose.Types.ObjectId[];
   assignedAt?: Date;
 
   // Visibility
@@ -149,11 +149,10 @@ const TodoSchema = new Schema<Todo>(
       default: null
     },
     // Unified Collaboration (P2P)
-    assignee: {
+    assignees: [{
        type: mongoose.Schema.Types.ObjectId, 
-       ref: 'User',
-       default: null 
-    },
+       ref: 'User'
+    }],
     assignedAt: {
        type: Date,
        default: null
@@ -184,7 +183,9 @@ TodoSchema.index({ user: 1, status: 1 });
 TodoSchema.index({ user: 1, priority: 1 });
 TodoSchema.index({ user: 1, dueDate: 1 });
 TodoSchema.index({ 'references.refId': 1 }); // For finding tasks by doc/content
-TodoSchema.index({ assignee: 1 }); // For assigned task lookups
+TodoSchema.index({ assignees: 1 }); // For assigned task lookups
+TodoSchema.index({ workspace: 1, visibility: 1 }); // For workspace tasks
+TodoSchema.index({ workspace: 1, visibility: 1, status: 1 }); // For workspace stats
 
 // Pre-save hook to sync completedAt with status
 TodoSchema.pre<Todo>('save', function(next) {

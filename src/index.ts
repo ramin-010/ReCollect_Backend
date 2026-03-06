@@ -102,6 +102,9 @@ app.use('/api/email', emailRoutes);
 import workspaceRoutes from './routers/workspace.routes';
 app.use('/api/workspaces', workspaceRoutes);
 
+import notificationRoutes from './routers/notification.routes';
+app.use('/api/notifications', notificationRoutes);
+
 
 
 
