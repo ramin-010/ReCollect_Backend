@@ -57,6 +57,7 @@ export interface Todo extends Document {
   // Visibility
   visibility: 'private' | 'shared' | 'workspace';
   workspace?: mongoose.Types.ObjectId;
+  spaceId?: mongoose.Types.ObjectId;
   
   // Legacy compat
   createdAt: Date;
@@ -168,6 +169,10 @@ const TodoSchema = new Schema<Todo>(
       ref: 'Workspace',
       default: null
     },
+    spaceId: {
+      type: mongoose.Schema.Types.ObjectId,
+      default: null
+    },
     // Tracking & Refs
     references: {
       type: [TaskReferenceSchema],
@@ -186,6 +191,7 @@ TodoSchema.index({ 'references.refId': 1 }); // For finding tasks by doc/content
 TodoSchema.index({ assignees: 1 }); // For assigned task lookups
 TodoSchema.index({ workspace: 1, visibility: 1 }); // For workspace tasks
 TodoSchema.index({ workspace: 1, visibility: 1, status: 1 }); // For workspace stats
+TodoSchema.index({ workspace: 1, spaceId: 1 }); // For filtering by space
 
 // Pre-save hook to sync completedAt with status
 TodoSchema.pre<Todo>('save', function(next) {

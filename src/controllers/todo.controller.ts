@@ -78,6 +78,7 @@ export const createTodo = async (
             imageNodeIds,
             references,
             workspace,
+            spaceId,
             visibility
         } = req.body;
 
@@ -166,6 +167,7 @@ export const createTodo = async (
             assignedAt: assignees && assignees.length > 0 ? new Date() : null,
             references: parsedReferences,
             workspace: workspace ? new mongoose.Types.ObjectId(workspace) : null,
+            spaceId: spaceId ? new mongoose.Types.ObjectId(spaceId) : null,
             visibility: visibility || 'private',
         };
 
@@ -338,7 +340,8 @@ export const updateTodo = async (
             'recurrence',
             'references',
             'imageNodeIds',
-            'visibility'
+            'visibility',
+            'spaceId'
         ];
 
         const updates: Record<string, any> = {};
@@ -435,9 +438,13 @@ export const updateTodo = async (
                             );
                         }
                         todoUpdates.tags = [...existingTags, ...newTags].map(t => t._id as mongoose.Types.ObjectId);
-                     } else {
-                        todoUpdates.tags = [];
                      }
+                } else if (key === 'spaceId') {
+                    if (value === 'null' || !value) {
+                        todoUpdates.spaceId = null;
+                    } else {
+                        todoUpdates.spaceId = new mongoose.Types.ObjectId(String(value));
+                    }
                 } else {
                     todoUpdates[key] = value;
                 }

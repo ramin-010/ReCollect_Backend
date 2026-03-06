@@ -10,6 +10,7 @@ import {
     getWorkspaceTasks,
     getWorkspaceStats,
     getWorkspaceActivity,
+    createSpace,
 } from '../controllers/workspace.controller';
 
 const router = Router();
@@ -25,6 +26,7 @@ router.delete('/:id/members/:userId', removeMember);
 router.delete('/:id', deleteWorkspace);
 
 // New: workspace-scoped data endpoints
+router.post('/:id/spaces', createSpace);
 router.get('/:id/tasks', getWorkspaceTasks);
 router.get('/:id/stats', getWorkspaceStats);
 router.get('/:id/activity', getWorkspaceActivity);

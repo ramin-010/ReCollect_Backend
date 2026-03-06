@@ -10,21 +10,24 @@ import { sendTaskAssignmentEmail } from '../utils/emailService';
 
 /**
  * POST /api/workspaces
- * Body: { name: string }
+ * Body: { name: string, defaultSpaceName?: string }
  */
 export const createWorkspace: RequestHandler = async (req, res, next) => {
     try {
         const userId = String(req.user?._id);
-        const { name } = req.body;
+        const { name, defaultSpaceName } = req.body;
 
         if (!name || typeof name !== 'string' || !name.trim()) {
             throw new ErrorResponse(400, 'Workspace name is required');
         }
 
+        const initialSpaceName = defaultSpaceName?.trim() || 'Team 1';
+
         const workspace = await WorkspaceModel.create({
             name: name.trim(),
             owner: new mongoose.Types.ObjectId(userId),
-            members: [{ user: new mongoose.Types.ObjectId(userId), role: 'admin', joinedAt: new Date() }]
+            members: [{ user: new mongoose.Types.ObjectId(userId), role: 'admin', joinedAt: new Date() }],
+            spaces: [{ name: initialSpaceName }]
         });
 
         // Log activity
@@ -290,6 +293,41 @@ export const deleteWorkspace: RequestHandler = async (req, res, next) => {
     }
 };
 
+/**
+ * POST /api/workspaces/:id/spaces
+ * Add a new space to the workspace
+ */
+export const createSpace: RequestHandler = async (req, res, next) => {
+    try {
+        const userId = String(req.user?._id);
+        const workspaceId = req.params.id;
+        const { name } = req.body;
+
+        if (!name || typeof name !== 'string' || !name.trim()) {
+            throw new ErrorResponse(400, 'Space name is required');
+        }
+
+        const workspace = await WorkspaceModel.findById(workspaceId);
+        if (!workspace) throw new ErrorResponse(404, 'Workspace not found');
+
+        const isMember = workspace.owner.toString() === userId ||
+            workspace.members.some((m: any) => m.user.toString() === userId);
+        if (!isMember) throw new ErrorResponse(403, 'Not a member of this workspace');
+
+        workspace.spaces.push({ name: name.trim() } as any);
+        await workspace.save();
+
+        const updated = await WorkspaceModel.findById(workspaceId)
+            .populate('owner', 'name email avatar')
+            .populate('members.user', 'name email avatar')
+            .lean();
+
+        res.status(201).json({ success: true, data: updated, message: 'Space created' });
+    } catch (err) {
+        next(err);
+    }
+};
+
 // ─────────────────────────────────────────────────────────────
 // NEW ENDPOINTS: Tasks, Stats, Activity
 // ─────────────────────────────────────────────────────────────
@@ -311,10 +349,17 @@ export const getWorkspaceTasks: RequestHandler = async (req, res, next) => {
             workspace.members.some((m: any) => m.user.toString() === userId);
         if (!isMember) throw new ErrorResponse(403, 'Not a member');
 
-        const tasks = await TodoModel.find({
+        const { spaceId } = req.query;
+        const query: any = {
             workspace: new mongoose.Types.ObjectId(workspaceId),
             visibility: 'workspace',
-        })
+        };
+
+        if (spaceId && typeof spaceId === 'string' && spaceId !== 'all') {
+            query.spaceId = new mongoose.Types.ObjectId(spaceId);
+        }
+
+        const tasks = await TodoModel.find(query)
             .sort({ createdAt: -1 })
             .populate('tags', 'name')
             .populate('assignees', 'name email avatar')
@@ -344,15 +389,20 @@ export const getWorkspaceStats: RequestHandler = async (req, res, next) => {
         if (!isMember) throw new ErrorResponse(403, 'Not a member');
 
         const wsOid = new mongoose.Types.ObjectId(workspaceId);
+        const { spaceId } = req.query;
+        
+        const baseQuery: any = { workspace: wsOid, visibility: 'workspace' };
+        if (spaceId && typeof spaceId === 'string' && spaceId !== 'all') {
+            baseQuery.spaceId = new mongoose.Types.ObjectId(spaceId);
+        }
 
         const [totalTasks, pending, inProgress, completed, overdue] = await Promise.all([
-            TodoModel.countDocuments({ workspace: wsOid, visibility: 'workspace' }),
-            TodoModel.countDocuments({ workspace: wsOid, visibility: 'workspace', status: 'pending' }),
-            TodoModel.countDocuments({ workspace: wsOid, visibility: 'workspace', status: 'in_progress' }),
-            TodoModel.countDocuments({ workspace: wsOid, visibility: 'workspace', status: 'complete' }),
+            TodoModel.countDocuments(baseQuery),
+            TodoModel.countDocuments({ ...baseQuery, status: 'pending' }),
+            TodoModel.countDocuments({ ...baseQuery, status: 'in_progress' }),
+            TodoModel.countDocuments({ ...baseQuery, status: 'complete' }),
             TodoModel.countDocuments({
-                workspace: wsOid,
-                visibility: 'workspace',
+                ...baseQuery,
                 status: { $ne: 'complete' },
                 dueDate: { $lt: new Date() },
             }),
