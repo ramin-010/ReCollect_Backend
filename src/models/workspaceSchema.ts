@@ -11,6 +11,9 @@ export interface Workspace extends Document {
   owner: mongoose.Types.ObjectId;
   members: WorkspaceMember[];
   spaces: { _id: mongoose.Types.ObjectId; name: string }[];
+  settings: {
+    membersCanViewOverview: boolean;
+  };
   createdAt: Date;
   updatedAt: Date;
 }
@@ -30,6 +33,9 @@ const WorkspaceSchema = new Schema<Workspace>({
       name: { type: String, required: true, trim: true, maxlength: 50 },
     }
   ],
+  settings: {
+    membersCanViewOverview: { type: Boolean, default: false }
+  }
 }, { timestamps: true });
 
 // Indexes

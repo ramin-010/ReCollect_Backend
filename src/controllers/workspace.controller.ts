@@ -384,9 +384,18 @@ export const getWorkspaceStats: RequestHandler = async (req, res, next) => {
         const workspace = await WorkspaceModel.findById(workspaceId).lean();
         if (!workspace) throw new ErrorResponse(404, 'Workspace not found');
 
-        const isMember = workspace.owner.toString() === userId ||
-            workspace.members.some((m: any) => m.user.toString() === userId);
+        const isOwner = workspace.owner.toString() === userId;
+        const isAdmin = workspace.members.some((m: any) => m.user.toString() === userId && m.role === 'admin');
+        const isMember = isOwner || workspace.members.some((m: any) => m.user.toString() === userId);
         if (!isMember) throw new ErrorResponse(403, 'Not a member');
+
+        // Check Overview Access
+        if (!isOwner && !isAdmin) {
+            const canView = workspace.settings?.membersCanViewOverview === true;
+            if (!canView) {
+                throw new ErrorResponse(403, 'You do not have permission to view the workspace overview.');
+            }
+        }
 
         const wsOid = new mongoose.Types.ObjectId(workspaceId);
         const { spaceId } = req.query;
@@ -450,6 +459,46 @@ export const getWorkspaceActivity: RequestHandler = async (req, res, next) => {
             .lean();
 
         res.status(200).json({ success: true, data: activity });
+    } catch (err) {
+        next(err);
+    }
+};
+
+/**
+ * PATCH /api/workspaces/:id/settings
+ * Update workspace settings (only owner or admins)
+ */
+export const updateWorkspaceSettings: RequestHandler = async (req, res, next) => {
+    try {
+        const userId = String(req.user?._id);
+        const workspaceId = req.params.id;
+        const { membersCanViewOverview } = req.body;
+
+        const workspace = await WorkspaceModel.findById(workspaceId);
+        if (!workspace) throw new ErrorResponse(404, 'Workspace not found');
+
+        const isOwner = workspace.owner.toString() === userId;
+        const isAdmin = workspace.members.some((m: any) => m.user.toString() === userId && m.role === 'admin');
+        
+        if (!isOwner && !isAdmin) {
+            throw new ErrorResponse(403, 'Only admins can update workspace settings');
+        }
+
+        if (typeof membersCanViewOverview === 'boolean') {
+            if (!workspace.settings) {
+                workspace.settings = { membersCanViewOverview: false };
+            }
+            workspace.settings.membersCanViewOverview = membersCanViewOverview;
+        }
+
+        await workspace.save();
+
+        const updated = await WorkspaceModel.findById(workspaceId)
+            .populate('owner', 'name email avatar')
+            .populate('members.user', 'name email avatar')
+            .lean();
+
+        res.status(200).json({ success: true, data: updated, message: 'Settings updated' });
     } catch (err) {
         next(err);
     }

@@ -11,6 +11,7 @@ import {
     getWorkspaceStats,
     getWorkspaceActivity,
     createSpace,
+    updateWorkspaceSettings
 } from '../controllers/workspace.controller';
 
 const router = Router();
@@ -30,5 +31,6 @@ router.post('/:id/spaces', createSpace);
 router.get('/:id/tasks', getWorkspaceTasks);
 router.get('/:id/stats', getWorkspaceStats);
 router.get('/:id/activity', getWorkspaceActivity);
+router.patch('/:id/settings', updateWorkspaceSettings);
 
 export default router;

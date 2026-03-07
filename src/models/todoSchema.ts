@@ -27,7 +27,7 @@ export interface Todo extends Document {
   description?: string; // Rich text (TipTap JSON)
   
   // Status & Priority
-  status: 'pending' | 'in_progress' | 'complete';
+  status: 'pending' | 'in_progress' | 'review' | 'blocked' | 'complete';
   priority: 'low' | 'medium' | 'high';
   
   // Dates
@@ -109,7 +109,7 @@ const TodoSchema = new Schema<Todo>(
     },
     status: {
       type: String,
-      enum: ['pending', 'in_progress', 'complete'],
+      enum: ['pending', 'in_progress', 'review', 'blocked', 'complete'],
       default: 'pending'
     },
     priority: {
