@@ -2,7 +2,7 @@ import mongoose, { Document, Schema } from 'mongoose';
 
 export interface WorkspaceMember {
   user: mongoose.Types.ObjectId;
-  role: 'admin' | 'member';
+  role: 'admin' | 'member' | 'viewer';
   joinedAt: Date;
 }
 
@@ -20,7 +20,7 @@ export interface Workspace extends Document {
 
 const WorkspaceMemberSchema = new Schema<WorkspaceMember>({
   user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  role: { type: String, enum: ['admin', 'member'], default: 'member' },
+  role: { type: String, enum: ['admin', 'member', 'viewer'], default: 'member' },
   joinedAt: { type: Date, default: Date.now }
 }, { _id: false });
 

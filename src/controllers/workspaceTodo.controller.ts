@@ -8,6 +8,9 @@ import reminderSchema from '../models/reminderSchema';
 import { scheduleTodoReminder } from '../services/reminderService';
 import cloudinary from '../utils/cloudinary';
 import TagsModel from '../models/tagsSchema';
+import UserModel from '../models/userSchema';
+import NotificationModel from '../models/notificationSchema';
+import { sendTaskAssignmentEmail } from '../utils/emailService';
 
 interface CloudFileOutput extends Express.Multer.File {
     cloudUrl: string;
@@ -53,7 +56,7 @@ export const batchDeleteFromCloud = async (publicIds: string[]): Promise<void> =
     await Promise.allSettled(deletePromises);
 }
 
-export const createTodo = async (
+export const createWorkspaceTodo = async (
     req: Request,
     res: Response,
     next: NextFunction
@@ -90,6 +93,22 @@ export const createTodo = async (
 
         if (!title || !title.trim()) {
             throw new ErrorResponse(400, "Task title is required");
+        }
+
+        if (!workspace) {
+            throw new ErrorResponse(400, "Workspace ID is required for a workspace task");
+        }
+
+        const workspaceDoc = await WorkspaceModel.findById(workspace).select('owner members').session(session).lean();
+        if (!workspaceDoc) {
+            throw new ErrorResponse(404, "Workspace not found");
+        }
+
+        const isOwner = workspaceDoc.owner.toString() === String(userId);
+        const workspaceMember = workspaceDoc.members.find(m => m.user.toString() === String(userId));
+        
+        if (!isOwner && (!workspaceMember || workspaceMember.role === 'viewer')) {
+            throw new ErrorResponse(403, "Viewers cannot create tasks in this workspace");
         }
         console.log("diescroption 22",description)
 
@@ -166,9 +185,9 @@ export const createTodo = async (
             assignees: Array.isArray(assignees) ? assignees.map((id: string) => new mongoose.Types.ObjectId(id)) : [],
             assignedAt: assignees && assignees.length > 0 ? new Date() : null,
             references: parsedReferences,
-            workspace: null, // Personal tasks have no workspace
-            spaceId: null,
-            visibility: visibility === 'shared' ? 'shared' : 'private',
+            workspace: new mongoose.Types.ObjectId(workspace),
+            spaceId: spaceId ? new mongoose.Types.ObjectId(spaceId) : null,
+            visibility: 'workspace', // Force workspace visibility
         };
 
         const [todo] = await TodoModel.create([todoData], { session });
@@ -208,7 +227,16 @@ export const createTodo = async (
 
         await session.commitTransaction();
 
-        // (Workspace Activity Logging is now handled in workspaceTodo.controller.ts)
+        // Log workspace activity (fire and forget, outside transaction)
+        if (todo.visibility === 'workspace' && todo.workspace) {
+            ActivityLogModel.create({
+                workspace: todo.workspace,
+                actor: new mongoose.Types.ObjectId(userId),
+                action: 'task_created',
+                targetTask: todo._id,
+                metadata: todo.title,
+            }).catch(err => console.error('[activity] Failed to log task_created:', err));
+        }
 
         if (reminderScheduleData) {
             scheduleTodoReminder(reminderScheduleData).catch(err => {
@@ -231,60 +259,7 @@ export const createTodo = async (
 };
 
 
-export const getTodos = async (
-    req: Request,
-    res: Response,
-    next: NextFunction
-): Promise<void> => {
-    try {
-        const userId = req.user?._id as string;
-        const { status, priority, refType, refId } = req.query;
-
-        const oid = new mongoose.Types.ObjectId(userId);
-
-        const matchFilter: any = {
-            $or: [
-                { user: new mongoose.Types.ObjectId(String(userId)) },
-                { assignees: new mongoose.Types.ObjectId(String(userId)) }
-            ],
-            visibility: { $in: ['private', 'shared', null, undefined] } // Strictly prevent workspace tasks from bleeding in
-        };
-
-        if (status && ['pending', 'complete'].includes(status as string)) {
-            matchFilter.status = status;
-        }
-
-        if (priority && ['low', 'medium', 'high'].includes(priority as string)) {
-            matchFilter.priority = priority;
-        }
-
-        if (refType && refId && ['doc', 'content', 'slide'].includes(refType as string)) {
-            matchFilter['references'] = {
-                $elemMatch: {
-                    type: refType,
-                    refId: new mongoose.Types.ObjectId(refId as string)
-                }
-            };
-        }
-
-            const todos = await TodoModel.find(matchFilter)
-                .populate('tags', 'name color')
-                .populate('assignees', 'name email avatar')
-                .sort({ updatedAt: -1 })
-                .exec();
-
-        res.status(200).json({
-            success: true,
-            data: todos,
-            count: todos.length
-        });
-    } catch (err) {
-        next(err);
-    }
-};
-
-
-export const updateTodo = async (
+export const updateWorkspaceTodo = async (
     req: Request,
     res: Response,
     next: NextFunction
@@ -308,15 +283,26 @@ export const updateTodo = async (
             throw new ErrorResponse(404, "Task not found");
         }
 
+        // Permission check
         let hasPermission = false;
         if (existingTodo.user.toString() === String(userId)) {
             hasPermission = true;
         } else if (existingTodo.assignees && existingTodo.assignees.some(a => a.toString() === String(userId))) {
             hasPermission = true;
+        } else if (existingTodo.visibility === 'workspace' && existingTodo.workspace) {
+            // Check if user is in workspace
+            const workspace = await WorkspaceModel.findById(existingTodo.workspace).select('owner members').session(session).lean();
+            if (workspace) {
+                const isOwner = workspace.owner.toString() === String(userId);
+                const workspaceMember = workspace.members.find(m => m.user.toString() === String(userId));
+                if (isOwner || (workspaceMember && workspaceMember.role !== 'viewer')) {
+                    hasPermission = true;
+                }
+            }
         }
 
-        if (!hasPermission || existingTodo.visibility === 'workspace') {
-            throw new ErrorResponse(403, "You don't have permission to update this personal task");
+        if (!hasPermission || existingTodo.visibility !== 'workspace') {
+            throw new ErrorResponse(403, "You don't have permission to update this workspace task");
         }
 
         const allowedUpdates = [
@@ -332,7 +318,7 @@ export const updateTodo = async (
             'recurrence',
             'references',
             'imageNodeIds',
-            'visibility' // Excludes workspace and spaceId
+            'spaceId'
         ];
 
         const updates: Record<string, any> = {};
@@ -493,7 +479,40 @@ export const updateTodo = async (
         
         await session.commitTransaction();
 
-        // (Workspace Activity Logging is now handled in workspaceTodo.controller.ts)
+        // Log workspace activity (fire and forget, outside transaction)
+        if (existingTodo.visibility === 'workspace' && existingTodo.workspace) {
+            const wsId = existingTodo.workspace;
+            const actorId = new mongoose.Types.ObjectId(String(userId));
+            const updatesLog: Promise<any>[] = [];
+
+            if (todoUpdates.status === 'complete' && existingTodo.status !== 'complete') {
+                updatesLog.push(ActivityLogModel.create({
+                    workspace: wsId, actor: actorId, action: 'task_completed',
+                    targetTask: existingTodo._id, metadata: existingTodo.title,
+                }));
+            } else if (todoUpdates.status && todoUpdates.status !== existingTodo.status) {
+                updatesLog.push(ActivityLogModel.create({
+                    workspace: wsId, actor: actorId, action: 'task_status_changed',
+                    targetTask: existingTodo._id, metadata: `${existingTodo.status} → ${todoUpdates.status}`,
+                }));
+            }
+
+            // Task assigned
+            if (todoUpdates.assignees && Array.isArray(todoUpdates.assignees)) {
+                // Determine new assignees
+                const existingAssigneeStrs = existingTodo.assignees ? existingTodo.assignees.map(a => a.toString()) : [];
+                const newAssignees = todoUpdates.assignees.filter((id: any) => !existingAssigneeStrs.includes(id.toString()));
+                
+                for (const newAssigneeId of newAssignees) {
+                    updatesLog.push(ActivityLogModel.create({
+                        workspace: wsId, actor: actorId, action: 'task_assigned',
+                        targetTask: existingTodo._id, targetUser: new mongoose.Types.ObjectId(newAssigneeId),
+                        metadata: existingTodo.title
+                    }));
+                }
+            }
+            Promise.all(updatesLog).catch(err => console.error('[activity] Failed to log updates:', err));
+        }
 
         if (reminderScheduleData) {
             scheduleTodoReminder(reminderScheduleData).catch(err => console.error(err));
@@ -513,7 +532,7 @@ export const updateTodo = async (
 };
 
 
-export const deleteTodo = async (
+export const deleteWorkspaceTodo = async (
     req: Request,
     res: Response,
     next: NextFunction
@@ -538,12 +557,28 @@ export const deleteTodo = async (
         }
 
         let hasPermission = false;
-        if (todoToDelete.user.toString() === String(userId)) {
+        let isViewer = false;
+
+        if (todoToDelete.visibility === 'workspace' && todoToDelete.workspace) {
+            const workspace = await WorkspaceModel.findById(todoToDelete.workspace).select('owner members').session(session).lean();
+            if (workspace) {
+                const isOwner = workspace.owner.toString() === String(userId);
+                const workspaceMember = workspace.members.find(m => m.user.toString() === String(userId));
+                
+                if (workspaceMember && workspaceMember.role === 'viewer') {
+                    isViewer = true;
+                }
+                // Owners, admins, or the creator (if not viewer) can delete
+                if (isOwner || (workspaceMember && workspaceMember.role === 'admin') || (!isViewer && todoToDelete.user.toString() === String(userId))) {
+                    hasPermission = true;
+                }
+            }
+        } else if (todoToDelete.user.toString() === String(userId)) {
             hasPermission = true;
         }
 
-        if (!hasPermission || todoToDelete.visibility === 'workspace') {
-            throw new ErrorResponse(403, "You don't have permission to delete this personal task");
+        if (!hasPermission || isViewer) {
+            throw new ErrorResponse(403, "You don't have permission to delete this workspace task");
         }
 
         const cleanupPromises: Promise<any>[] = [];
@@ -572,3 +607,269 @@ export const deleteTodo = async (
         session.endSession();
     }
 };
+
+
+// Assign Controller — handles workspace task assignment + ghost user creation + workspace auto-invite
+
+/**
+ * POST /api/workspace-todos/:id/assign
+ * Body: { emails: string[] }
+ */
+export const assignWorkspaceTask = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+): Promise<void> => {
+    try {
+        const currentUserId = req.user?._id ? req.user._id.toString() : '';
+        const todoId = req.params.id;
+        const { emails } = req.body;
+
+        if (!emails || !Array.isArray(emails)) {
+            throw new ErrorResponse(400, 'Emails array is required');
+        }
+
+        const normalizedEmails = emails.map(email => email.toLowerCase().trim()).filter(Boolean);
+
+        if (normalizedEmails.length === 0) {
+            throw new ErrorResponse(400, 'At least one valid email is required');
+        }
+
+        // 1. Find the workspace task
+        const todo = await TodoModel.findOne({
+            _id: new mongoose.Types.ObjectId(todoId),
+            visibility: 'workspace'
+        });
+
+        if (!todo) {
+            throw new ErrorResponse(404, 'Task not found or you do not own it');
+        }
+
+        // If workspace task, verify current user is a member
+        if (todo.workspace) {
+            const ws = await WorkspaceModel.findById(todo.workspace).lean();
+            if (ws) {
+                const workspaceMember = ws.members.find((m: any) => m.user.toString() === currentUserId);
+                if (ws.owner.toString() !== currentUserId && (!workspaceMember || workspaceMember.role === 'viewer')) {
+                    throw new ErrorResponse(403, 'Viewers cannot modify task assignments');
+                }
+            }
+        }
+
+        const currentUser = await UserModel.findById(currentUserId).select('name email');
+        let workspace: any = null;
+        if (todo.workspace) {
+            workspace = await WorkspaceModel.findById(todo.workspace);
+        }
+
+        const assignedUsers: any[] = [];
+        const ghostEmails: string[] = [];
+
+        // Ensure assignees array exists
+        if (!todo.assignees) todo.assignees = [];
+        const existingAssigneeStrs = todo.assignees.map(a => a.toString());
+
+        // Process each email
+        for (const normalizedEmail of normalizedEmails) {
+            // Find or create user
+            let targetUser = await UserModel.findOne({ email: normalizedEmail });
+            let isNewGhost = false;
+
+            if (!targetUser) {
+                const emailPrefix = normalizedEmail.split('@')[0];
+                targetUser = await UserModel.create({
+                    email: normalizedEmail,
+                    name: emailPrefix,
+                    password: `ghost_${Date.now()}_${Math.random().toString(36)}`,
+                    isGhost: true,
+                    status: 'pending'
+                });
+                isNewGhost = true;
+                ghostEmails.push(normalizedEmail);
+                console.log(`[assign] Created ghost user: ${normalizedEmail} (${targetUser._id})`);
+            }
+
+            const targetUserIdStr = (targetUser._id as any).toString();
+
+            // Prevent self-assignment (optional: maybe allow it if they want to assign multiple? Let's skip self)
+            if (targetUserIdStr === currentUserId) {
+                continue;
+            }
+
+            // Prevent duplicate assignment
+            if (existingAssigneeStrs.includes(targetUserIdStr)) {
+                continue;
+            }
+
+            todo.assignees.push(targetUser._id as mongoose.Types.ObjectId);
+            assignedUsers.push(targetUser);
+
+            // Workspace-specific logic: auto-invite if not a member
+            if (workspace) {
+                const isAlreadyMember = workspace.members.some(
+                    (m: any) => m.user.toString() === targetUserIdStr
+                );
+
+                if (!isAlreadyMember) {
+                    // Check if there's already a pending invite
+                    const existingInvite = await NotificationModel.findOne({
+                        recipient: targetUser._id,
+                        type: 'workspace_invite',
+                        status: 'pending',
+                        'metadata.workspaceId': workspace._id,
+                    });
+
+                    if (!existingInvite) {
+                        // Auto-send workspace invite notification
+                        await NotificationModel.create({
+                            recipient: targetUser._id,
+                            sender: new mongoose.Types.ObjectId(currentUserId),
+                            category: 'actionable',
+                            type: 'workspace_invite',
+                            title: 'Workspace Invite',
+                            message: `${currentUser?.name || 'Someone'} invited you to join "${workspace.name}"`,
+                            metadata: {
+                                workspaceId: workspace._id,
+                                workspaceName: workspace.name,
+                                role: 'member',
+                            },
+                            status: 'pending',
+                        });
+                    }
+                }
+
+                // Log workspace activity
+                ActivityLogModel.create({
+                    workspace: workspace._id,
+                    actor: new mongoose.Types.ObjectId(currentUserId),
+                    action: 'task_assigned',
+                    targetTask: todo._id,
+                    targetUser: targetUser._id,
+                    metadata: todo.title,
+                }).catch(err => console.error('[activity]', err));
+            }
+
+            // Send task_assigned notification (always)
+            await NotificationModel.create({
+                recipient: targetUser._id,
+                sender: new mongoose.Types.ObjectId(currentUserId),
+                category: 'informational',
+                type: 'task_assigned',
+                title: 'Task Assigned',
+                message: `${currentUser?.name || 'Someone'} assigned you "${todo.title}"`,
+                metadata: {
+                    taskId: todo._id,
+                    taskTitle: todo.title,
+                    workspaceId: todo.workspace || null,
+                },
+            });
+
+            // Send email notification (fire and forget)
+            sendTaskAssignmentEmail(
+                { name: targetUser.name, email: targetUser.email },
+                { name: currentUser?.name || 'Someone', email: currentUser?.email || '' },
+                todo.title,
+                isNewGhost
+            ).catch(err => console.error('[assign] Email send failed:', err));
+        }
+
+            if (assignedUsers.length > 0) {
+            todo.assignedAt = new Date();
+            // Force visibility to remain workspace
+            todo.visibility = 'workspace';
+            await todo.save();
+        }
+
+        // Return updated task
+        const updatedTodo = await TodoModel.findById(todoId)
+            .populate('assignees', 'name email avatar')
+            .populate('tags', 'name')
+            .lean();
+
+        res.status(200).json({
+            success: true,
+            data: updatedTodo,
+            message: Object.keys(ghostEmails).length > 0
+                ? `Task assigned. Invitations sent to ${ghostEmails.join(', ')}.`
+                : `Task assigned successfully.`
+        });
+
+    } catch (err) {
+        next(err);
+    }
+};
+
+/**
+ * POST /api/workspace-todos/:id/unassign
+ * Body: { email?: string }
+ * Removes specific assignee, or all if no email provided.
+ */
+export const unassignWorkspaceTask = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+): Promise<void> => {
+    try {
+        const currentUserId = req.user?._id ? req.user._id.toString() : '';
+        const todoId = req.params.id;
+        const { email } = req.body;
+
+        const todo = await TodoModel.findOne({
+            _id: new mongoose.Types.ObjectId(todoId),
+            visibility: 'workspace'
+        });
+
+        if (!todo) {
+            throw new ErrorResponse(404, 'Task not found');
+        }
+
+        // Verify workspace membership
+        if (todo.workspace) {
+            const ws = await WorkspaceModel.findById(todo.workspace).lean();
+            if (ws) {
+                const workspaceMember = ws.members.find((m: any) => m.user.toString() === currentUserId);
+                if (ws.owner.toString() !== currentUserId && (!workspaceMember || workspaceMember.role === 'viewer')) {
+                    throw new ErrorResponse(403, 'Viewers cannot modify task assignments');
+                }
+            }
+        }
+
+        if (!todo.assignees) todo.assignees = [];
+
+        if (email) {
+            // Remove specific user
+            const normalizedEmail = email.toLowerCase().trim();
+            const targetUser = await UserModel.findOne({ email: normalizedEmail });
+            if (targetUser) {
+                todo.assignees = todo.assignees.filter(
+                    id => id.toString() !== (targetUser._id as any).toString()
+                );
+            }
+        } else {
+            // Clear all
+            todo.assignees = [];
+        }
+
+        if (todo.assignees.length === 0) {
+            todo.assignedAt = null as any;
+            // Removed visibility fallback to 'private' because workspace tasks must remain workspace tasks
+        }
+
+        await todo.save();
+
+        const updatedTodo = await TodoModel.findById(todoId)
+            .populate('assignees', 'name email avatar')
+            .populate('tags', 'name')
+            .lean();
+
+        res.status(200).json({
+            success: true,
+            data: updatedTodo,
+            message: email ? `Assignee removed` : 'All assignees removed'
+        });
+
+    } catch (err) {
+        next(err);
+    }
+};
+

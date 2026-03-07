@@ -11,7 +11,8 @@ import {
     getWorkspaceStats,
     getWorkspaceActivity,
     createSpace,
-    updateWorkspaceSettings
+    updateWorkspaceSettings,
+    updateWorkspaceRole
 } from '../controllers/workspace.controller';
 
 const router = Router();
@@ -24,6 +25,7 @@ router.get('/', getWorkspaces);
 router.get('/:id', getWorkspace);
 router.post('/:id/members', inviteMember);
 router.delete('/:id/members/:userId', removeMember);
+router.patch('/:id/members/:userId/role', updateWorkspaceRole);
 router.delete('/:id', deleteWorkspace);
 
 // New: workspace-scoped data endpoints

@@ -266,6 +266,54 @@ export const removeMember: RequestHandler = async (req, res, next) => {
 };
 
 /**
+ * PATCH /api/workspaces/:id/members/:userId/role
+ * Update a member's role (Owner or Admin only, but Admin cannot modify Owner)
+ */
+export const updateWorkspaceRole: RequestHandler = async (req, res, next) => {
+    try {
+        const currentUserId = String(req.user?._id);
+        const { id: workspaceId, userId: targetUserId } = req.params;
+        const { role } = req.body;
+
+        if (!['admin', 'member', 'viewer'].includes(role)) {
+            throw new ErrorResponse(400, 'Invalid role');
+        }
+
+        const workspace = await WorkspaceModel.findById(workspaceId);
+        if (!workspace) throw new ErrorResponse(404, 'Workspace not found');
+
+        const isOwner = workspace.owner.toString() === currentUserId;
+        const isAdmin = workspace.members.some((m: any) => m.user.toString() === currentUserId && m.role === 'admin');
+
+        if (!isOwner && !isAdmin) {
+            throw new ErrorResponse(403, 'Only admins can update roles');
+        }
+
+        if (workspace.owner.toString() === targetUserId) {
+            throw new ErrorResponse(400, 'Cannot change the role of the workspace owner');
+        }
+
+        const memberIndex = workspace.members.findIndex((m: any) => m.user.toString() === targetUserId);
+        if (memberIndex === -1) {
+            throw new ErrorResponse(400, 'User is not a member of this workspace');
+        }
+
+        const member = workspace.members[memberIndex];
+        if (member) member.role = role as 'admin' | 'member' | 'viewer';
+        await workspace.save();
+
+        const updated = await WorkspaceModel.findById(workspaceId)
+            .populate('owner', 'name email avatar')
+            .populate('members.user', 'name email avatar')
+            .lean();
+
+        res.status(200).json({ success: true, data: updated, message: 'Role updated' });
+    } catch (err) {
+        next(err);
+    }
+};
+
+/**
  * DELETE /api/workspaces/:id
  * Delete workspace (owner only)
  */

@@ -68,6 +68,9 @@ app.use('/api', otpRoutes);
 import todoRoutes from './routers/todo.routes';
 app.use('/api', todoRoutes);
 
+import workspaceTodoRoutes from './routers/workspaceTodo.routes';
+app.use('/api/workspace-todos', workspaceTodoRoutes);
+
 
 import expenseRoutes from './routers/expense.routes';
 app.use('/api/expenses', expenseRoutes);
