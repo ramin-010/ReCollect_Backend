@@ -76,7 +76,7 @@ export const createWorkspaceTodo = async (
             reminderDate,
             subtasks,
             tags, 
-            assignees, // Now an array of User IDs or Emails
+            assignees,
             recurrence,
             imageNodeIds,
             references,
@@ -153,7 +153,7 @@ export const createWorkspaceTodo = async (
             title: ref.title || undefined
         }));
         
-        // Process Tags
+       
         let populatedTags: mongoose.Types.ObjectId[] = [];
         if (tags && tags.length > 0) {
             const existingTags = await TagsModel.find({ name: { $in: tags } }).session(session).lean();
@@ -187,7 +187,7 @@ export const createWorkspaceTodo = async (
             references: parsedReferences,
             workspace: new mongoose.Types.ObjectId(workspace),
             spaceId: spaceId ? new mongoose.Types.ObjectId(spaceId) : null,
-            visibility: 'workspace', // Force workspace visibility
+            visibility: 'workspace',
         };
 
         const [todo] = await TodoModel.create([todoData], { session });
@@ -227,7 +227,7 @@ export const createWorkspaceTodo = async (
 
         await session.commitTransaction();
 
-        // Log workspace activity (fire and forget, outside transaction)
+       
         if (todo.visibility === 'workspace' && todo.workspace) {
             ActivityLogModel.create({
                 workspace: todo.workspace,
@@ -265,9 +265,15 @@ export const updateWorkspaceTodo = async (
     next: NextFunction
 ): Promise<void> => {
     const session = await mongoose.startSession();
-    session.startTransaction();
 
     try {
+       
+        let updatedTodo: any = null;
+        let existingTodoSnapshot: any = null;
+        let todoUpdatesCopy: any = {};
+        let reminderScheduleData: any = null;
+
+        await session.withTransaction(async () => {
         const userId = req.user?._id;
         const { id: todoId } = req.params;
 
@@ -283,14 +289,13 @@ export const updateWorkspaceTodo = async (
             throw new ErrorResponse(404, "Task not found");
         }
 
-        // Permission check
+       
         let hasPermission = false;
         if (existingTodo.user.toString() === String(userId)) {
             hasPermission = true;
         } else if (existingTodo.assignees && existingTodo.assignees.some(a => a.toString() === String(userId))) {
             hasPermission = true;
         } else if (existingTodo.visibility === 'workspace' && existingTodo.workspace) {
-            // Check if user is in workspace
             const workspace = await WorkspaceModel.findById(existingTodo.workspace).select('owner members').session(session).lean();
             if (workspace) {
                 const isOwner = workspace.owner.toString() === String(userId);
@@ -301,60 +306,50 @@ export const updateWorkspaceTodo = async (
             }
         }
 
-        if (!hasPermission || existingTodo.visibility !== 'workspace') {
+        if (!hasPermission) {
             throw new ErrorResponse(403, "You don't have permission to update this workspace task");
         }
 
         const allowedUpdates = [
-            'title', 
-            'description', 
-            'status', 
-            'priority', 
-            'dueDate', 
-            'reminderDate', 
-            'subtasks', 
-            'tags', 
-            'assignees',
-            'recurrence',
-            'references',
-            'imageNodeIds',
-            'spaceId'
+            'title', 'description', 'status', 'priority',
+            'dueDate', 'reminderDate', 'subtasks', 'tags',
+            'assignees', 'recurrence', 'imageNodeIds', 'references', 'spaceId'
         ];
 
-        const updates: Record<string, any> = {};
-        const todoUpdates: Record<string, any> = {}; // To hold updates for $set
+        const todoUpdates: any = {};
+        const updates: any = {};
+
         let description = req.body.description;
-        
-        const imageNodeIds = req.body.imageNodeIds ? parseJson<string[]>(req.body.imageNodeIds, []) : [];
-        const files = req.files as Record<string, Express.Multer.File[]> | undefined;
+        const imageNodeIds: string[] = typeof req.body.imageNodeIds === 'string'
+            ? JSON.parse(req.body.imageNodeIds)
+            : (req.body.imageNodeIds || []);
 
-        const newCloudImages: { imageId: string; cloudPublicId: string }[] = [];
+        const newCloudImages: { imageId: string; cloudUrl: string; cloudPublicId: string }[] = [];
 
-        if (files && imageNodeIds.length > 0 && description) {
-            const imageUrlMap: Record<string, { url: string; publicId: string }> = {};
-            
-            for (const imageId of imageNodeIds) {
-                const fieldName = `image_${imageId}`;
-                const fileArray = files[fieldName];
-                
-                if (fileArray && fileArray.length > 0) {
-                    const file = fileArray[0] as CloudFileOutput;
-                    if (file.cloudUrl && file.cloudPublicId) {
-                         imageUrlMap[imageId] = {
-                            url: file.cloudUrl,
-                            publicId: file.cloudPublicId,
-                        };
-                         newCloudImages.push({
-                            imageId: imageId,
-                            cloudPublicId: file.cloudPublicId
-                        }); 
+        if (description && imageNodeIds.length > 0) {
+            const files = req.files as Record<string, Express.Multer.File[]> | undefined;
+            if (files) {
+                const imageUrlMap: Record<string, { url: string; publicId: string }> = {};
+                for (const imageId of imageNodeIds) {
+                    const fieldName = `image_${imageId}`;
+                    const fileArray = files[fieldName];
+                    if (fileArray && fileArray.length > 0) {
+                        const file = fileArray[0] as CloudFileOutput;
+                        if (file.cloudUrl && file.cloudPublicId) {
+                            imageUrlMap[imageId] = { url: file.cloudUrl, publicId: file.cloudPublicId };
+                            newCloudImages.push({
+                                imageId,
+                                cloudUrl: file.cloudUrl,
+                                cloudPublicId: file.cloudPublicId,
+                            }); 
+                        }
                     }
                 }
-            }
 
-            for (const [imageId, data] of Object.entries(imageUrlMap)) {
-                 const pattern = new RegExp(`__PENDING_UPLOAD_${imageId}__`, 'g');
-                 description = description.replace(pattern, data.url);
+                for (const [imageId, data] of Object.entries(imageUrlMap)) {
+                     const pattern = new RegExp(`__PENDING_UPLOAD_${imageId}__`, 'g');
+                     description = description.replace(pattern, data.url);
+                }
             }
         }
         
@@ -382,7 +377,10 @@ export const updateWorkspaceTodo = async (
                     }
                 } else if (key === 'assignees') {
                     if (Array.isArray(value)) {
-                        todoUpdates.assignees = value.map((id: string) => new mongoose.Types.ObjectId(id));
+                        todoUpdates.assignees = value.map((item: any) => {
+                            const idStr = typeof item === 'object' && item !== null ? item._id : item;
+                            return new mongoose.Types.ObjectId(String(idStr));
+                        }).filter((id: mongoose.Types.ObjectId) => id.toString() !== 'undefined');
                         todoUpdates.assignedAt = value.length > 0 ? new Date() : null;
                     } else {
                         todoUpdates.assignees = [];
@@ -400,7 +398,6 @@ export const updateWorkspaceTodo = async (
                          todoUpdates[key] = parsed;
                      }
                 } else if (key === 'tags') {
-                     // Process Tags Update
                      const rawTags = parseJson<string[]>(value, []);
                      if (rawTags.length > 0) {
                         const existingTags = await TagsModel.find({ name: { $in: rawTags } }).session(session).lean();
@@ -434,10 +431,10 @@ export const updateWorkspaceTodo = async (
             todoUpdates.completedAt = null;
         }
 
-        // Merge todoUpdates into updates
+       
         updates.$set = todoUpdates;
 
-        let reminderScheduleData = null;
+        reminderScheduleData = null;
         
         if (req.body.reminderDate !== undefined) {
              await reminderSchema.deleteMany({ todoId: existingTodo._id }).session(session);
@@ -467,47 +464,50 @@ export const updateWorkspaceTodo = async (
              }
         }
 
-        const updatedTodo = await TodoModel.findByIdAndUpdate(
+        const result = await TodoModel.findByIdAndUpdate(
             todoId,
             updates,
             { new: true, runValidators: true, session }
         ).lean();
         
-        if (!updatedTodo) {
+        if (!result) {
             throw new ErrorResponse(404, "Task not found");
         }
-        
-        await session.commitTransaction();
 
-        // Log workspace activity (fire and forget, outside transaction)
-        if (existingTodo.visibility === 'workspace' && existingTodo.workspace) {
-            const wsId = existingTodo.workspace;
+        updatedTodo = result;
+        existingTodoSnapshot = existingTodo;
+        todoUpdatesCopy = { ...todoUpdates };
+        });
+
+       
+        const userId = req.user?._id;
+
+        if (existingTodoSnapshot?.visibility === 'workspace' && existingTodoSnapshot.workspace) {
+            const wsId = existingTodoSnapshot.workspace;
             const actorId = new mongoose.Types.ObjectId(String(userId));
             const updatesLog: Promise<any>[] = [];
 
-            if (todoUpdates.status === 'complete' && existingTodo.status !== 'complete') {
+            if (todoUpdatesCopy.status === 'complete' && existingTodoSnapshot.status !== 'complete') {
                 updatesLog.push(ActivityLogModel.create({
                     workspace: wsId, actor: actorId, action: 'task_completed',
-                    targetTask: existingTodo._id, metadata: existingTodo.title,
+                    targetTask: existingTodoSnapshot._id, metadata: existingTodoSnapshot.title,
                 }));
-            } else if (todoUpdates.status && todoUpdates.status !== existingTodo.status) {
+            } else if (todoUpdatesCopy.status && todoUpdatesCopy.status !== existingTodoSnapshot.status) {
                 updatesLog.push(ActivityLogModel.create({
                     workspace: wsId, actor: actorId, action: 'task_status_changed',
-                    targetTask: existingTodo._id, metadata: `${existingTodo.status} → ${todoUpdates.status}`,
+                    targetTask: existingTodoSnapshot._id, metadata: `${existingTodoSnapshot.status} → ${todoUpdatesCopy.status}`,
                 }));
             }
 
-            // Task assigned
-            if (todoUpdates.assignees && Array.isArray(todoUpdates.assignees)) {
-                // Determine new assignees
-                const existingAssigneeStrs = existingTodo.assignees ? existingTodo.assignees.map(a => a.toString()) : [];
-                const newAssignees = todoUpdates.assignees.filter((id: any) => !existingAssigneeStrs.includes(id.toString()));
+            if (todoUpdatesCopy.assignees && Array.isArray(todoUpdatesCopy.assignees)) {
+                const existingAssigneeStrs = existingTodoSnapshot.assignees ? existingTodoSnapshot.assignees.map((a: any) => a.toString()) : [];
+                const newAssignees = todoUpdatesCopy.assignees.filter((id: any) => !existingAssigneeStrs.includes(id.toString()));
                 
                 for (const newAssigneeId of newAssignees) {
                     updatesLog.push(ActivityLogModel.create({
                         workspace: wsId, actor: actorId, action: 'task_assigned',
-                        targetTask: existingTodo._id, targetUser: new mongoose.Types.ObjectId(newAssigneeId),
-                        metadata: existingTodo.title
+                        targetTask: existingTodoSnapshot._id, targetUser: new mongoose.Types.ObjectId(newAssigneeId),
+                        metadata: existingTodoSnapshot.title
                     }));
                 }
             }
@@ -524,12 +524,20 @@ export const updateWorkspaceTodo = async (
             message: 'Task updated successfully'
         });
     } catch (err) {
-        await session.abortTransaction();
         next(err);
     } finally {
         session.endSession();
     }
 };
+
+
+
+
+
+
+
+
+
 
 
 export const deleteWorkspaceTodo = async (
@@ -557,7 +565,6 @@ export const deleteWorkspaceTodo = async (
         }
 
         let hasPermission = false;
-        let isViewer = false;
 
         if (todoToDelete.visibility === 'workspace' && todoToDelete.workspace) {
             const workspace = await WorkspaceModel.findById(todoToDelete.workspace).select('owner members').session(session).lean();
@@ -565,11 +572,8 @@ export const deleteWorkspaceTodo = async (
                 const isOwner = workspace.owner.toString() === String(userId);
                 const workspaceMember = workspace.members.find(m => m.user.toString() === String(userId));
                 
-                if (workspaceMember && workspaceMember.role === 'viewer') {
-                    isViewer = true;
-                }
-                // Owners, admins, or the creator (if not viewer) can delete
-                if (isOwner || (workspaceMember && workspaceMember.role === 'admin') || (!isViewer && todoToDelete.user.toString() === String(userId))) {
+               
+                if (isOwner || (workspaceMember && workspaceMember.role !== 'viewer')) {
                     hasPermission = true;
                 }
             }
@@ -577,7 +581,7 @@ export const deleteWorkspaceTodo = async (
             hasPermission = true;
         }
 
-        if (!hasPermission || isViewer) {
+        if (!hasPermission) {
             throw new ErrorResponse(403, "You don't have permission to delete this workspace task");
         }
 
@@ -609,7 +613,7 @@ export const deleteWorkspaceTodo = async (
 };
 
 
-// Assign Controller — handles workspace task assignment + ghost user creation + workspace auto-invite
+
 
 /**
  * POST /api/workspace-todos/:id/assign
@@ -635,7 +639,7 @@ export const assignWorkspaceTask = async (
             throw new ErrorResponse(400, 'At least one valid email is required');
         }
 
-        // 1. Find the workspace task
+       
         const todo = await TodoModel.findOne({
             _id: new mongoose.Types.ObjectId(todoId),
             visibility: 'workspace'
@@ -645,7 +649,7 @@ export const assignWorkspaceTask = async (
             throw new ErrorResponse(404, 'Task not found or you do not own it');
         }
 
-        // If workspace task, verify current user is a member
+       
         if (todo.workspace) {
             const ws = await WorkspaceModel.findById(todo.workspace).lean();
             if (ws) {
@@ -665,13 +669,13 @@ export const assignWorkspaceTask = async (
         const assignedUsers: any[] = [];
         const ghostEmails: string[] = [];
 
-        // Ensure assignees array exists
+       
         if (!todo.assignees) todo.assignees = [];
         const existingAssigneeStrs = todo.assignees.map(a => a.toString());
 
-        // Process each email
+       
         for (const normalizedEmail of normalizedEmails) {
-            // Find or create user
+           
             let targetUser = await UserModel.findOne({ email: normalizedEmail });
             let isNewGhost = false;
 
@@ -691,12 +695,12 @@ export const assignWorkspaceTask = async (
 
             const targetUserIdStr = (targetUser._id as any).toString();
 
-            // Prevent self-assignment (optional: maybe allow it if they want to assign multiple? Let's skip self)
+           
             if (targetUserIdStr === currentUserId) {
                 continue;
             }
 
-            // Prevent duplicate assignment
+           
             if (existingAssigneeStrs.includes(targetUserIdStr)) {
                 continue;
             }
@@ -704,14 +708,14 @@ export const assignWorkspaceTask = async (
             todo.assignees.push(targetUser._id as mongoose.Types.ObjectId);
             assignedUsers.push(targetUser);
 
-            // Workspace-specific logic: auto-invite if not a member
+           
             if (workspace) {
                 const isAlreadyMember = workspace.members.some(
                     (m: any) => m.user.toString() === targetUserIdStr
                 );
 
                 if (!isAlreadyMember) {
-                    // Check if there's already a pending invite
+                   
                     const existingInvite = await NotificationModel.findOne({
                         recipient: targetUser._id,
                         type: 'workspace_invite',
@@ -720,7 +724,7 @@ export const assignWorkspaceTask = async (
                     });
 
                     if (!existingInvite) {
-                        // Auto-send workspace invite notification
+                       
                         await NotificationModel.create({
                             recipient: targetUser._id,
                             sender: new mongoose.Types.ObjectId(currentUserId),
@@ -738,7 +742,7 @@ export const assignWorkspaceTask = async (
                     }
                 }
 
-                // Log workspace activity
+               
                 ActivityLogModel.create({
                     workspace: workspace._id,
                     actor: new mongoose.Types.ObjectId(currentUserId),
@@ -749,7 +753,7 @@ export const assignWorkspaceTask = async (
                 }).catch(err => console.error('[activity]', err));
             }
 
-            // Send task_assigned notification (always)
+           
             await NotificationModel.create({
                 recipient: targetUser._id,
                 sender: new mongoose.Types.ObjectId(currentUserId),
@@ -764,7 +768,7 @@ export const assignWorkspaceTask = async (
                 },
             });
 
-            // Send email notification (fire and forget)
+           
             sendTaskAssignmentEmail(
                 { name: targetUser.name, email: targetUser.email },
                 { name: currentUser?.name || 'Someone', email: currentUser?.email || '' },
@@ -775,12 +779,12 @@ export const assignWorkspaceTask = async (
 
             if (assignedUsers.length > 0) {
             todo.assignedAt = new Date();
-            // Force visibility to remain workspace
+           
             todo.visibility = 'workspace';
             await todo.save();
         }
 
-        // Return updated task
+       
         const updatedTodo = await TodoModel.findById(todoId)
             .populate('assignees', 'name email avatar')
             .populate('tags', 'name')
@@ -823,7 +827,7 @@ export const unassignWorkspaceTask = async (
             throw new ErrorResponse(404, 'Task not found');
         }
 
-        // Verify workspace membership
+       
         if (todo.workspace) {
             const ws = await WorkspaceModel.findById(todo.workspace).lean();
             if (ws) {
@@ -837,7 +841,7 @@ export const unassignWorkspaceTask = async (
         if (!todo.assignees) todo.assignees = [];
 
         if (email) {
-            // Remove specific user
+           
             const normalizedEmail = email.toLowerCase().trim();
             const targetUser = await UserModel.findOne({ email: normalizedEmail });
             if (targetUser) {
@@ -846,13 +850,13 @@ export const unassignWorkspaceTask = async (
                 );
             }
         } else {
-            // Clear all
+           
             todo.assignees = [];
         }
 
         if (todo.assignees.length === 0) {
             todo.assignedAt = null as any;
-            // Removed visibility fallback to 'private' because workspace tasks must remain workspace tasks
+           
         }
 
         await todo.save();
