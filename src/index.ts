@@ -93,6 +93,9 @@ app.use('/api/slides/ai', slideAiRoutes);
 import docAiRoutes from './routers/docAi.routes';
 app.use('/api/docs/ai', docAiRoutes);
 
+import taskAiRoutes from './routers/taskAi.routes';
+app.use('/api/todos/ai', taskAiRoutes);
+
 import livekitRoutes from './routers/livekit.routes';
 app.use('/api/livekit', livekitRoutes);
 
