@@ -91,7 +91,6 @@ export const createTodo = async (
         if (!title || !title.trim()) {
             throw new ErrorResponse(400, "Task title is required");
         }
-        console.log("diescroption 22",description)
 
         const files = req.files as Record<string, Express.Multer.File[]> | undefined;
         const cloudImages: { imageId: string; cloudUrl: string; cloudPublicId: string }[] = [];
@@ -341,6 +340,8 @@ export const updateTodo = async (
         
         const imageNodeIds = req.body.imageNodeIds ? parseJson<string[]>(req.body.imageNodeIds, []) : [];
         const files = req.files as Record<string, Express.Multer.File[]> | undefined;
+
+
 
         const newCloudImages: { imageId: string; cloudPublicId: string }[] = [];
 

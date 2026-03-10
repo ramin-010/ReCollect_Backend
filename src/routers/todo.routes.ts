@@ -31,7 +31,7 @@ const upload = upflyUpload({
 // All routes require authentication
 router.get('/todos', authMiddleware, getTodos as RequestHandler);
 router.post('/todos', authMiddleware, upload as RequestHandler, createTodo as RequestHandler);
-router.patch('/todos/:id', authMiddleware, updateTodo as RequestHandler);
+router.patch('/todos/:id', authMiddleware, upload as RequestHandler, updateTodo as RequestHandler);
 router.delete('/todos/:id', authMiddleware, deleteTodo as RequestHandler);
 
 // Assignment routes

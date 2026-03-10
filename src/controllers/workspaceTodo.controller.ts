@@ -99,6 +99,8 @@ export const createWorkspaceTodo = async (
             throw new ErrorResponse(400, "Workspace ID is required for a workspace task");
         }
 
+
+
         const workspaceDoc = await WorkspaceModel.findById(workspace).select('owner members').session(session).lean();
         if (!workspaceDoc) {
             throw new ErrorResponse(404, "Workspace not found");
@@ -110,7 +112,6 @@ export const createWorkspaceTodo = async (
         if (!isOwner && (!workspaceMember || workspaceMember.role === 'viewer')) {
             throw new ErrorResponse(403, "Viewers cannot create tasks in this workspace");
         }
-        console.log("diescroption 22",description)
 
         const files = req.files as Record<string, Express.Multer.File[]> | undefined;
         const cloudImages: { imageId: string; cloudUrl: string; cloudPublicId: string }[] = [];
@@ -323,6 +324,8 @@ export const updateWorkspaceTodo = async (
         const imageNodeIds: string[] = typeof req.body.imageNodeIds === 'string'
             ? JSON.parse(req.body.imageNodeIds)
             : (req.body.imageNodeIds || []);
+
+
 
         const newCloudImages: { imageId: string; cloudUrl: string; cloudPublicId: string }[] = [];
 

@@ -21,7 +21,7 @@ const upload = upflyUpload({
         cloud_name: cloud_name,
         api_key: cloud_key,
         api_secret: cloud_secret,
-        folder: 'recollect-todos'
+        folder: 'recollect-todos-workspace'
       }
     },
   },
@@ -29,7 +29,7 @@ const upload = upflyUpload({
 
 // All Workspace Todo routes require authentication
 router.post('/', authMiddleware, upload as RequestHandler, createWorkspaceTodo as RequestHandler);
-router.patch('/:id', authMiddleware, updateWorkspaceTodo as RequestHandler);
+router.patch('/:id', authMiddleware, upload as RequestHandler, updateWorkspaceTodo as RequestHandler);
 router.delete('/:id', authMiddleware, deleteWorkspaceTodo as RequestHandler);
 
 // Assignment routes for workspace tasks
