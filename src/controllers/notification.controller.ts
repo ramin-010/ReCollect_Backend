@@ -181,6 +181,70 @@ export const acceptNotification: RequestHandler = async (req, res, next) => {
                 break;
             }
 
+            case 'workspace_join_request': {
+                // Admin is approving a user's request to join
+                const { workspaceId } = notification.metadata || {};
+                const requesterId = notification.sender?.toString();
+                if (!workspaceId || !requesterId) {
+                    throw new ErrorResponse(400, 'Invalid notification data');
+                }
+
+                const workspace = await WorkspaceModel.findById(workspaceId);
+                if (!workspace) {
+                    throw new ErrorResponse(404, 'Workspace no longer exists');
+                }
+
+                // Check if already a member
+                const alreadyMember = workspace.members.some(
+                    m => m.user.toString() === requesterId
+                );
+                if (!alreadyMember) {
+                    workspace.members.push({
+                        user: new mongoose.Types.ObjectId(requesterId),
+                        role: 'member',
+                        joinedAt: new Date(),
+                    });
+                    await workspace.save();
+
+                    // Log activity
+                    await ActivityLogModel.create({
+                        workspace: workspace._id,
+                        actor: new mongoose.Types.ObjectId(userId),
+                        action: 'member_joined',
+                        targetUser: new mongoose.Types.ObjectId(requesterId),
+                        metadata: `Approved join request`,
+                    });
+
+                    // Notify the requester that they've been approved
+                    await NotificationModel.create({
+                        recipient: new mongoose.Types.ObjectId(requesterId),
+                        sender: new mongoose.Types.ObjectId(userId),
+                        category: 'informational',
+                        type: 'workspace_join_approved',
+                        title: 'Join Request Approved',
+                        message: `Your request to join "${workspace.name}" has been approved!`,
+                        metadata: {
+                            workspaceId: workspace._id,
+                            workspaceName: workspace.name,
+                        },
+                        status: 'pending',
+                    });
+                }
+
+                // Dismiss all duplicate join request notifications for same requester+workspace
+                await NotificationModel.updateMany(
+                    {
+                        _id: { $ne: notification._id },
+                        type: 'workspace_join_request',
+                        status: 'pending',
+                        'metadata.workspaceId': workspaceId,
+                        sender: new mongoose.Types.ObjectId(requesterId),
+                    },
+                    { status: 'dismissed', isRead: true }
+                );
+                break;
+            }
+
             // ── Future types can be added here ──
             // case 'doc_collab_invite': { ... break; }
             // case 'slide_collab_invite': { ... break; }
