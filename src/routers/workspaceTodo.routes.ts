@@ -1,7 +1,8 @@
 import express, { RequestHandler } from 'express';
 import { upflyUpload } from 'upfly';
 import authMiddleware from '../middlwares/auth';
-import { createWorkspaceTodo, updateWorkspaceTodo, deleteWorkspaceTodo, assignWorkspaceTask, unassignWorkspaceTask, getTaskActivity } from '../controllers/workspaceTodo.controller';
+import { createWorkspaceTodo, updateWorkspaceTodo, deleteWorkspaceTodo, getTaskActivity } from '../controllers/workspace/workspaceTodo.controller';
+import { assignWorkspaceTask, unassignWorkspaceTask } from '../controllers/workspace/workspaceAssign.controller';
 
 const router = express.Router();
 
@@ -40,4 +41,3 @@ router.post('/:id/unassign', authMiddleware, unassignWorkspaceTask as RequestHan
 router.get('/:id/activity', authMiddleware, getTaskActivity as RequestHandler);
 
 export default router;
-

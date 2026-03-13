@@ -1,12 +1,12 @@
 import { Request, Response, NextFunction, RequestHandler } from 'express';
 import mongoose from 'mongoose';
-import WorkspaceModel from '../models/workspaceSchema';
-import UserModel from '../models/userSchema';
-import TodoModel from '../models/todoSchema';
-import ActivityLogModel from '../models/activityLogSchema';
-import NotificationModel from '../models/notificationSchema';
-import ErrorResponse from '../utils/errorResponse';
-import { sendTaskAssignmentEmail } from '../utils/emailService';
+import WorkspaceModel from '../../models/workspaceSchema';
+import UserModel from '../../models/userSchema';
+import TodoModel from '../../models/todoSchema';
+import ActivityLogModel from '../../models/activityLogSchema';
+import NotificationModel from '../../models/notificationSchema';
+import ErrorResponse from '../../utils/errorResponse';
+import { sendWorkspaceInviteEmail } from './workspaceEmails';
 
 /**
  * POST /api/workspaces
@@ -193,13 +193,12 @@ export const inviteMember: RequestHandler = async (req, res, next) => {
             status: 'pending',
         });
 
-        // Send invitation email (fire and forget)
-        sendTaskAssignmentEmail(
+        // Send invitation email (fire and forget) — uses dedicated invite template
+        sendWorkspaceInviteEmail(
             { name: targetUser.name, email: targetUser.email },
             { name: currentUser?.name || 'Someone', email: currentUser?.email || '' },
-            `Join workspace: ${workspace.name}`,
-            isNewGhost,
-            workspace.name
+            workspace.name,
+            isNewGhost
         ).catch(err => console.error('[workspace] Invite email failed:', err));
 
         res.status(200).json({

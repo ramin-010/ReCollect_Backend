@@ -1,8 +1,8 @@
 import express, { RequestHandler } from 'express';
 import { upflyUpload } from 'upfly';
 import authMiddleware from '../middlwares/auth';
-import { createTodo, getTodos, updateTodo, deleteTodo } from '../controllers/todo.controller';
-import { assignTask, unassignTask } from '../controllers/assign.controller';
+import { createTodo, getTodos, updateTodo, deleteTodo } from '../controllers/personalTasks/todo.controller';
+import { assignTask, unassignTask } from '../controllers/personalTasks/assign.controller';
 
 const router = express.Router();
 
@@ -39,4 +39,3 @@ router.post('/todos/:id/assign', authMiddleware, assignTask as RequestHandler);
 router.post('/todos/:id/unassign', authMiddleware, unassignTask as RequestHandler);
 
 export default router;
-

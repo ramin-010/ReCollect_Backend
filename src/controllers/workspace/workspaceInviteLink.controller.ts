@@ -1,11 +1,11 @@
 import { Request, Response, NextFunction, RequestHandler } from 'express';
 import mongoose from 'mongoose';
-import WorkspaceModel from '../models/workspaceSchema';
-import WorkspaceInviteLinkModel from '../models/workspaceInviteLinkSchema';
-import UserModel from '../models/userSchema';
-import NotificationModel from '../models/notificationSchema';
-import ActivityLogModel from '../models/activityLogSchema';
-import ErrorResponse from '../utils/errorResponse';
+import WorkspaceModel from '../../models/workspaceSchema';
+import WorkspaceInviteLinkModel from '../../models/workspaceInviteLinkSchema';
+import UserModel from '../../models/userSchema';
+import NotificationModel from '../../models/notificationSchema';
+import ActivityLogModel from '../../models/activityLogSchema';
+import ErrorResponse from '../../utils/errorResponse';
 
 // ─────────────────────────────────────────────────────────────
 // POST /api/workspaces/:id/invite-link

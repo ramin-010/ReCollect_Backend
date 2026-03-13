@@ -1,24 +1,21 @@
-// Assign Controller — handles task assignment + ghost user creation + workspace auto-invite
+// Workspace Task Assignment Controller — Assign/Unassign for workspace tasks only
+// Extracted from workspaceTodo.controller.ts for clean separation
+
 import { Request, Response, NextFunction } from 'express';
 import mongoose from 'mongoose';
-import TodoModel from '../models/todoSchema';
-import UserModel from '../models/userSchema';
-import WorkspaceModel from '../models/workspaceSchema';
-import NotificationModel from '../models/notificationSchema';
-import ActivityLogModel from '../models/activityLogSchema';
-import ErrorResponse from '../utils/errorResponse';
-import { sendTaskAssignmentEmail } from '../utils/emailService';
+import TodoModel from '../../models/todoSchema';
+import UserModel from '../../models/userSchema';
+import WorkspaceModel from '../../models/workspaceSchema';
+import NotificationModel from '../../models/notificationSchema';
+import ActivityLogModel from '../../models/activityLogSchema';
+import ErrorResponse from '../../utils/errorResponse';
+import { sendWorkspaceTaskAssignmentEmail } from './workspaceEmails';
 
 /**
- * POST /api/todos/:id/assign
+ * POST /api/workspace-todos/:id/assign
  * Body: { emails: string[] }
- * 
- * Assigns a task to users by email.
- * If user doesn't exist → creates ghost user.
- * If task belongs to a workspace and assignee is NOT a member → auto-sends workspace_invite.
- * Always sends a task_assigned notification.
  */
-export const assignTask = async (
+export const assignWorkspaceTask = async (
     req: Request,
     res: Response,
     next: NextFunction
@@ -38,27 +35,23 @@ export const assignTask = async (
             throw new ErrorResponse(400, 'At least one valid email is required');
         }
 
-        // 1. Find the task (must belong to current user or a workspace the user is part of)
+       
         const todo = await TodoModel.findOne({
             _id: new mongoose.Types.ObjectId(todoId),
-            $or: [
-                { user: new mongoose.Types.ObjectId(currentUserId) },
-                { workspace: { $exists: true, $ne: null } }
-            ]
+            visibility: 'workspace'
         });
 
         if (!todo) {
             throw new ErrorResponse(404, 'Task not found or you do not own it');
         }
 
-        // If workspace task, verify current user is a member
+       
         if (todo.workspace) {
             const ws = await WorkspaceModel.findById(todo.workspace).lean();
             if (ws) {
-                const isMember = ws.owner.toString() === currentUserId ||
-                    ws.members.some((m: any) => m.user.toString() === currentUserId);
-                if (!isMember) {
-                    throw new ErrorResponse(403, 'You are not a member of this workspace');
+                const workspaceMember = ws.members.find((m: any) => m.user.toString() === currentUserId);
+                if (ws.owner.toString() !== currentUserId && (!workspaceMember || workspaceMember.role === 'viewer')) {
+                    throw new ErrorResponse(403, 'Viewers cannot modify task assignments');
                 }
             }
         }
@@ -72,13 +65,13 @@ export const assignTask = async (
         const assignedUsers: any[] = [];
         const ghostEmails: string[] = [];
 
-        // Ensure assignees array exists
+       
         if (!todo.assignees) todo.assignees = [];
         const existingAssigneeStrs = todo.assignees.map(a => a.toString());
 
-        // Process each email
+       
         for (const normalizedEmail of normalizedEmails) {
-            // Find or create user
+           
             let targetUser = await UserModel.findOne({ email: normalizedEmail });
             let isNewGhost = false;
 
@@ -98,12 +91,12 @@ export const assignTask = async (
 
             const targetUserIdStr = (targetUser._id as any).toString();
 
-            // Prevent self-assignment (optional: maybe allow it if they want to assign multiple? Let's skip self)
+           
             if (targetUserIdStr === currentUserId) {
                 continue;
             }
 
-            // Prevent duplicate assignment
+           
             if (existingAssigneeStrs.includes(targetUserIdStr)) {
                 continue;
             }
@@ -111,14 +104,14 @@ export const assignTask = async (
             todo.assignees.push(targetUser._id as mongoose.Types.ObjectId);
             assignedUsers.push(targetUser);
 
-            // Workspace-specific logic: auto-invite if not a member
+           
             if (workspace) {
                 const isAlreadyMember = workspace.members.some(
                     (m: any) => m.user.toString() === targetUserIdStr
                 );
 
                 if (!isAlreadyMember) {
-                    // Check if there's already a pending invite
+                   
                     const existingInvite = await NotificationModel.findOne({
                         recipient: targetUser._id,
                         type: 'workspace_invite',
@@ -127,7 +120,7 @@ export const assignTask = async (
                     });
 
                     if (!existingInvite) {
-                        // Auto-send workspace invite notification
+                       
                         await NotificationModel.create({
                             recipient: targetUser._id,
                             sender: new mongoose.Types.ObjectId(currentUserId),
@@ -145,7 +138,7 @@ export const assignTask = async (
                     }
                 }
 
-                // Log workspace activity
+               
                 ActivityLogModel.create({
                     workspace: workspace._id,
                     actor: new mongoose.Types.ObjectId(currentUserId),
@@ -156,7 +149,7 @@ export const assignTask = async (
                 }).catch(err => console.error('[activity]', err));
             }
 
-            // Send task_assigned notification (always)
+           
             await NotificationModel.create({
                 recipient: targetUser._id,
                 sender: new mongoose.Types.ObjectId(currentUserId),
@@ -171,27 +164,24 @@ export const assignTask = async (
                 },
             });
 
-            // Send email notification (fire and forget)
-            sendTaskAssignmentEmail(
+           
+            sendWorkspaceTaskAssignmentEmail(
                 { name: targetUser.name, email: targetUser.email },
                 { name: currentUser?.name || 'Someone', email: currentUser?.email || '' },
-                todo.title,
-                isNewGhost,
-                workspace?.name
+                todo,
+                workspace?.name || 'Workspace',
+                isNewGhost
             ).catch(err => console.error('[assign] Email send failed:', err));
         }
 
-        if (assignedUsers.length > 0) {
+            if (assignedUsers.length > 0) {
             todo.assignedAt = new Date();
-            if (todo.workspace) {
-                todo.visibility = 'workspace';
-            } else {
-                todo.visibility = 'shared';
-            }
+           
+            todo.visibility = 'workspace';
             await todo.save();
         }
 
-        // Return updated task
+       
         const updatedTodo = await TodoModel.findById(todoId)
             .populate('assignees', 'name email avatar')
             .populate('tags', 'name')
@@ -211,11 +201,11 @@ export const assignTask = async (
 };
 
 /**
- * POST /api/todos/:id/unassign
+ * POST /api/workspace-todos/:id/unassign
  * Body: { email?: string }
  * Removes specific assignee, or all if no email provided.
  */
-export const unassignTask = async (
+export const unassignWorkspaceTask = async (
     req: Request,
     res: Response,
     next: NextFunction
@@ -227,17 +217,28 @@ export const unassignTask = async (
 
         const todo = await TodoModel.findOne({
             _id: new mongoose.Types.ObjectId(todoId),
-            user: new mongoose.Types.ObjectId(currentUserId)
+            visibility: 'workspace'
         });
 
         if (!todo) {
-            throw new ErrorResponse(404, 'Task not found or you do not own it');
+            throw new ErrorResponse(404, 'Task not found');
+        }
+
+       
+        if (todo.workspace) {
+            const ws = await WorkspaceModel.findById(todo.workspace).lean();
+            if (ws) {
+                const workspaceMember = ws.members.find((m: any) => m.user.toString() === currentUserId);
+                if (ws.owner.toString() !== currentUserId && (!workspaceMember || workspaceMember.role === 'viewer')) {
+                    throw new ErrorResponse(403, 'Viewers cannot modify task assignments');
+                }
+            }
         }
 
         if (!todo.assignees) todo.assignees = [];
 
         if (email) {
-            // Remove specific user
+           
             const normalizedEmail = email.toLowerCase().trim();
             const targetUser = await UserModel.findOne({ email: normalizedEmail });
             if (targetUser) {
@@ -246,13 +247,13 @@ export const unassignTask = async (
                 );
             }
         } else {
-            // Clear all
+           
             todo.assignees = [];
         }
 
         if (todo.assignees.length === 0) {
             todo.assignedAt = null as any;
-            todo.visibility = 'private';
+           
         }
 
         await todo.save();

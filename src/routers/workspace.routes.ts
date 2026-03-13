@@ -13,14 +13,14 @@ import {
     createSpace,
     updateWorkspaceSettings,
     updateWorkspaceRole
-} from '../controllers/workspace.controller';
+} from '../controllers/workspace/workspace.controller';
 import {
     generateInviteLink,
     getInviteLinkInfo,
     requestToJoinViaLink,
     revokeInviteLink,
     getInviteLinks,
-} from '../controllers/workspaceInviteLink.controller';
+} from '../controllers/workspace/workspaceInviteLink.controller';
 
 // ── Public router (no auth) ──
 // Must be a SEPARATE router so Express v5's router.use(authMiddleware) on the
@@ -54,4 +54,3 @@ router.delete('/:id/invite-link/:linkId', revokeInviteLink);
 router.post('/invite-link/:token/request', requestToJoinViaLink);
 
 export default router;
-

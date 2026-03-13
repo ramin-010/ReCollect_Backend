@@ -1,13 +1,14 @@
+// Personal Todo Controller — CRUD operations for personal (non-workspace) tasks only
+// No workspace logic. No cross-linking with workspace code.
+
 import { Request, Response, NextFunction } from 'express';
 import mongoose from 'mongoose';
-import TodoModel from '../models/todoSchema';
-import WorkspaceModel from '../models/workspaceSchema';
-import ActivityLogModel from '../models/activityLogSchema';
-import ErrorResponse from '../utils/errorResponse';
-import reminderSchema from '../models/reminderSchema';
-import { scheduleTodoReminder } from '../services/reminderService';
-import cloudinary from '../utils/cloudinary';
-import TagsModel from '../models/tagsSchema';
+import TodoModel from '../../models/todoSchema';
+import ErrorResponse from '../../utils/errorResponse';
+import reminderSchema from '../../models/reminderSchema';
+import { scheduleTodoReminder } from '../../services/reminderService';
+import cloudinary from '../../utils/cloudinary';
+import TagsModel from '../../models/tagsSchema';
 
 interface CloudFileOutput extends Express.Multer.File {
     cloudUrl: string;
@@ -73,12 +74,10 @@ export const createTodo = async (
             reminderDate,
             subtasks,
             tags, 
-            assignees, // Now an array of User IDs or Emails
+            assignees,
             recurrence,
             imageNodeIds,
             references,
-            workspace,
-            spaceId,
             visibility
         } = req.body;
 
@@ -207,8 +206,6 @@ export const createTodo = async (
 
         await session.commitTransaction();
 
-        // (Workspace Activity Logging is now handled in workspaceTodo.controller.ts)
-
         if (reminderScheduleData) {
             scheduleTodoReminder(reminderScheduleData).catch(err => {
                 console.error("Failed to schedule todo reminder:", err);
@@ -238,8 +235,6 @@ export const getTodos = async (
     try {
         const userId = req.user?._id as string;
         const { status, priority, refType, refId } = req.query;
-
-        const oid = new mongoose.Types.ObjectId(userId);
 
         const matchFilter: any = {
             $or: [
@@ -331,17 +326,15 @@ export const updateTodo = async (
             'recurrence',
             'references',
             'imageNodeIds',
-            'visibility' // Excludes workspace and spaceId
+            'visibility'
         ];
 
         const updates: Record<string, any> = {};
-        const todoUpdates: Record<string, any> = {}; // To hold updates for $set
+        const todoUpdates: Record<string, any> = {};
         let description = req.body.description;
         
         const imageNodeIds = req.body.imageNodeIds ? parseJson<string[]>(req.body.imageNodeIds, []) : [];
         const files = req.files as Record<string, Express.Multer.File[]> | undefined;
-
-
 
         const newCloudImages: { imageId: string; cloudPublicId: string }[] = [];
 
@@ -381,7 +374,6 @@ export const updateTodo = async (
             updates.$push = { cloudImages: { $each: newCloudImages } };
         }
 
-
         for (const key of allowedUpdates) {
              if (key === 'imageNodeIds') continue;
              if (key === 'description') continue;
@@ -415,7 +407,6 @@ export const updateTodo = async (
                          todoUpdates[key] = parsed;
                      }
                 } else if (key === 'tags') {
-                     // Process Tags Update
                      const rawTags = parseJson<string[]>(value, []);
                      if (rawTags.length > 0) {
                         const existingTags = await TagsModel.find({ name: { $in: rawTags } }).session(session).lean();
@@ -449,7 +440,6 @@ export const updateTodo = async (
             todoUpdates.completedAt = null;
         }
 
-        // Merge todoUpdates into updates
         updates.$set = todoUpdates;
 
         let reminderScheduleData = null;
@@ -493,8 +483,6 @@ export const updateTodo = async (
         }
         
         await session.commitTransaction();
-
-        // (Workspace Activity Logging is now handled in workspaceTodo.controller.ts)
 
         if (reminderScheduleData) {
             scheduleTodoReminder(reminderScheduleData).catch(err => console.error(err));
