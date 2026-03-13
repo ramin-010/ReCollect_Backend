@@ -101,7 +101,7 @@ export const createWorkspaceTodo = async (
 
 
 
-        const workspaceDoc = await WorkspaceModel.findById(workspace).select('owner members').session(session).lean();
+        const workspaceDoc = await WorkspaceModel.findById(workspace).select('name owner members').session(session).lean();
         if (!workspaceDoc) {
             throw new ErrorResponse(404, "Workspace not found");
         }
@@ -237,6 +237,50 @@ export const createWorkspaceTodo = async (
                 targetTask: todo._id,
                 metadata: todo.title,
             }).catch(err => console.error('[activity] Failed to log task_created:', err));
+
+            // Log and notify assignees initially selected
+            if (Array.isArray(assignees) && assignees.length > 0) {
+                UserModel.findById(userId).select('name email').then(currentUser => {
+                    assignees.forEach(async (targetUserIdStr: string) => {
+                        const targetUserId = new mongoose.Types.ObjectId(targetUserIdStr);
+                        if (targetUserId.equals(userId)) return;
+
+                        const targetUser = await UserModel.findById(targetUserId);
+                        if (!targetUser) return;
+
+                        ActivityLogModel.create({
+                            workspace: todo.workspace,
+                            actor: new mongoose.Types.ObjectId(userId),
+                            action: 'task_assigned',
+                            targetTask: todo._id,
+                            targetUser: targetUserId,
+                            metadata: todo.title
+                        }).catch(err => console.error('[activity]', err));
+
+                        await NotificationModel.create({
+                            recipient: targetUser._id,
+                            sender: new mongoose.Types.ObjectId(userId),
+                            category: 'informational',
+                            type: 'task_assigned',
+                            title: 'Task Assigned',
+                            message: `${currentUser?.name || 'Someone'} assigned you "${todo.title}"`,
+                            metadata: {
+                                taskId: todo._id,
+                                taskTitle: todo.title,
+                                workspaceId: todo.workspace,
+                            },
+                        });
+
+                        sendTaskAssignmentEmail(
+                            { name: targetUser.name, email: targetUser.email },
+                            { name: currentUser?.name || 'Someone', email: currentUser?.email || '' },
+                            todo.title,
+                            false,
+                            workspaceDoc?.name
+                        ).catch(err => console.error('[assign] Email failed:', err));
+                    });
+                });
+            }
         }
 
         if (reminderScheduleData) {
@@ -245,9 +289,15 @@ export const createWorkspaceTodo = async (
             });
         }
 
+        const populatedTodo = await TodoModel.findById(todo._id)
+            .populate('user', 'name email avatar')
+            .populate('assignees', 'name email avatar')
+            .session(session)
+            .lean();
+
         res.status(201).json({
             success: true,
-            data: todo,
+            data: populatedTodo,
             message: 'Task created successfully'
         });
 
@@ -488,6 +538,7 @@ export const updateWorkspaceTodo = async (
         if (existingTodoSnapshot?.visibility === 'workspace' && existingTodoSnapshot.workspace) {
             const wsId = existingTodoSnapshot.workspace;
             const actorId = new mongoose.Types.ObjectId(String(userId));
+            const wsDoc = await WorkspaceModel.findById(wsId).select('name').lean();
             const updatesLog: Promise<any>[] = [];
 
             if (todoUpdatesCopy.status === 'complete' && existingTodoSnapshot.status !== 'complete') {
@@ -502,16 +553,96 @@ export const updateWorkspaceTodo = async (
                 }));
             }
 
+            if (todoUpdatesCopy.priority && todoUpdatesCopy.priority !== existingTodoSnapshot.priority) {
+                updatesLog.push(ActivityLogModel.create({
+                    workspace: wsId, actor: actorId, action: 'task_priority_changed',
+                    targetTask: existingTodoSnapshot._id, metadata: `${existingTodoSnapshot.priority || 'none'} → ${todoUpdatesCopy.priority}`,
+                }));
+            }
+
+            const titleChanged = todoUpdatesCopy.title && todoUpdatesCopy.title !== existingTodoSnapshot.title;
+            const descChanged = 'description' in todoUpdatesCopy && todoUpdatesCopy.description !== existingTodoSnapshot.description;
+            
+            if (titleChanged || descChanged) {
+                let msg = 'updated the content';
+                updatesLog.push(ActivityLogModel.create({
+                    workspace: wsId, actor: actorId, action: 'task_content_changed',
+                    targetTask: existingTodoSnapshot._id, metadata: msg,
+                }));
+            }
+
+            if ('dueDate' in todoUpdatesCopy) {
+                const oldTime = existingTodoSnapshot.dueDate ? new Date(existingTodoSnapshot.dueDate).getTime() : 0;
+                const newTime = todoUpdatesCopy.dueDate ? new Date(todoUpdatesCopy.dueDate).getTime() : 0;
+                if (oldTime !== newTime) {
+                    const oldDate = existingTodoSnapshot.dueDate ? new Date(existingTodoSnapshot.dueDate).toISOString() : 'none';
+                    const newDate = todoUpdatesCopy.dueDate ? new Date(todoUpdatesCopy.dueDate).toISOString() : 'none';
+                    updatesLog.push(ActivityLogModel.create({
+                        workspace: wsId, actor: actorId, action: 'task_due_date_changed',
+                        targetTask: existingTodoSnapshot._id, metadata: `${oldDate} → ${newDate}`,
+                    }));
+                }
+            }
+
             if (todoUpdatesCopy.assignees && Array.isArray(todoUpdatesCopy.assignees)) {
                 const existingAssigneeStrs = existingTodoSnapshot.assignees ? existingTodoSnapshot.assignees.map((a: any) => a.toString()) : [];
                 const newAssignees = todoUpdatesCopy.assignees.filter((id: any) => !existingAssigneeStrs.includes(id.toString()));
+                const removedAssignees = existingAssigneeStrs.filter((id: string) => !todoUpdatesCopy.assignees.map((a: any) => a.toString()).includes(id));
                 
-                for (const newAssigneeId of newAssignees) {
-                    updatesLog.push(ActivityLogModel.create({
-                        workspace: wsId, actor: actorId, action: 'task_assigned',
-                        targetTask: existingTodoSnapshot._id, targetUser: new mongoose.Types.ObjectId(newAssigneeId),
-                        metadata: existingTodoSnapshot.title
-                    }));
+                if (removedAssignees.length > 0) {
+                    for (const removedId of removedAssignees) {
+                        updatesLog.push(ActivityLogModel.create({
+                            workspace: wsId, actor: actorId, action: 'task_unassigned',
+                            targetTask: existingTodoSnapshot._id, targetUser: new mongoose.Types.ObjectId(removedId),
+                            metadata: existingTodoSnapshot.title
+                        }));
+                    }
+                }
+
+                if (newAssignees.length > 0) {
+                    UserModel.findById(userId).select('name email').then(currentUser => {
+                        for (const newAssigneeId of newAssignees) {
+                            if (newAssigneeId.toString() !== String(userId)) {
+                                UserModel.findById(newAssigneeId).then(targetUser => {
+                                    if (!targetUser) return;
+                                    
+                                    ActivityLogModel.create({
+                                        workspace: wsId, actor: actorId, action: 'task_assigned',
+                                        targetTask: existingTodoSnapshot._id, targetUser: new mongoose.Types.ObjectId(newAssigneeId),
+                                        metadata: existingTodoSnapshot.title
+                                    }).catch(err => console.error('[activity]', err));
+
+                                    NotificationModel.create({
+                                        recipient: targetUser._id,
+                                        sender: actorId,
+                                        category: 'informational',
+                                        type: 'task_assigned',
+                                        title: 'Task Assigned',
+                                        message: `${currentUser?.name || 'Someone'} assigned you "${existingTodoSnapshot.title}"`,
+                                        metadata: {
+                                            taskId: existingTodoSnapshot._id,
+                                            taskTitle: existingTodoSnapshot.title,
+                                            workspaceId: wsId,
+                                        },
+                                    });
+
+                                    sendTaskAssignmentEmail(
+                                        { name: targetUser.name, email: targetUser.email },
+                                        { name: currentUser?.name || 'Someone', email: currentUser?.email || '' },
+                                        existingTodoSnapshot.title,
+                                        false,
+                                        wsDoc?.name
+                                    ).catch(err => console.error('[assign] Email failed:', err));
+                                });
+                            } else {
+                                ActivityLogModel.create({
+                                    workspace: wsId, actor: actorId, action: 'task_assigned',
+                                    targetTask: existingTodoSnapshot._id, targetUser: actorId,
+                                    metadata: existingTodoSnapshot.title
+                                }).catch(err => console.error('[activity]', err));
+                            }
+                        }
+                    });
                 }
             }
             Promise.all(updatesLog).catch(err => console.error('[activity] Failed to log updates:', err));
@@ -521,9 +652,15 @@ export const updateWorkspaceTodo = async (
             scheduleTodoReminder(reminderScheduleData).catch(err => console.error(err));
         }
 
+        const populatedTodo = await TodoModel.findById(updatedTodo._id)
+            .populate('user', 'name email avatar')
+            .populate('assignees', 'name email avatar')
+            .session(session)
+            .lean();
+
         res.status(200).json({
             success: true,
-            data: updatedTodo,
+            data: populatedTodo,
             message: 'Task updated successfully'
         });
     } catch (err) {
@@ -776,7 +913,8 @@ export const assignWorkspaceTask = async (
                 { name: targetUser.name, email: targetUser.email },
                 { name: currentUser?.name || 'Someone', email: currentUser?.email || '' },
                 todo.title,
-                isNewGhost
+                isNewGhost,
+                workspace?.name
             ).catch(err => console.error('[assign] Email send failed:', err));
         }
 
@@ -880,3 +1018,35 @@ export const unassignWorkspaceTask = async (
     }
 };
 
+export const getTaskActivity = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+): Promise<void> => {
+    try {
+        const { id } = req.params;
+        const userId = req.user?._id;
+
+        if (!userId) {
+            throw new ErrorResponse(401, 'Unauthorized');
+        }
+
+        const task = await TodoModel.findById(id).lean();
+        if (!task) {
+            throw new ErrorResponse(404, 'Task not found');
+        }
+
+        const activities = await ActivityLogModel.find({ targetTask: new mongoose.Types.ObjectId(id) })
+            .populate('actor', 'name email avatar')
+            .populate('targetUser', 'name email avatar')
+            .sort({ createdAt: -1 })
+            .lean();
+
+        res.status(200).json({
+            success: true,
+            data: activities
+        });
+    } catch (err) {
+        next(err);
+    }
+};

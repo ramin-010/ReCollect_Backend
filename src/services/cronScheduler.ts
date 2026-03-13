@@ -1,6 +1,7 @@
 import cron from "node-cron";
 import Reminder from "../models/reminderSchema";
 import Todo from "../models/todoSchema";
+import WorkspaceModel from "../models/workspaceSchema";
 import { sendReminderEmail, sendTodoReminderEmail } from "../utils/emailService";
 
 export const startCronScheduler = () => {
@@ -37,7 +38,7 @@ export const startCronScheduler = () => {
                         const reminder = await Reminder.findById(reminderId)
                             .populate([
                                 { path: "user", select: "email name" },
-                                { path: "todoId", select: "title status description priority labels" }
+                                { path: "todoId", select: "title status description priority labels workspace" }
                             ])
                             .lean();
 
@@ -54,10 +55,20 @@ export const startCronScheduler = () => {
                         }
 
                         console.log(`📧 Sending todo reminder email for ${reminderId}...`);
+                        
+                        // Fetch workspace name if available
+                        let wsName: string | undefined;
+                        const todoDoc = reminder.todoId as any;
+                        if (todoDoc?.workspace) {
+                            const ws = await WorkspaceModel.findById(todoDoc.workspace).select('name').lean();
+                            wsName = ws?.name;
+                        }
+                        
                         emailSent = await sendTodoReminderEmail(
                             reminder.user,
                             reminder.todoId,
-                            reminder
+                            reminder,
+                            wsName
                         );
                     } else {
                         // Handle note reminder (original behavior)

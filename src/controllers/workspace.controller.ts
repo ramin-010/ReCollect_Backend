@@ -198,7 +198,8 @@ export const inviteMember: RequestHandler = async (req, res, next) => {
             { name: targetUser.name, email: targetUser.email },
             { name: currentUser?.name || 'Someone', email: currentUser?.email || '' },
             `Join workspace: ${workspace.name}`,
-            isNewGhost
+            isNewGhost,
+            workspace.name
         ).catch(err => console.error('[workspace] Invite email failed:', err));
 
         res.status(200).json({

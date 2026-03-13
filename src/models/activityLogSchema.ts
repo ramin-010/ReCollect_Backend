@@ -4,7 +4,11 @@ export type ActivityAction =
   | 'task_created'
   | 'task_completed'
   | 'task_assigned'
+  | 'task_unassigned'
   | 'task_status_changed'
+  | 'task_priority_changed'
+  | 'task_due_date_changed'
+  | 'task_content_changed'
   | 'member_joined'
   | 'member_removed'
   | 'workspace_created';
@@ -37,7 +41,11 @@ const ActivityLogSchema = new Schema<ActivityLog>(
         'task_created',
         'task_completed',
         'task_assigned',
+        'task_unassigned',
         'task_status_changed',
+        'task_priority_changed',
+        'task_due_date_changed',
+        'task_content_changed',
         'member_joined',
         'member_removed',
         'workspace_created',

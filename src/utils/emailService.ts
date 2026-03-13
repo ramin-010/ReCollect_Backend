@@ -15,39 +15,65 @@ const createTransporter = () => {
   });
 };
 
-// ─── Shared Design System (Notion EXACT Match) ───────────────────────
-// Clean white background, fully left-aligned, bold black headings, blue CTA.
+// ─── Minimalist Design System ────────────────────────────────────────
+// Pure white background, left-aligned, high contrast, clean typography.
 
-const LOGO_URL = 'https://res.cloudinary.com/dsfb3jjqx/image/upload/v1765101198/recollect/pyf5tmicuidnxtmi76e5.png'; // Black recoloc logo
-const NOTION_BLUE = '#2383e2';
-const TEXT_BLACK = '#0f0f0f';
-const TEXT_GRAY = '#6b7280';
-const BORDER_COLOR = '#ebebeb';
+const LOGO_LIGHT_URL = 'https://res.cloudinary.com/dsfb3jjqx/image/upload/v1773391852/recollect-logo-1024px_3_yalexb.png'; 
+const LOGO_DARK_URL = 'https://res.cloudinary.com/dsfb3jjqx/image/upload/v1773391852/recollect-logo-1024px_4_crmydu.png'; 
 
-const wrapEmail = (content: string, frontendUrl: string): string => `
+const BRAND_BLUE = '#2563eb';
+const TEXT_BLACK = '#37352f';
+const TEXT_GRAY = '#787774';
+const BORDER_COLOR = '#e4e4e7';
+
+// ─── Responsive Logo Block ───────────────────────────────────────────
+const logoBlock = (size: number = 24): string => `
+<img src="${LOGO_LIGHT_URL}" class="logo-light" alt="ReCollect" width="${size}" height="${size - 8} " style="display: block;" />
+<!--[if !mso]><!--><img src="${LOGO_DARK_URL}" class="logo-dark" alt="ReCollect" width="${size}" height="${size - 8}" style="display: none;" /><!--<![endif]-->`;
+
+// ─── Header Avatar Block ─────────────────────────────────────────────
+const avatarBlock = (name: string, size: number = 24): string => {
+  const initial = name ? name.charAt(0).toUpperCase() : 'R';
+  return `<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="width: ${size}px; height: ${size}px; background-color: #ededed; border-radius: 4px; border: 1px solid #e1e1e1;"><tr><td align="center" valign="middle" style="font-size: ${Math.floor(size * 0.6)}px; font-weight: 600; color: #37352f; line-height: 1; padding-bottom: 2px;">${initial}</td></tr></table>`;
+};
+
+// ─── Shared Email Wrapper ────────────────────────────────────────────
+const wrapEmail = (content: string, frontendUrl: string, headerLabel?: string): string => `
 <!DOCTYPE html>
 <html>
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="light dark">
+    <meta name="supported-color-schemes" content="light dark">
+    <style>
+      .logo-dark { display: none !important; }
+      @media (prefers-color-scheme: dark) {
+        .logo-light { display: none !important; }
+        .logo-dark { display: block !important; }
+      }
+      [data-ogsc] .logo-light { display: none !important; }
+      [data-ogsc] .logo-dark { display: block !important; }
+      a { text-decoration: none; }
+    </style>
   </head>
-  <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #ffffff; -webkit-font-smoothing: antialiased; color: ${TEXT_BLACK};">
+  <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, 'Apple Color Emoji', Arial, sans-serif, 'Segoe UI Emoji', 'Segoe UI Symbol'; background-color: #ffffff; -webkit-font-smoothing: antialiased; color: ${TEXT_BLACK};">
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color: #ffffff;">
       <tr>
-        <td align="center" style="padding: 40px 20px;">
-          <!-- Wrap content and force left alignment. Max-width 600px like Notion. -->
+        <td align="center" style="padding: 48px 20px;">
+          <!-- Left aligned, max-width 600px -->
           <table role="presentation" cellspacing="0" cellpadding="0" style="max-width: 600px; width: 100%; border: none;">
             
-            <!-- Header Logo Row -->
+            <!-- Header -->
             <tr>
-              <td style="padding-bottom: 24px;">
+              <td style="padding-bottom: 40px;">
                 <table role="presentation" cellspacing="0" cellpadding="0" border="0">
                   <tr>
-                    <td style="padding-right: 8px;">
-                      <img src="${LOGO_URL}" alt="ReCollect Logo" width="20" height="20" style="display: block; border-radius: 4px;" />
+                    <td style="padding-right: 12px;">
+                      ${avatarBlock(headerLabel || 'ReCollect', 24)}
                     </td>
-                    <td>
-                      <span style="font-size: 14px; font-weight: 500; color: ${TEXT_GRAY}; letter-spacing: -0.01em;">ReCollect Workspace</span>
+                    <td valign="middle">
+                      <span style="font-size: 16px; font-weight: 600; color: ${TEXT_GRAY}; letter-spacing: -0.01em;">${headerLabel || 'ReCollect'}</span>
                     </td>
                   </tr>
                 </table>
@@ -56,27 +82,28 @@ const wrapEmail = (content: string, frontendUrl: string): string => `
 
             <!-- Main Content -->
             <tr>
-              <td align="left" style="padding-bottom: 40px;">
+              <td align="left" style="padding-bottom: 24px;">
                 ${content}
               </td>
             </tr>
 
-            <!-- Notion Style Footer -->
+            <!-- Footer -->
             <tr>
               <td align="left" style="padding-top: 24px; border-top: 1px solid ${BORDER_COLOR};">
-                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0">
                   <tr>
-                    <td style="padding-bottom: 12px;">
-                      <img src="${LOGO_URL}" alt="ReCollect Logo" width="24" height="24" style="display: block; border-radius: 4px;" />
+                    <td valign="top" style="padding-right: 16px; padding-top: 0px; padding-left: 5px ">
+                      ${logoBlock(40)}
                     </td>
-                  </tr>
-                  <tr>
-                    <td>
-                      <p style="margin: 0 0 4px; font-size: 12px; color: #a3a3a3; font-weight: 500;">ReCollect</p>
-                      <p style="margin: 0; font-size: 11px; color: #a3a3a3; line-height: 1.5;">
-                        Your connected workspace for docs, projects, and wikis.<br />
-                        <a href="${frontendUrl}/dashboard" style="color: #a3a3a3; text-decoration: underline;">Manage notifications</a>
+                    <td valign="top">
+                      <p style="margin: 0px;margin-top : -6px; font-size: 20px; font-weight: 600; color: ${TEXT_BLACK};">ReCollect</p>
+                      <p style="margin: 0; font-size: 13px; color: #a1a1aa; line-height: 1.4;">
+                        <a href="https://re-collect.in" style="color: #787774; border-bottom: 1px solid #d4d4d8;">Re-Collect.in</a>, the connected workspace<br />
+                        for docs, projects, and Teams.
                       </p>
+                      <div style="margin-top: 12px;">
+                        <a href="https://re-collect.in/settings" style="color: #9ca3af; text-decoration: underline; font-size: 14px;">Update your email settings</a>
+                      </div>
                     </td>
                   </tr>
                 </table>
@@ -90,23 +117,42 @@ const wrapEmail = (content: string, frontendUrl: string): string => `
   </body>
 </html>`;
 
-// Reusable UI elements matching Notion's exact visual spec
+// ─── UI Components ───────────────────────────────────────────────────
+
 const uiButton = (href: string, label: string): string => `
-<a href="${href}" style="display: inline-block; background-color: ${NOTION_BLUE}; color: #ffffff; text-decoration: none; padding: 8px 16px; font-size: 14px; font-weight: 500; border-radius: 4px; line-height: 1.2;">
+<a href="${href}" style="display: inline-block; background-color: ${BRAND_BLUE}; color: #ffffff; text-decoration: none; padding: 10px 18px; font-size: 14px; font-weight: 500; border-radius: 6px; line-height: 1;">
   ${label} &rarr;
 </a>`;
 
-// Flat minimal bounding box with faint blue background like Notion edits
-const uiCard = (text: string): string => `
-<div style="margin: 20px 0; padding: 12px 16px; background-color: #f7fbff; border-left: 3px solid ${NOTION_BLUE};">
-  <p style="margin: 0; font-size: 14px; color: ${TEXT_BLACK}; line-height: 1.4;">${text}</p>
-</div>`;
-
 const uiHeading = (text: string): string => `
-<h1 style="margin: 0 0 16px; font-size: 24px; font-weight: 700; color: ${TEXT_BLACK}; line-height: 1.25; letter-spacing: -0.02em;">${text}</h1>`;
+<h1 style="margin: 0 0 16px; font-size: 24px; font-weight: 700; color: ${TEXT_BLACK}; line-height: 1.2; letter-spacing: -0.02em;">${text}</h1>`;
 
 const uiBody = (text: string): string => `
-<p style="margin: 0 0 20px; font-size: 15px; color: ${TEXT_GRAY}; line-height: 1.6;">${text}</p>`;
+<p style="margin: 0 0 24px; font-size: 15px; color: ${TEXT_GRAY}; line-height: 1.6;">${text}</p>`;
+
+// Action item block with light blue background and left border
+const uiActionItem = (title: string, subtitle?: string): string => `
+<div style="background-color: #f8fafc; border-left: 2px solid ${BRAND_BLUE}; padding: 12px 16px; margin: 24px 0;">
+  <table role="presentation" cellspacing="0" cellpadding="0" border="0">
+    <tr>
+      <td valign="top" style="padding-right: 12px; padding-top: 3px;">
+        <div style="width: 14px; height: 14px; border: 1.5px solid #cbd5e1; border-radius: 3px; background-color: #ffffff;"></div>
+      </td>
+      <td valign="top">
+        <p style="margin: 0; font-size: 15px; color: ${BRAND_BLUE}; line-height: 1.4; font-weight: 500;">${title}</p>
+        ${subtitle ? `<p style="margin: 4px 0 0; font-size: 13px; color: ${TEXT_GRAY};">${subtitle}</p>` : ''}
+      </td>
+    </tr>
+  </table>
+</div>`;
+
+const uiQuote = (text: string, label: string = 'Description'): string => `
+<div style="margin: 24px 0;">
+  <p style="margin: 0 0 8px; font-size: 13px; font-weight: 600; color: ${TEXT_BLACK}; text-transform: uppercase; letter-spacing: 0.05em;">${label}</p>
+  <div style="padding-left: 16px; border-left: 2px solid ${BORDER_COLOR};">
+    <p style="margin: 0; font-size: 15px; color: ${TEXT_BLACK}; line-height: 1.6;">${text}</p>
+  </div>
+</div>`;
 
 
 // ─── 1. Note Reminder ─────────────────────────────────────────────────
@@ -120,20 +166,18 @@ export const sendReminderEmail = async (
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
 
     const descriptionBlock = content.description
-      ? `<div style="margin: 16px 0; padding: 12px 0;">
-           <p style="margin: 0; font-size: 14px; color: ${TEXT_BLACK}; line-height: 1.5; padding-left: 12px; border-left: 2px solid ${BORDER_COLOR};">${content.description.substring(0, 200)}${content.description.length > 200 ? '...' : ''}</p>
-         </div>`
+      ? uiQuote(`${content.description.substring(0, 200)}${content.description.length > 200 ? '…' : ''}`)
       : '';
 
     const emailContent = `
       ${uiHeading(`Reminder: ${content.title}`)}
       ${uiBody(`Hi ${user.name}, ${reminder.message || 'here is your scheduled reminder.'}`)}
-      ${uiButton(`${frontendUrl}/dashboard/${content.DashId}?note=${content._id}`, 'View in ReCollect')}
       
-      ${descriptionBlock ? `<div style="margin-top: 32px;">
-        <p style="margin: 0 0 8px; font-size: 13px; font-weight: 500; color: ${TEXT_BLACK};">@${new Date().toLocaleDateString()}</p>
-        ${descriptionBlock}
-      </div>` : ''}
+      <div style="margin: 0 0 8px;">
+        ${uiButton(`${frontendUrl}/dashboard/${content.DashId}?note=${content._id}`, 'View in ReCollect')}
+      </div>
+      
+      ${descriptionBlock}
     `;
 
     await transporter.sendMail({
@@ -157,16 +201,13 @@ export const sendWelcomeEmail = async (user: any): Promise<boolean> => {
 
     const emailContent = `
       ${uiHeading('Welcome to ReCollect')}
-      ${uiBody(`Hi ${user.name},<br><br>Your personal workspace is ready. You can now start creating dashboards, capturing notes, setting task reminders, and collaborating with your team.`)}
+      ${uiBody(`Hi ${user.name}, your workspace is ready. You can now start creating dashboards, capturing notes, and collaborating with your team.`)}
       
-      <div style="margin: 0 0 24px;">
-        ${uiButton(`${frontendUrl}/dashboard`, 'Open application')}
+      <div style="margin: 0 0 32px;">
+        ${uiButton(`${frontendUrl}/dashboard`, 'Open ReCollect')}
       </div>
       
-      <div style="margin-top: 32px;">
-        <p style="margin: 0 0 12px; font-size: 13px; font-weight: 500; color: ${TEXT_BLACK};">Getting started quickly</p>
-        <p style="margin: 0 0 16px; font-size: 14px; color: ${TEXT_GRAY}; line-height: 1.5;">The best way to get started is to create your first dashboard and add a few notes. Use tasks to track action items, and share documents when you need team input.</p>
-      </div>
+      ${uiQuote('Create your first dashboard and add a few notes. Use tasks to track action items, and share documents when you need team input.', 'Getting started')}
     `;
 
     await transporter.sendMail({
@@ -186,37 +227,27 @@ export const sendWelcomeEmail = async (user: any): Promise<boolean> => {
 export const sendTodoReminderEmail = async (
   user: any,
   todo: any,
-  reminder: any
+  reminder: any,
+  workspaceName?: string
 ): Promise<boolean> => {
   try {
     const transporter = createTransporter();
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const headerLabel = workspaceName ? `${workspaceName} workspace` : 'ReCollect';
 
-    const priorityBlock = todo.priority 
-      ? `<span style="color: ${TEXT_GRAY}; margin-left: 8px;">· ${(todo.priority as string).charAt(0).toUpperCase() + (todo.priority as string).slice(1)} priority</span>` 
+    const priorityStr = todo.priority ? `${(todo.priority as string).charAt(0).toUpperCase() + (todo.priority as string).slice(1)} priority` : '';
+
+    const descriptionBlock = todo.description && todo.description.trim()
+      ? uiQuote(todo.description.substring(0, 300))
       : '';
 
-    let descriptionBlock = '';
-    if (todo.description && todo.description.trim()) {
-      descriptionBlock = `
-        <div style="margin-top: 24px; padding-top: 24px; border-top: 1px solid ${BORDER_COLOR};">
-          <p style="margin: 0 0 8px; font-size: 13px; font-weight: 500; color: ${TEXT_BLACK};">Description</p>
-          <div style="padding-left: 12px; border-left: 2px solid ${BORDER_COLOR};">
-            <p style="margin: 0; font-size: 14px; color: ${TEXT_BLACK}; line-height: 1.5;">${todo.description.substring(0, 300)}</p>
-          </div>
-        </div>`;
-    }
-
     const emailContent = `
-      ${uiHeading(todo.title)}
-      <p style="margin: 0 0 24px; font-size: 13px;">
-        <span style="font-weight: 500; color: ${TEXT_BLACK};">Task Due</span>
-        ${priorityBlock}
-      </p>
-      
+      ${uiHeading('Task due reminder')}
       ${uiBody(`Hi ${user.name}, this is a reminder for your scheduled task.`)}
       
-      <div style="margin: 20px 0;">
+      ${uiActionItem(todo.title, priorityStr)}
+      
+      <div style="margin: 24px 0 8px;">
         ${uiButton(`${frontendUrl}/dashboard?view=todos`, 'View Task')}
       </div>
 
@@ -226,8 +257,8 @@ export const sendTodoReminderEmail = async (
     await transporter.sendMail({
       from: `"ReCollect" <${process.env.EMAIL_FROM || 'noreply@recollect.com'}>`,
       to: user.email,
-      subject: `Task Due: ${todo.title.substring(0, 50)}${todo.title.length > 50 ? '...' : ''}`,
-      html: wrapEmail(emailContent, frontendUrl)
+      subject: `Task Due: ${todo.title.substring(0, 50)}${todo.title.length > 50 ? '…' : ''}`,
+      html: wrapEmail(emailContent, frontendUrl, headerLabel)
     });
     return true;
   } catch (error) {
@@ -250,9 +281,9 @@ export const sendAccessRequestEmail = async (
 
     const emailContent = `
       ${uiHeading(`${requester.name} requested access`)}
-      ${uiBody(`${requester.email} requested access to the document <strong>${docTitle}</strong>. Open ReCollect to review their request.`)}
+      ${uiBody(`<strong>${requester.email}</strong> requested access to <strong>${docTitle}</strong>. Open ReCollect to review their request.`)}
       
-      <div style="margin: 24px 0 0;">
+      <div style="margin: 0 0 8px;">
         ${uiButton(`${frontendUrl}/?view=docs&tab=requests`, 'Review request')}
       </div>
     `;
@@ -285,7 +316,7 @@ export const sendAccessApprovedEmail = async (
       ${uiHeading(`You have access to ${docTitle}`)}
       ${uiBody(`<strong>${ownerName}</strong> has granted you access to this document. You can now view and edit its contents.`)}
       
-      <div style="margin: 24px 0 0;">
+      <div style="margin: 0 0 8px;">
         ${uiButton(`${frontendUrl}/?view=docs`, 'Open document')}
       </div>
     `;
@@ -308,19 +339,21 @@ export const sendTaskAssignmentEmail = async (
   assignee: { name: string; email: string },
   assigner: { name: string; email: string },
   taskTitle: string,
-  isGhostUser: boolean
+  isGhostUser: boolean,
+  workspaceName?: string
 ): Promise<boolean> => {
   try {
     const transporter = createTransporter();
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const headerLabel = workspaceName ? `${workspaceName} workspace` : 'ReCollect';
 
     const subject = isGhostUser
       ? `${assigner.name} mentioned you in ReCollect`
       : `New task assigned in ReCollect`;
 
     const bodyText = isGhostUser
-      ? `<strong>${assigner.name}</strong> assigned you a task. Create an account to view and manage your assigned action items.`
-      : `<strong>${assigner.name}</strong> assigned you a task in the workspace.`;
+      ? `<strong>${assigner.name}</strong> assigned you a task. Create an account to fully view and manage your assigned action items.`
+      : `<strong>${assigner.name}</strong> assigned you a task${workspaceName ? ` in the workspace.` : `.`}`;
 
     const ctaHref = isGhostUser ? `${frontendUrl}/register` : `${frontendUrl}/dashboard?view=todos`;
     const ctaLabel = isGhostUser ? 'Join workspace' : 'Open task';
@@ -329,21 +362,9 @@ export const sendTaskAssignmentEmail = async (
       ${uiHeading('New task assigned')}
       ${uiBody(bodyText)}
       
-      <!-- Styled exactly like the Notion "Action Items" block screenshot -->
-      <div style="margin: 24px 0 32px;">
-        <p style="margin: 0 0 12px; font-size: 13px; font-weight: 500; color: ${TEXT_BLACK};">Action Items</p>
-        <div style="background-color: #f7fbff; border-left: 2px solid ${NOTION_BLUE}; padding: 12px 16px;">
-          <table role="presentation" cellspacing="0" cellpadding="0" border="0">
-            <tr>
-              <td valign="top" style="padding-right: 8px; padding-top: 1px;">
-                <div style="width: 14px; height: 14px; border: 1px solid #c9c9c9; border-radius: 3px; background-color: #ffffff;"></div>
-              </td>
-              <td valign="top">
-                <p style="margin: 0; font-size: 14px; color: ${NOTION_BLUE}; line-height: 1.4;">${taskTitle}</p>
-              </td>
-            </tr>
-          </table>
-        </div>
+      <div style="margin-bottom: 24px;">
+        <p style="margin: 0 0 8px; font-size: 14px; font-weight: 500; color: ${TEXT_BLACK};">Action Items</p>
+        ${uiActionItem(taskTitle)}
       </div>
       
       ${uiButton(ctaHref, ctaLabel)}
@@ -353,7 +374,7 @@ export const sendTaskAssignmentEmail = async (
       from: `"ReCollect" <${process.env.EMAIL_FROM || 'noreply@recollect.com'}>`,
       to: assignee.email,
       subject,
-      html: wrapEmail(emailContent, frontendUrl)
+      html: wrapEmail(emailContent, frontendUrl, headerLabel)
     });
     return true;
   } catch (error) {

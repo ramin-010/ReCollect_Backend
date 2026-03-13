@@ -176,7 +176,8 @@ export const assignTask = async (
                 { name: targetUser.name, email: targetUser.email },
                 { name: currentUser?.name || 'Someone', email: currentUser?.email || '' },
                 todo.title,
-                isNewGhost
+                isNewGhost,
+                workspace?.name
             ).catch(err => console.error('[assign] Email send failed:', err));
         }
 
