@@ -4,6 +4,8 @@
 import { Request, Response, NextFunction } from 'express';
 import mongoose from 'mongoose';
 import TodoModel from '../../models/todoSchema';
+import DocModel from '../../models/docSchema';
+import SlideDeck from '../../models/slideSchema';
 import ErrorResponse from '../../utils/errorResponse';
 import reminderSchema from '../../models/reminderSchema';
 import { scheduleTodoReminder } from '../../services/reminderService';
@@ -559,5 +561,54 @@ export const deleteTodo = async (
         next(err);
     } finally {
         session.endSession();
+    }
+};
+
+/**
+ * Search user's docs and slides by title (for @ mention in personal tasks).
+ * Returns a lean list of { type, refId, title } — nothing more.
+ */
+export const searchReferences = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+): Promise<void> => {
+    try {
+        
+        const userId = req.user?._id;
+        if (!userId) throw new ErrorResponse(401, 'Unauthorized');
+
+        const q = (req.query.q as string || '').trim();
+        const regex = q.length > 0 ? new RegExp(q, 'i') : /.*/;
+
+        const [docs, decks] = await Promise.all([
+            DocModel.find({
+                $or: [{ user: userId }, { 'collaborators.user': userId }],
+                isArchived: { $ne: true },
+                title: regex,
+            })
+            .select('_id title')
+            .sort({ updatedAt: -1 })
+            .limit(10)
+            .lean(),
+
+            SlideDeck.find({
+                $or: [{ user: userId }, { 'collaborators.user': userId }],
+                name: regex,
+            })
+            .select('_id name')
+            .sort({ updatedAt: -1 })
+            .limit(10)
+            .lean(),
+        ]);
+
+        const results = [
+            ...docs.map((d: any) => ({ type: 'doc', refId: d._id.toString(), title: d.title || 'Untitled Doc' })),
+            ...decks.map((d: any) => ({ type: 'slide', refId: d._id.toString(), title: d.name || 'Untitled Deck' })),
+        ];
+
+        res.status(200).json({ success: true, data: results });
+    } catch (err) {
+        next(err);
     }
 };

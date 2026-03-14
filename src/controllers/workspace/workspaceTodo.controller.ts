@@ -346,12 +346,30 @@ export const updateWorkspaceTodo = async (
         if (existingTodo.user.toString() === String(userId)) {
             hasPermission = true;
         } else if (existingTodo.assignees && existingTodo.assignees.some(a => a.toString() === String(userId))) {
-            hasPermission = true;
+            // Assignees can update status/subtasks etc, BUT if they are a viewer in the workspace
+            // they still cannot edit — viewer role takes priority.
+            if (existingTodo.visibility === 'workspace' && existingTodo.workspace) {
+                const ws = await WorkspaceModel.findById(existingTodo.workspace).select('owner members').session(session).lean();
+                if (ws) {
+                    const isWsOwner = ws.owner.toString() === String(userId);
+                    const wsMember = ws.members.find(m => m.user.toString() === String(userId));
+                    if (isWsOwner || (wsMember && wsMember.role !== 'viewer')) {
+                        hasPermission = true;
+                    } else if (wsMember && wsMember.role === 'viewer') {
+                        throw new ErrorResponse(403, "Viewers cannot edit tasks in this workspace");
+                    }
+                }
+            } else {
+                hasPermission = true;
+            }
         } else if (existingTodo.visibility === 'workspace' && existingTodo.workspace) {
             const workspace = await WorkspaceModel.findById(existingTodo.workspace).select('owner members').session(session).lean();
             if (workspace) {
                 const isOwner = workspace.owner.toString() === String(userId);
                 const workspaceMember = workspace.members.find(m => m.user.toString() === String(userId));
+                if (workspaceMember && workspaceMember.role === 'viewer') {
+                    throw new ErrorResponse(403, "Viewers cannot edit tasks in this workspace");
+                }
                 if (isOwner || (workspaceMember && workspaceMember.role !== 'viewer')) {
                     hasPermission = true;
                 }
@@ -488,31 +506,43 @@ export const updateWorkspaceTodo = async (
         reminderScheduleData = null;
         
         if (req.body.reminderDate !== undefined) {
-             await reminderSchema.deleteMany({ todoId: existingTodo._id }).session(session);
-             
-             const newDate = todoUpdates.reminderDate;
-             if (newDate) {
-                 if (isNaN(new Date(newDate).getTime())) throw new ErrorResponse(400, "Invalid reminder date");
+             // Only recreate the reminder if the date actually changed.
+             // Comparing timestamps prevents needless reminder recreation on every save.
+             const incomingReminderMs = req.body.reminderDate && req.body.reminderDate !== 'null'
+                 ? new Date(req.body.reminderDate).getTime()
+                 : null;
+             const existingReminderMs = existingTodo.reminderDate
+                 ? new Date(existingTodo.reminderDate).getTime()
+                 : null;
+
+             if (incomingReminderMs !== existingReminderMs) {
+                 await reminderSchema.deleteMany({ todoId: existingTodo._id }).session(session);
                  
-                 const [newReminder] = await reminderSchema.create([{
-                     user: new mongoose.Types.ObjectId(String(userId)),
-                     type: 'todo',
-                     todoId: existingTodo._id,
-                     reminderDate: newDate,
-                     message: `Reminder: ${(todoUpdates.title || existingTodo.title).trim()}`,
-                     emailSent: false,
-                     status: 'pending'
-                 }], { session });
+                 const newDate = todoUpdates.reminderDate;
+                 if (newDate) {
+                     if (isNaN(new Date(newDate).getTime())) throw new ErrorResponse(400, "Invalid reminder date");
+                     
+                     const [newReminder] = await reminderSchema.create([{
+                         user: new mongoose.Types.ObjectId(String(userId)),
+                         type: 'todo',
+                         todoId: existingTodo._id,
+                         reminderDate: newDate,
+                         message: `Reminder: ${(todoUpdates.title || existingTodo.title).trim()}`,
+                         emailSent: false,
+                         status: 'pending'
+                     }], { session });
 
-                 if (!newReminder) {
-                     throw new ErrorResponse(400, "Failed to create reminder");
+                     if (!newReminder) {
+                         throw new ErrorResponse(400, "Failed to create reminder");
+                     }
+
+                     reminderScheduleData = {
+                         reminderId: newReminder._id as mongoose.Types.ObjectId,
+                         remindAt: newDate
+                     };
                  }
-
-                 reminderScheduleData = {
-                     reminderId: newReminder._id as mongoose.Types.ObjectId,
-                     remindAt: newDate
-                 };
              }
+             // If dates are the same, skip — no action needed.
         }
 
         const result = await TodoModel.findByIdAndUpdate(
@@ -701,7 +731,10 @@ export const deleteWorkspaceTodo = async (
                 const isOwner = workspace.owner.toString() === String(userId);
                 const workspaceMember = workspace.members.find(m => m.user.toString() === String(userId));
                 
-               
+                // Explicit viewer block — viewers can never delete workspace tasks
+                if (workspaceMember && workspaceMember.role === 'viewer') {
+                    throw new ErrorResponse(403, "Viewers cannot delete tasks in this workspace");
+                }
                 if (isOwner || (workspaceMember && workspaceMember.role !== 'viewer')) {
                     hasPermission = true;
                 }
