@@ -1,13 +1,24 @@
 import cron from "node-cron";
 import Reminder from "../models/reminderSchema";
-import Todo from "../models/todoSchema";
-import { sendReminderEmail, sendTodoReminderEmail } from "../utils/emailService";
+import WorkspaceModel from "../models/workspaceSchema";
+import { sendReminderEmail } from "../utils/emailService";
+import { sendWorkspaceTaskReminderEmail } from "../controllers/workspace/workspaceEmails";
+import { sendPersonalTaskReminderEmail } from "../controllers/personalTasks/personalEmails";
 
 export const startCronScheduler = () => {
     // Run every minute
     cron.schedule("* * * * *", async () => {
         try {
             const now = new Date();
+
+            // Cleanup: reset stale 'processing' reminders older than 5 min back to pending
+            await Reminder.updateMany(
+                {
+                    status: "processing",
+                    updatedAt: { $lt: new Date(now.getTime() - 5 * 60 * 1000) }
+                },
+                { $set: { status: "pending" } }
+            );
 
             // Find all pending reminders that are due
             const dueReminders = await Reminder.find(
@@ -28,16 +39,32 @@ export const startCronScheduler = () => {
             
             for (const doc of dueReminders) {
                 const reminderId = doc._id;
-                const reminderType = doc.type || 'note'; // Default to 'note' for backward compatibility
+                const reminderType = doc.type || 'note';
 
                 try {
+                    // Atomic claim: prevent duplicate processing
+                    const claimed = await Reminder.findOneAndUpdate(
+                        { _id: reminderId, status: "pending", emailSent: false },
+                        { $set: { status: "processing" } },
+                        { new: true }
+                    );
+
+                    if (!claimed) {
+                        // Another cron instance already picked this up
+                        continue;
+                    }
+
                     let emailSent = false;
 
                     if (reminderType === 'todo') {
                         const reminder = await Reminder.findById(reminderId)
                             .populate([
                                 { path: "user", select: "email name" },
-                                { path: "todoId", select: "title status description priority labels" }
+                                { 
+                                    path: "todoId", 
+                                    select: "title status description priority labels workspace assignees",
+                                    populate: { path: "assignees", select: "email name" }
+                                }
                             ])
                             .lean();
 
@@ -53,12 +80,31 @@ export const startCronScheduler = () => {
                             continue;
                         }
 
-                        console.log(`📧 Sending todo reminder email for ${reminderId}...`);
-                        emailSent = await sendTodoReminderEmail(
-                            reminder.user,
-                            reminder.todoId,
-                            reminder
-                        );
+                        const todoDoc = reminder.todoId as any;
+
+                        const recipients = todoDoc.assignees && todoDoc.assignees.length > 0 
+                            ? todoDoc.assignees 
+                            : [reminder.user];
+
+                        // Route to the correct email template based on workspace presence
+                        if (todoDoc?.workspace) {
+                            // Workspace task → use workspace email template
+                            const ws = await WorkspaceModel.findById(todoDoc.workspace).select('name').lean();
+                            const wsName = ws?.name || 'Workspace';
+                            
+                            console.log(`📧 Sending workspace task reminder email(s) for ${reminderId}...`);
+                            const results = await Promise.all(recipients.map((recipient: any) => 
+                                sendWorkspaceTaskReminderEmail(recipient, todoDoc, reminder, wsName)
+                            ));
+                            emailSent = results.some(res => res === true);
+                        } else {
+                            // Personal task → use personal email template
+                            console.log(`📧 Sending personal task reminder email(s) for ${reminderId}...`);
+                            const results = await Promise.all(recipients.map((recipient: any) => 
+                                sendPersonalTaskReminderEmail(recipient, todoDoc, reminder)
+                            ));
+                            emailSent = results.some(res => res === true);
+                        }
                     } else {
                         // Handle note reminder (original behavior)
                         const reminder = await Reminder.findById(reminderId)
@@ -105,4 +151,3 @@ export const startCronScheduler = () => {
 
     console.log("✓ Cron scheduler started. Checking reminders every minute.");
 };
-

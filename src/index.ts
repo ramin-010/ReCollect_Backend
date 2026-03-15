@@ -43,6 +43,11 @@ app.use(cors({
     allowedHeaders: ['Content-Type', "Authorization"]
 }))
 
+import workspaceRoutes, { publicWorkspaceRouter } from './routers/workspace.routes';
+// Public workspace routes (no auth) must be mounted BEFORE the protected ones
+app.use('/api/workspaces', publicWorkspaceRouter);
+app.use('/api/workspaces', workspaceRoutes);
+
 
 import authRouter from './routers/auth.routes'
 app.use('/api', authRouter);
@@ -68,6 +73,9 @@ app.use('/api', otpRoutes);
 import todoRoutes from './routers/todo.routes';
 app.use('/api', todoRoutes);
 
+import workspaceTodoRoutes from './routers/workspaceTodo.routes';
+app.use('/api/workspace-todos', workspaceTodoRoutes);
+
 
 import expenseRoutes from './routers/expense.routes';
 app.use('/api/expenses', expenseRoutes);
@@ -90,6 +98,9 @@ app.use('/api/slides/ai', slideAiRoutes);
 import docAiRoutes from './routers/docAi.routes';
 app.use('/api/docs/ai', docAiRoutes);
 
+import taskAiRoutes from './routers/taskAi.routes';
+app.use('/api/todos/ai', taskAiRoutes);
+
 import livekitRoutes from './routers/livekit.routes';
 app.use('/api/livekit', livekitRoutes);
 
@@ -99,8 +110,9 @@ app.use('/api/collab/upload', uploadRoutes);
 import emailRoutes from './routers/email.routes';
 app.use('/api/email', emailRoutes);
 
-import workspaceRoutes from './routers/workspace.routes';
-app.use('/api/workspaces', workspaceRoutes);
+
+import notificationRoutes from './routers/notification.routes';
+app.use('/api/notifications', notificationRoutes);
 
 
 

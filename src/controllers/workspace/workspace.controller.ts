@@ -1,29 +1,33 @@
 import { Request, Response, NextFunction, RequestHandler } from 'express';
 import mongoose from 'mongoose';
-import WorkspaceModel from '../models/workspaceSchema';
-import UserModel from '../models/userSchema';
-import TodoModel from '../models/todoSchema';
-import ActivityLogModel from '../models/activityLogSchema';
-import ErrorResponse from '../utils/errorResponse';
-import { sendTaskAssignmentEmail } from '../utils/emailService';
+import WorkspaceModel from '../../models/workspaceSchema';
+import UserModel from '../../models/userSchema';
+import TodoModel from '../../models/todoSchema';
+import ActivityLogModel from '../../models/activityLogSchema';
+import NotificationModel from '../../models/notificationSchema';
+import ErrorResponse from '../../utils/errorResponse';
+import { sendWorkspaceInviteEmail } from './workspaceEmails';
 
 /**
  * POST /api/workspaces
- * Body: { name: string }
+ * Body: { name: string, defaultSpaceName?: string }
  */
 export const createWorkspace: RequestHandler = async (req, res, next) => {
     try {
         const userId = String(req.user?._id);
-        const { name } = req.body;
+        const { name, defaultSpaceName } = req.body;
 
         if (!name || typeof name !== 'string' || !name.trim()) {
             throw new ErrorResponse(400, 'Workspace name is required');
         }
 
+        const initialSpaceName = defaultSpaceName?.trim() || 'Team 1';
+
         const workspace = await WorkspaceModel.create({
             name: name.trim(),
             owner: new mongoose.Types.ObjectId(userId),
-            members: [{ user: new mongoose.Types.ObjectId(userId), role: 'admin', joinedAt: new Date() }]
+            members: [{ user: new mongoose.Types.ObjectId(userId), role: 'admin', joinedAt: new Date() }],
+            spaces: [{ name: initialSpaceName }]
         });
 
         // Log activity
@@ -102,7 +106,7 @@ export const getWorkspace: RequestHandler = async (req, res, next) => {
 /**
  * POST /api/workspaces/:id/members
  * Body: { email: string }
- * Invite a member (creates ghost user if needed)
+ * Sends an invite notification to the user instead of directly adding them
  */
 export const inviteMember: RequestHandler = async (req, res, next) => {
     try {
@@ -158,44 +162,50 @@ export const inviteMember: RequestHandler = async (req, res, next) => {
             throw new ErrorResponse(400, 'User is already a member of this workspace');
         }
 
-        workspace.members.push({
-            user: targetUser._id as mongoose.Types.ObjectId,
-            role: 'member',
-            joinedAt: new Date()
+        // Check if there's already a pending invite for this user + workspace
+        const existingInvite = await NotificationModel.findOne({
+            recipient: targetUser._id,
+            type: 'workspace_invite',
+            status: 'pending',
+            'metadata.workspaceId': workspace._id,
         });
 
-        await workspace.save();
+        if (existingInvite) {
+            throw new ErrorResponse(400, 'An invite is already pending for this user');
+        }
 
-        // Log activity
-        await ActivityLogModel.create({
-            workspace: workspace._id,
-            actor: new mongoose.Types.ObjectId(userId),
-            action: 'member_joined',
-            targetUser: targetUser._id,
-            metadata: targetUser.name,
-        });
-
-        // Send invitation email (fire and forget)
+        // Get sender info
         const currentUser = await UserModel.findById(userId).select('name email');
-        sendTaskAssignmentEmail(
+
+        // ── Create a notification instead of directly adding ──
+        await NotificationModel.create({
+            recipient: targetUser._id,
+            sender: new mongoose.Types.ObjectId(userId),
+            category: 'actionable',
+            type: 'workspace_invite',
+            title: `Workspace Invite`,
+            message: `${currentUser?.name || 'Someone'} invited you to join "${workspace.name}"`,
+            metadata: {
+                workspaceId: workspace._id,
+                workspaceName: workspace.name,
+                role: 'member',
+            },
+            status: 'pending',
+        });
+
+        // Send invitation email (fire and forget) — uses dedicated invite template
+        sendWorkspaceInviteEmail(
             { name: targetUser.name, email: targetUser.email },
             { name: currentUser?.name || 'Someone', email: currentUser?.email || '' },
-            `Join workspace: ${workspace.name}`,
+            workspace.name,
             isNewGhost
         ).catch(err => console.error('[workspace] Invite email failed:', err));
 
-        // Return updated workspace
-        const updated = await WorkspaceModel.findById(workspaceId)
-            .populate('owner', 'name email avatar')
-            .populate('members.user', 'name email avatar')
-            .lean();
-
         res.status(200).json({
             success: true,
-            data: updated,
             message: isNewGhost
                 ? `Invitation sent to ${normalizedEmail}`
-                : `${targetUser.name} added to workspace`
+                : `Invite sent to ${targetUser.name}`,
         });
     } catch (err) {
         next(err);
@@ -256,6 +266,54 @@ export const removeMember: RequestHandler = async (req, res, next) => {
 };
 
 /**
+ * PATCH /api/workspaces/:id/members/:userId/role
+ * Update a member's role (Owner or Admin only, but Admin cannot modify Owner)
+ */
+export const updateWorkspaceRole: RequestHandler = async (req, res, next) => {
+    try {
+        const currentUserId = String(req.user?._id);
+        const { id: workspaceId, userId: targetUserId } = req.params;
+        const { role } = req.body;
+
+        if (!['admin', 'member', 'viewer'].includes(role)) {
+            throw new ErrorResponse(400, 'Invalid role');
+        }
+
+        const workspace = await WorkspaceModel.findById(workspaceId);
+        if (!workspace) throw new ErrorResponse(404, 'Workspace not found');
+
+        const isOwner = workspace.owner.toString() === currentUserId;
+        const isAdmin = workspace.members.some((m: any) => m.user.toString() === currentUserId && m.role === 'admin');
+
+        if (!isOwner && !isAdmin) {
+            throw new ErrorResponse(403, 'Only admins can update roles');
+        }
+
+        if (workspace.owner.toString() === targetUserId) {
+            throw new ErrorResponse(400, 'Cannot change the role of the workspace owner');
+        }
+
+        const memberIndex = workspace.members.findIndex((m: any) => m.user.toString() === targetUserId);
+        if (memberIndex === -1) {
+            throw new ErrorResponse(400, 'User is not a member of this workspace');
+        }
+
+        const member = workspace.members[memberIndex];
+        if (member) member.role = role as 'admin' | 'member' | 'viewer';
+        await workspace.save();
+
+        const updated = await WorkspaceModel.findById(workspaceId)
+            .populate('owner', 'name email avatar')
+            .populate('members.user', 'name email avatar')
+            .lean();
+
+        res.status(200).json({ success: true, data: updated, message: 'Role updated' });
+    } catch (err) {
+        next(err);
+    }
+};
+
+/**
  * DELETE /api/workspaces/:id
  * Delete workspace (owner only)
  */
@@ -283,6 +341,41 @@ export const deleteWorkspace: RequestHandler = async (req, res, next) => {
     }
 };
 
+/**
+ * POST /api/workspaces/:id/spaces
+ * Add a new space to the workspace
+ */
+export const createSpace: RequestHandler = async (req, res, next) => {
+    try {
+        const userId = String(req.user?._id);
+        const workspaceId = req.params.id;
+        const { name } = req.body;
+
+        if (!name || typeof name !== 'string' || !name.trim()) {
+            throw new ErrorResponse(400, 'Space name is required');
+        }
+
+        const workspace = await WorkspaceModel.findById(workspaceId);
+        if (!workspace) throw new ErrorResponse(404, 'Workspace not found');
+
+        const isMember = workspace.owner.toString() === userId ||
+            workspace.members.some((m: any) => m.user.toString() === userId);
+        if (!isMember) throw new ErrorResponse(403, 'Not a member of this workspace');
+
+        workspace.spaces.push({ name: name.trim() } as any);
+        await workspace.save();
+
+        const updated = await WorkspaceModel.findById(workspaceId)
+            .populate('owner', 'name email avatar')
+            .populate('members.user', 'name email avatar')
+            .lean();
+
+        res.status(201).json({ success: true, data: updated, message: 'Space created' });
+    } catch (err) {
+        next(err);
+    }
+};
+
 // ─────────────────────────────────────────────────────────────
 // NEW ENDPOINTS: Tasks, Stats, Activity
 // ─────────────────────────────────────────────────────────────
@@ -304,13 +397,20 @@ export const getWorkspaceTasks: RequestHandler = async (req, res, next) => {
             workspace.members.some((m: any) => m.user.toString() === userId);
         if (!isMember) throw new ErrorResponse(403, 'Not a member');
 
-        const tasks = await TodoModel.find({
+        const { spaceId } = req.query;
+        const query: any = {
             workspace: new mongoose.Types.ObjectId(workspaceId),
             visibility: 'workspace',
-        })
+        };
+
+        if (spaceId && typeof spaceId === 'string' && spaceId !== 'all') {
+            query.spaceId = new mongoose.Types.ObjectId(spaceId);
+        }
+
+        const tasks = await TodoModel.find(query)
             .sort({ createdAt: -1 })
             .populate('tags', 'name')
-            .populate('assignee', 'name email avatar')
+            .populate('assignees', 'name email avatar')
             .populate('user', 'name email avatar')
             .lean();
 
@@ -332,20 +432,34 @@ export const getWorkspaceStats: RequestHandler = async (req, res, next) => {
         const workspace = await WorkspaceModel.findById(workspaceId).lean();
         if (!workspace) throw new ErrorResponse(404, 'Workspace not found');
 
-        const isMember = workspace.owner.toString() === userId ||
-            workspace.members.some((m: any) => m.user.toString() === userId);
+        const isOwner = workspace.owner.toString() === userId;
+        const isAdmin = workspace.members.some((m: any) => m.user.toString() === userId && m.role === 'admin');
+        const isMember = isOwner || workspace.members.some((m: any) => m.user.toString() === userId);
         if (!isMember) throw new ErrorResponse(403, 'Not a member');
 
+        // Check Overview Access
+        if (!isOwner && !isAdmin) {
+            const canView = workspace.settings?.membersCanViewOverview === true;
+            if (!canView) {
+                throw new ErrorResponse(403, 'You do not have permission to view the workspace overview.');
+            }
+        }
+
         const wsOid = new mongoose.Types.ObjectId(workspaceId);
+        const { spaceId } = req.query;
+        
+        const baseQuery: any = { workspace: wsOid, visibility: 'workspace' };
+        if (spaceId && typeof spaceId === 'string' && spaceId !== 'all') {
+            baseQuery.spaceId = new mongoose.Types.ObjectId(spaceId);
+        }
 
         const [totalTasks, pending, inProgress, completed, overdue] = await Promise.all([
-            TodoModel.countDocuments({ workspace: wsOid, visibility: 'workspace' }),
-            TodoModel.countDocuments({ workspace: wsOid, visibility: 'workspace', status: 'pending' }),
-            TodoModel.countDocuments({ workspace: wsOid, visibility: 'workspace', status: 'in_progress' }),
-            TodoModel.countDocuments({ workspace: wsOid, visibility: 'workspace', status: 'complete' }),
+            TodoModel.countDocuments(baseQuery),
+            TodoModel.countDocuments({ ...baseQuery, status: 'pending' }),
+            TodoModel.countDocuments({ ...baseQuery, status: 'in_progress' }),
+            TodoModel.countDocuments({ ...baseQuery, status: 'complete' }),
             TodoModel.countDocuments({
-                workspace: wsOid,
-                visibility: 'workspace',
+                ...baseQuery,
                 status: { $ne: 'complete' },
                 dueDate: { $lt: new Date() },
             }),
@@ -393,6 +507,46 @@ export const getWorkspaceActivity: RequestHandler = async (req, res, next) => {
             .lean();
 
         res.status(200).json({ success: true, data: activity });
+    } catch (err) {
+        next(err);
+    }
+};
+
+/**
+ * PATCH /api/workspaces/:id/settings
+ * Update workspace settings (only owner or admins)
+ */
+export const updateWorkspaceSettings: RequestHandler = async (req, res, next) => {
+    try {
+        const userId = String(req.user?._id);
+        const workspaceId = req.params.id;
+        const { membersCanViewOverview } = req.body;
+
+        const workspace = await WorkspaceModel.findById(workspaceId);
+        if (!workspace) throw new ErrorResponse(404, 'Workspace not found');
+
+        const isOwner = workspace.owner.toString() === userId;
+        const isAdmin = workspace.members.some((m: any) => m.user.toString() === userId && m.role === 'admin');
+        
+        if (!isOwner && !isAdmin) {
+            throw new ErrorResponse(403, 'Only admins can update workspace settings');
+        }
+
+        if (typeof membersCanViewOverview === 'boolean') {
+            if (!workspace.settings) {
+                workspace.settings = { membersCanViewOverview: false };
+            }
+            workspace.settings.membersCanViewOverview = membersCanViewOverview;
+        }
+
+        await workspace.save();
+
+        const updated = await WorkspaceModel.findById(workspaceId)
+            .populate('owner', 'name email avatar')
+            .populate('members.user', 'name email avatar')
+            .lean();
+
+        res.status(200).json({ success: true, data: updated, message: 'Settings updated' });
     } catch (err) {
         next(err);
     }

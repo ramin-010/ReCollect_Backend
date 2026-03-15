@@ -27,7 +27,7 @@ export interface Todo extends Document {
   description?: string; // Rich text (TipTap JSON)
   
   // Status & Priority
-  status: 'pending' | 'in_progress' | 'complete';
+  status: 'pending' | 'in_progress' | 'review' | 'blocked' | 'complete';
   priority: 'low' | 'medium' | 'high';
   
   // Dates
@@ -51,12 +51,13 @@ export interface Todo extends Document {
   recurrence?: TaskRecurrence;
 
   // Collaboration
-  assignee?: mongoose.Types.ObjectId;
+  assignees?: mongoose.Types.ObjectId[];
   assignedAt?: Date;
 
   // Visibility
   visibility: 'private' | 'shared' | 'workspace';
   workspace?: mongoose.Types.ObjectId;
+  spaceId?: mongoose.Types.ObjectId;
   
   // Legacy compat
   createdAt: Date;
@@ -108,13 +109,13 @@ const TodoSchema = new Schema<Todo>(
     },
     status: {
       type: String,
-      enum: ['pending', 'in_progress', 'complete'],
+      enum: ['pending', 'in_progress', 'review', 'blocked', 'complete'],
       default: 'pending'
     },
     priority: {
       type: String,
-      enum: ['low', 'medium', 'high'],
-      default: 'medium'
+      enum: ['low', 'normal', 'medium', 'high', 'urgent'],
+      default: 'low'
     },
     dueDate: {
       type: Date,
@@ -149,11 +150,10 @@ const TodoSchema = new Schema<Todo>(
       default: null
     },
     // Unified Collaboration (P2P)
-    assignee: {
+    assignees: [{
        type: mongoose.Schema.Types.ObjectId, 
-       ref: 'User',
-       default: null 
-    },
+       ref: 'User'
+    }],
     assignedAt: {
        type: Date,
        default: null
@@ -167,6 +167,10 @@ const TodoSchema = new Schema<Todo>(
     workspace: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Workspace',
+      default: null
+    },
+    spaceId: {
+      type: mongoose.Schema.Types.ObjectId,
       default: null
     },
     // Tracking & Refs
@@ -184,7 +188,10 @@ TodoSchema.index({ user: 1, status: 1 });
 TodoSchema.index({ user: 1, priority: 1 });
 TodoSchema.index({ user: 1, dueDate: 1 });
 TodoSchema.index({ 'references.refId': 1 }); // For finding tasks by doc/content
-TodoSchema.index({ assignee: 1 }); // For assigned task lookups
+TodoSchema.index({ assignees: 1 }); // For assigned task lookups
+TodoSchema.index({ workspace: 1, visibility: 1 }); // For workspace tasks
+TodoSchema.index({ workspace: 1, visibility: 1, status: 1 }); // For workspace stats
+TodoSchema.index({ workspace: 1, spaceId: 1 }); // For filtering by space
 
 // Pre-save hook to sync completedAt with status
 TodoSchema.pre<Todo>('save', function(next) {

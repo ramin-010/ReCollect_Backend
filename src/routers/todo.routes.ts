@@ -1,8 +1,8 @@
 import express, { RequestHandler } from 'express';
 import { upflyUpload } from 'upfly';
 import authMiddleware from '../middlwares/auth';
-import { createTodo, getTodos, updateTodo, deleteTodo } from '../controllers/todo.controller';
-import { assignTask, unassignTask } from '../controllers/assign.controller';
+import { createTodo, getTodos, updateTodo, deleteTodo, searchReferences } from '../controllers/personalTasks/todo.controller';
+import { assignTask, unassignTask } from '../controllers/personalTasks/assign.controller';
 
 const router = express.Router();
 
@@ -29,9 +29,10 @@ const upload = upflyUpload({
 });
 
 // All routes require authentication
+router.get('/todos/search-references', authMiddleware, searchReferences as RequestHandler);
 router.get('/todos', authMiddleware, getTodos as RequestHandler);
 router.post('/todos', authMiddleware, upload as RequestHandler, createTodo as RequestHandler);
-router.patch('/todos/:id', authMiddleware, updateTodo as RequestHandler);
+router.patch('/todos/:id', authMiddleware, upload as RequestHandler, updateTodo as RequestHandler);
 router.delete('/todos/:id', authMiddleware, deleteTodo as RequestHandler);
 
 // Assignment routes
@@ -39,4 +40,3 @@ router.post('/todos/:id/assign', authMiddleware, assignTask as RequestHandler);
 router.post('/todos/:id/unassign', authMiddleware, unassignTask as RequestHandler);
 
 export default router;
-

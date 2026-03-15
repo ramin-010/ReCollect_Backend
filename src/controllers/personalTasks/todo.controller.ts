@@ -1,13 +1,16 @@
+// Personal Todo Controller — CRUD operations for personal (non-workspace) tasks only
+// No workspace logic. No cross-linking with workspace code.
+
 import { Request, Response, NextFunction } from 'express';
 import mongoose from 'mongoose';
-import TodoModel from '../models/todoSchema';
-import WorkspaceModel from '../models/workspaceSchema';
-import ActivityLogModel from '../models/activityLogSchema';
-import ErrorResponse from '../utils/errorResponse';
-import reminderSchema from '../models/reminderSchema';
-import { scheduleTodoReminder } from '../services/reminderService';
-import cloudinary from '../utils/cloudinary';
-import TagsModel from '../models/tagsSchema';
+import TodoModel from '../../models/todoSchema';
+import DocModel from '../../models/docSchema';
+import SlideDeck from '../../models/slideSchema';
+import ErrorResponse from '../../utils/errorResponse';
+import reminderSchema from '../../models/reminderSchema';
+import { scheduleTodoReminder } from '../../services/reminderService';
+import cloudinary from '../../utils/cloudinary';
+import TagsModel from '../../models/tagsSchema';
 
 interface CloudFileOutput extends Express.Multer.File {
     cloudUrl: string;
@@ -73,10 +76,11 @@ export const createTodo = async (
             reminderDate,
             subtasks,
             tags, 
-            assignee,
+            assignees,
             recurrence,
             imageNodeIds,
-            references
+            references,
+            visibility
         } = req.body;
 
         subtasks = parseJson<any[]>(subtasks, []);
@@ -88,7 +92,6 @@ export const createTodo = async (
         if (!title || !title.trim()) {
             throw new ErrorResponse(400, "Task title is required");
         }
-        console.log("diescroption 22",description)
 
         const files = req.files as Record<string, Express.Multer.File[]> | undefined;
         const cloudImages: { imageId: string; cloudUrl: string; cloudPublicId: string }[] = [];
@@ -160,9 +163,12 @@ export const createTodo = async (
             tags: populatedTags,
             recurrence: recurrence || null,
             cloudImages: cloudImages.map(img => ({ imageId: img.imageId, cloudPublicId: img.cloudPublicId })),
-            assignee: assignee ? new mongoose.Types.ObjectId(assignee) : null,
-            assignedAt: assignee ? new Date() : null,
-            references: parsedReferences
+            assignees: Array.isArray(assignees) ? assignees.map((id: string) => new mongoose.Types.ObjectId(id)) : [],
+            assignedAt: assignees && assignees.length > 0 ? new Date() : null,
+            references: parsedReferences,
+            workspace: null, // Personal tasks have no workspace
+            spaceId: null,
+            visibility: visibility === 'shared' ? 'shared' : 'private',
         };
 
         const [todo] = await TodoModel.create([todoData], { session });
@@ -202,17 +208,6 @@ export const createTodo = async (
 
         await session.commitTransaction();
 
-        // Log workspace activity (fire and forget, outside transaction)
-        if (todo.visibility === 'workspace' && todo.workspace) {
-            ActivityLogModel.create({
-                workspace: todo.workspace,
-                actor: new mongoose.Types.ObjectId(userId),
-                action: 'task_created',
-                targetTask: todo._id,
-                metadata: todo.title,
-            }).catch(err => console.error('[activity] Failed to log task_created:', err));
-        }
-
         if (reminderScheduleData) {
             scheduleTodoReminder(reminderScheduleData).catch(err => {
                 console.error("Failed to schedule todo reminder:", err);
@@ -243,32 +238,24 @@ export const getTodos = async (
         const userId = req.user?._id as string;
         const { status, priority, refType, refId } = req.query;
 
-        const oid = new mongoose.Types.ObjectId(userId);
-
-        // Find workspace IDs the user belongs to
-        const userWorkspaces = await WorkspaceModel.find({
-            $or: [{ owner: oid }, { 'members.user': oid }]
-        }).select('_id').lean();
-        const workspaceIds = userWorkspaces.map(w => w._id);
-
-        const query: Record<string, any> = {
+        const matchFilter: any = {
             $or: [
-                { user: oid },
-                { assignee: oid },
-                ...(workspaceIds.length > 0 ? [{ workspace: { $in: workspaceIds }, visibility: 'workspace' }] : [])
-            ]
+                { user: new mongoose.Types.ObjectId(String(userId)) },
+                { assignees: new mongoose.Types.ObjectId(String(userId)) }
+            ],
+            visibility: { $in: ['private', 'shared', null, undefined] } // Strictly prevent workspace tasks from bleeding in
         };
 
         if (status && ['pending', 'complete'].includes(status as string)) {
-            query.status = status;
+            matchFilter.status = status;
         }
 
         if (priority && ['low', 'medium', 'high'].includes(priority as string)) {
-            query.priority = priority;
+            matchFilter.priority = priority;
         }
 
         if (refType && refId && ['doc', 'content', 'slide'].includes(refType as string)) {
-            query['references'] = {
+            matchFilter['references'] = {
                 $elemMatch: {
                     type: refType,
                     refId: new mongoose.Types.ObjectId(refId as string)
@@ -276,10 +263,11 @@ export const getTodos = async (
             };
         }
 
-        const todos = await TodoModel.find(query)
-            .sort({ createdAt: -1 })
-            .populate('tags', 'name') // Populate tags for frontend
-            .lean();
+            const todos = await TodoModel.find(matchFilter)
+                .populate('tags', 'name color')
+                .populate('assignees', 'name email avatar')
+                .sort({ updatedAt: -1 })
+                .exec();
 
         res.status(200).json({
             success: true,
@@ -302,22 +290,29 @@ export const updateTodo = async (
 
     try {
         const userId = req.user?._id;
-        const { id } = req.params;
+        const { id: todoId } = req.params;
 
         if (!userId) {
             throw new ErrorResponse(401, "Unauthorized");
         }
 
-        const existingTodo = await TodoModel.findOne({
-            _id: new mongoose.Types.ObjectId(id),
-            $or: [
-                { user: new mongoose.Types.ObjectId(String(userId)) },
-                { assignee: new mongoose.Types.ObjectId(String(userId)) }
-            ]
-        }).session(session);
+            const existingTodo = await TodoModel.findOne({
+                _id: todoId
+            }).session(session).lean();
 
         if (!existingTodo) {
-            throw new ErrorResponse(404, "Task not found or you don't have permission to update it");
+            throw new ErrorResponse(404, "Task not found");
+        }
+
+        let hasPermission = false;
+        if (existingTodo.user.toString() === String(userId)) {
+            hasPermission = true;
+        } else if (existingTodo.assignees && existingTodo.assignees.some(a => a.toString() === String(userId))) {
+            hasPermission = true;
+        }
+
+        if (!hasPermission || existingTodo.visibility === 'workspace') {
+            throw new ErrorResponse(403, "You don't have permission to update this personal task");
         }
 
         const allowedUpdates = [
@@ -329,13 +324,15 @@ export const updateTodo = async (
             'reminderDate', 
             'subtasks', 
             'tags', 
-            'assignee',
+            'assignees',
             'recurrence',
             'references',
-            'imageNodeIds'
+            'imageNodeIds',
+            'visibility'
         ];
 
         const updates: Record<string, any> = {};
+        const todoUpdates: Record<string, any> = {};
         let description = req.body.description;
         
         const imageNodeIds = req.body.imageNodeIds ? parseJson<string[]>(req.body.imageNodeIds, []) : [];
@@ -372,49 +369,47 @@ export const updateTodo = async (
         }
         
         if (description !== undefined) {
-             updates.description = description;
+             todoUpdates.description = description;
         }
 
         if (newCloudImages.length > 0) {
             updates.$push = { cloudImages: { $each: newCloudImages } };
         }
 
-
         for (const key of allowedUpdates) {
              if (key === 'imageNodeIds') continue;
              if (key === 'description') continue;
 
             if (req.body[key] !== undefined) {
+                const value = req.body[key];
                 if (key === 'dueDate' || key === 'reminderDate') {
-                    const rawValue = req.body[key];
-                    if (rawValue === 'null' || !rawValue) {
-                        updates[key] = null;
+                    if (value === 'null' || !value) {
+                        todoUpdates[key] = null;
                     } else {
-                        const date = new Date(rawValue);
-                        updates[key] = isNaN(date.getTime()) ? null : date;
+                        const date = new Date(value);
+                        todoUpdates[key] = isNaN(date.getTime()) ? null : date;
                     }
-                } else if (key === 'assignee') {
-                    const rawAssignee = req.body[key];
-                    if (rawAssignee === 'null' || !rawAssignee) {
-                        updates[key] = null;
+                } else if (key === 'assignees') {
+                    if (Array.isArray(value)) {
+                        todoUpdates.assignees = value.map((id: string) => new mongoose.Types.ObjectId(id));
+                        todoUpdates.assignedAt = value.length > 0 ? new Date() : null;
                     } else {
-                        updates[key] = new mongoose.Types.ObjectId(rawAssignee);
-                        updates.assignedAt = new Date();
+                        todoUpdates.assignees = [];
+                        todoUpdates.assignedAt = null;
                     }
                 } else if (key === 'subtasks' || key === 'references' || key === 'recurrence') {
-                     const parsed = parseJson(req.body[key], null) as any;
+                     const parsed = parseJson(value, null) as any;
                      if (key === 'references' && Array.isArray(parsed)) {
-                         updates[key] = parsed.map((ref: any) => ({
+                         todoUpdates[key] = parsed.map((ref: any) => ({
                              type: ref.type,
                              refId: new mongoose.Types.ObjectId(ref.refId),
                              title: ref.title || undefined
                          }));
                      } else {
-                         updates[key] = parsed;
+                         todoUpdates[key] = parsed;
                      }
                 } else if (key === 'tags') {
-                     // Process Tags Update
-                     const rawTags = parseJson<string[]>(req.body.tags, []);
+                     const rawTags = parseJson<string[]>(value, []);
                      if (rawTags.length > 0) {
                         const existingTags = await TagsModel.find({ name: { $in: rawTags } }).session(session).lean();
                         const existingTagNames = new Set(existingTags.map(t => t.name));
@@ -427,28 +422,34 @@ export const updateTodo = async (
                                 { session, ordered: false }
                             );
                         }
-                        updates.tags = [...existingTags, ...newTags].map(t => t._id as mongoose.Types.ObjectId);
-                     } else {
-                        updates.tags = [];
+                        todoUpdates.tags = [...existingTags, ...newTags].map(t => t._id as mongoose.Types.ObjectId);
                      }
+                } else if (key === 'spaceId') {
+                    if (value === 'null' || !value) {
+                        todoUpdates.spaceId = null;
+                    } else {
+                        todoUpdates.spaceId = new mongoose.Types.ObjectId(String(value));
+                    }
                 } else {
-                    updates[key] = req.body[key];
+                    todoUpdates[key] = value;
                 }
             }
         }
 
-        if (updates.status === 'complete' && existingTodo.status !== 'complete') {
-            updates.completedAt = new Date();
-        } else if (updates.status === 'pending' && existingTodo.status === 'complete') {
-            updates.completedAt = null;
+        if (todoUpdates.status === 'complete' && existingTodo.status !== 'complete') {
+            todoUpdates.completedAt = new Date();
+        } else if (todoUpdates.status === 'pending' && existingTodo.status === 'complete') {
+            todoUpdates.completedAt = null;
         }
+
+        updates.$set = todoUpdates;
 
         let reminderScheduleData = null;
         
         if (req.body.reminderDate !== undefined) {
              await reminderSchema.deleteMany({ todoId: existingTodo._id }).session(session);
              
-             const newDate = updates.reminderDate;
+             const newDate = todoUpdates.reminderDate;
              if (newDate) {
                  if (isNaN(new Date(newDate).getTime())) throw new ErrorResponse(400, "Invalid reminder date");
                  
@@ -457,7 +458,7 @@ export const updateTodo = async (
                      type: 'todo',
                      todoId: existingTodo._id,
                      reminderDate: newDate,
-                     message: `Reminder: ${(updates.title || existingTodo.title).trim()}`,
+                     message: `Reminder: ${(todoUpdates.title || existingTodo.title).trim()}`,
                      emailSent: false,
                      status: 'pending'
                  }], { session });
@@ -474,44 +475,16 @@ export const updateTodo = async (
         }
 
         const updatedTodo = await TodoModel.findByIdAndUpdate(
-            id,
-            updates.$push ? { $set: updates, $push: updates.$push } : { $set: updates },
+            todoId,
+            updates,
             { new: true, runValidators: true, session }
         ).lean();
         
-        if (updates.$push) delete updates.$push;
-
         if (!updatedTodo) {
             throw new ErrorResponse(404, "Task not found");
         }
         
         await session.commitTransaction();
-
-        // Log workspace activity (fire and forget, outside transaction)
-        if (existingTodo.visibility === 'workspace' && existingTodo.workspace) {
-            const wsId = existingTodo.workspace;
-            const actorId = new mongoose.Types.ObjectId(String(userId));
-
-            if (updates.status === 'complete' && existingTodo.status !== 'complete') {
-                ActivityLogModel.create({
-                    workspace: wsId, actor: actorId, action: 'task_completed',
-                    targetTask: existingTodo._id, metadata: existingTodo.title,
-                }).catch(err => console.error('[activity]', err));
-            } else if (updates.status && updates.status !== existingTodo.status) {
-                ActivityLogModel.create({
-                    workspace: wsId, actor: actorId, action: 'task_status_changed',
-                    targetTask: existingTodo._id, metadata: `${existingTodo.status} → ${updates.status}`,
-                }).catch(err => console.error('[activity]', err));
-            }
-
-            if (updates.assignee && updates.assignee.toString() !== existingTodo.assignee?.toString()) {
-                ActivityLogModel.create({
-                    workspace: wsId, actor: actorId, action: 'task_assigned',
-                    targetTask: existingTodo._id, targetUser: updates.assignee,
-                    metadata: existingTodo.title,
-                }).catch(err => console.error('[activity]', err));
-            }
-        }
 
         if (reminderScheduleData) {
             scheduleTodoReminder(reminderScheduleData).catch(err => console.error(err));
@@ -548,12 +521,20 @@ export const deleteTodo = async (
         }
 
         const todoToDelete = await TodoModel.findOne({
-            _id: new mongoose.Types.ObjectId(id),
-            user: new mongoose.Types.ObjectId(String(userId))
-        }).session(session);
+            _id: new mongoose.Types.ObjectId(id)
+        }).session(session).lean();
 
         if (!todoToDelete) {
-             throw new ErrorResponse(404, "Task not found or you don't have permission to delete it");
+             throw new ErrorResponse(404, "Task not found");
+        }
+
+        let hasPermission = false;
+        if (todoToDelete.user.toString() === String(userId)) {
+            hasPermission = true;
+        }
+
+        if (!hasPermission || todoToDelete.visibility === 'workspace') {
+            throw new ErrorResponse(403, "You don't have permission to delete this personal task");
         }
 
         const cleanupPromises: Promise<any>[] = [];
@@ -580,5 +561,54 @@ export const deleteTodo = async (
         next(err);
     } finally {
         session.endSession();
+    }
+};
+
+/**
+ * Search user's docs and slides by title (for @ mention in personal tasks).
+ * Returns a lean list of { type, refId, title } — nothing more.
+ */
+export const searchReferences = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+): Promise<void> => {
+    try {
+        
+        const userId = req.user?._id;
+        if (!userId) throw new ErrorResponse(401, 'Unauthorized');
+
+        const q = (req.query.q as string || '').trim();
+        const regex = q.length > 0 ? new RegExp(q, 'i') : /.*/;
+
+        const [docs, decks] = await Promise.all([
+            DocModel.find({
+                $or: [{ user: userId }, { 'collaborators.user': userId }],
+                isArchived: { $ne: true },
+                title: regex,
+            })
+            .select('_id title')
+            .sort({ updatedAt: -1 })
+            .limit(10)
+            .lean(),
+
+            SlideDeck.find({
+                $or: [{ user: userId }, { 'collaborators.user': userId }],
+                name: regex,
+            })
+            .select('_id name')
+            .sort({ updatedAt: -1 })
+            .limit(10)
+            .lean(),
+        ]);
+
+        const results = [
+            ...docs.map((d: any) => ({ type: 'doc', refId: d._id.toString(), title: d.title || 'Untitled Doc' })),
+            ...decks.map((d: any) => ({ type: 'slide', refId: d._id.toString(), title: d.name || 'Untitled Deck' })),
+        ];
+
+        res.status(200).json({ success: true, data: results });
+    } catch (err) {
+        next(err);
     }
 };

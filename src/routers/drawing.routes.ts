@@ -14,6 +14,7 @@ import {
   getSharedDrawing,
   getShareStatus,
 } from '../controllers/drawing.controller';
+import { generateDrawingContent } from '../controllers/drawingAi.controller';
 
 const router = Router();
 
@@ -46,6 +47,10 @@ router.get('/public/shared/:token', getSharedDrawing as RequestHandler);
 
 // ========== PROTECTED ROUTES (require auth) ==========
 router.get('/', protect, getAllDrawings as RequestHandler);
+
+// AI generation route (must be before /:id to avoid route conflict)
+router.post('/ai/generate', protect, generateDrawingContent as RequestHandler);
+
 router.get('/:id', protect, getDrawing as RequestHandler);
 router.post('/', protect, createDrawing as RequestHandler);
 router.post('/:id/save', protect, upload as RequestHandler, saveDrawing as RequestHandler);
