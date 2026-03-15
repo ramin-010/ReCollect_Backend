@@ -67,6 +67,7 @@ export const getUnreadCount: RequestHandler = async (req, res, next) => {
     try {
         const userId = String(req.user?._id);
 
+        // Count unread notifications
         const count = await NotificationModel.countDocuments({
             recipient: new mongoose.Types.ObjectId(userId),
             isRead: false,
@@ -76,7 +77,22 @@ export const getUnreadCount: RequestHandler = async (req, res, next) => {
             ],
         });
 
-        res.status(200).json({ success: true, data: { count } });
+        // Build workspace role hash for drift detection
+        // Uses the existing 'members.user' index — lightweight query
+        const workspaces = await WorkspaceModel.find(
+            { 'members.user': new mongoose.Types.ObjectId(userId) },
+            { _id: 1, members: { $elemMatch: { user: new mongoose.Types.ObjectId(userId) } } }
+        ).lean();
+
+        const roleHash = workspaces
+            .map(w => {
+                const member = w.members?.[0];
+                return `${w._id}:${member?.role || 'unknown'}`;
+            })
+            .sort()
+            .join('|');
+            console.log("worksace info ", roleHash, count)
+        res.status(200).json({ success: true, data: { count, workspaceRoleHash: roleHash } });
     } catch (err) {
         next(err);
     }
