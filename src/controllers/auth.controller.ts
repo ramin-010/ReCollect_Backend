@@ -105,7 +105,8 @@ function sendTokenResponse(user: UserType, statusCode: number, res: Response): v
     const maxAge = JWT_COOKIE_EXPIRE * 24 * 60 * 60 * 1000;
 
     const isProduction = process.env.NODE_ENV === 'production';
-    const cookieDomain = isProduction ? '.re-collect.in' : undefined;
+    // Let the browser default to the API host natively for standard cross-origin setups
+    const cookieDomain = isProduction ? process.env.COOKIE_DOMAIN || undefined : undefined;
 
     const options: CookieOptions = {
         expires: new Date(Date.now() + maxAge),
@@ -137,7 +138,7 @@ function sendTokenResponse(user: UserType, statusCode: number, res: Response): v
 export const logout = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
     try {
         const isProduction = process.env.NODE_ENV === 'production';
-        const cookieDomain = isProduction ? '.re-collect.in' : undefined;
+        const cookieDomain = isProduction ? process.env.COOKIE_DOMAIN || undefined : undefined;
         
         res.cookie('token', '', {
             httpOnly: true,

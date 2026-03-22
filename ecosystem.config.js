@@ -11,7 +11,7 @@ module.exports = {
             },
             env_production: {
                 NODE_ENV: "production",
-                USE_BULLMQ: "true"
+                USE_BULLMQ: "false"
             }
         },
         {
@@ -25,7 +25,7 @@ module.exports = {
             },
             env_production: {
                 NODE_ENV: "production",
-                USE_BULLMQ: "true"
+                USE_BULLMQ: "false"
             }
         }
     ]
