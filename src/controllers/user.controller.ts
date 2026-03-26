@@ -69,6 +69,17 @@ export const updateUserProfile = async (req: Request, res: Response, next: NextF
         throw new ErrorResponse(400, "Email already in use");
       }
     }
+
+    if (updateData.reminderEmail) {
+      const existingReminderUser = await User.findOne({ 
+        reminderEmail: updateData.reminderEmail, 
+        _id: { $ne: userId } 
+      });
+      
+      if (existingReminderUser) {
+        throw new ErrorResponse(400, "This alternative email is already in use by another account");
+      }
+    }
     
     const updatedUser = await User.findByIdAndUpdate(
       userId,
