@@ -9,3 +9,4 @@ export function initializeCollaboration() {
   registerDocHandler();
   registerDrawingHandler();
 }
+
