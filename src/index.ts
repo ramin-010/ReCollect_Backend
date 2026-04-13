@@ -114,6 +114,9 @@ app.use('/api/email', emailRoutes);
 import notificationRoutes from './routers/notification.routes';
 app.use('/api/notifications', notificationRoutes);
 
+import recentVisitRoutes from './routers/recentVisit.routes';
+app.use('/api/recent-visits', recentVisitRoutes);
+
 
 
 

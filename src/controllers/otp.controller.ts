@@ -132,3 +132,32 @@ export const generateOtpAuth = async (req: Request, res: Response, next: NextFun
         next(err);
     }
 };
+
+export const generateOtpForEmail = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
+    try {
+        const user = req.user;
+        
+        if (!user || !user.email) {
+            throw new ErrorResponse(401, 'User not authenticated');
+        }
+
+        const { email } = req.body;
+        if (!email || typeof email !== 'string') {
+            throw new ErrorResponse(400, 'Please provide a valid email address');
+        }
+
+        const emailSent = await createAndSendOtp(email.toLowerCase(), 'password-reset');
+
+        if (!emailSent) {
+            throw new ErrorResponse(500, 'Failed to send OTP email. Please try again.');
+        }
+
+        res.status(200).json({
+            success: true,
+            message: `OTP sent successfully to ${email}`
+        });
+
+    } catch (err: any) {
+        next(err);
+    }
+};
