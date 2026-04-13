@@ -48,5 +48,5 @@ jobs:
 
       - name: Restart PM2 Processes
         run: |
-          # We reload the ecosystem config to restart both API and Worker
-          ssh ubuntu@${{ secrets.SERVER_IP }} "cd /home/ubuntu/ReCollect_Backend && pm2 reload ecosystem.config.js --env production"
+          # Initialize NVM to make PM2 available over non-interactive SSH, then reload
+          ssh ubuntu@${{ secrets.SERVER_IP }} "export NVM_DIR=\"\$HOME/.nvm\" && [ -s \"\$NVM_DIR/nvm.sh\" ] && \. \"\$NVM_DIR/nvm.sh\" && cd /home/ubuntu/ReCollect_Backend && pm2 reload ecosystem.config.js --env production"
