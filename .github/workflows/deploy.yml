@@ -1,0 +1,52 @@
+name: Deploy ReCollect Backend
+
+on:
+  push:
+    branches:
+      - main 
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24' # Change to match your preferred backend version
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Build TypeScript
+        run: npm run build
+
+      - name: Install SSH Key
+        uses: shimataro/ssh-key-action@v2
+        with:
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          known_hosts: unnecessary
+
+      - name: Add Known Hosts
+        run: ssh-keyscan -H ${{ secrets.SERVER_IP }} >> ~/.ssh/known_hosts
+
+      - name: Sync Backend Assets
+        run: |
+          # Sync only what's needed for production
+          # Notice we keep .env on the server!
+          rsync -avz --delete \
+            --rsync-path="sudo rsync" \
+            --exclude '.git' \
+            --exclude '.github' \
+            --exclude 'node_modules' \
+            --exclude 'src' \
+            --exclude '.env' \
+            --exclude '.dep_auth.log' \
+            ./ ubuntu@${{ secrets.SERVER_IP }}:/home/ubuntu/ReCollect_Backend/
+
+      - name: Restart PM2 Processes
+        run: |
+          # We reload the ecosystem config to restart both API and Worker
+          ssh ubuntu@${{ secrets.SERVER_IP }} "cd /home/ubuntu/ReCollect_Backend && pm2 reload ecosystem.config.js --env production"

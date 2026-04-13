@@ -158,6 +158,24 @@ export const hocuspocusServer = new Server({
   maxDebounce: 10000,
   
   async onAuthenticate({ token, documentName, request }) {
+    // CSWSH Protection: Validate Origin header before any auth logic.
+    // Browsers always send the Origin header on WebSocket upgrades.
+    // A missing Origin means a non-browser client (not vulnerable to CSWSH).
+    if (request) {
+      const origin = request.headers?.origin;
+      const allowedOrigins = [
+        'http://localhost:3005',
+        'http://localhost:5173',
+        'http://192.168.40.58:3005',
+        'https://re-collect.in',
+        'https://www.re-collect.in',
+      ];
+
+      if (origin && !allowedOrigins.includes(origin)) {
+        throw new Error(`Origin not allowed: ${origin}`);
+      }
+    }
+
     const parsed = parseDocumentName(documentName);
     if (!parsed) {
       throw new Error('Invalid document name format');
