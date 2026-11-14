@@ -1,155 +1,46 @@
-import express, { Request, Response, NextFunction, Application } from 'express'
-const app: Application = express();
-import morgan from 'morgan';
-import cors from 'cors'
-import cookieParser from 'cookie-parser';
-
-
-import ConnectDb from './server/db';
-import errorHandler from './middlwares/errorHandler';
-import { USE_BULLMQ } from './services/reminderService';
+// Server entry point: `npm run dev` (ts-node-dev) / `node dist/index.js`.
+// The Express app itself is built in ./app (so tests can import it without side effects).
+import 'dotenv/config';
+import app from './app';
 import { startCronScheduler } from './services/cronScheduler';
+import { startOtpCleanupCron } from './services/auth/otp.service';
+import { startShareLinkCleanupCron } from './services/docs/docSharing.service';
+import { startLearningCron } from './services/learningDb/rollover.service';
+import { startMorningNudgeCron } from './services/learningDb/nudge.service';
+import { startRecallCrons } from './services/recall/batch.service';
 import { initializeCollaboration, startCollaborationServer } from './collaboration';
 
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
-app.use(morgan('dev'));
-app.use(cookieParser())
-//  disable caching for the API
-app.use((req, res, next) => {
-    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-    res.setHeader('Pragma', 'no-cache');
-    res.setHeader('Expires', '0');
-    res.setHeader('Surrogate-Control', 'no-store'); // Tells Cloudflare explicitly not to cache
-    next();
-});
-
-
-//require('./models');
-ConnectDb();
-
-
-
-const allowOrigin = [
-    'http://localhost:3005',
-    'http://localhost:5173',
-    'http://192.168.40.58:3005',
-    'https://re-collect.in',
-    'https://api.re-collect.in',
-    'https://www.re-collect.in'
-].filter(Boolean)
-
-app.use(cors({
-    origin: (origin, cb) => {
-        if (!origin || allowOrigin.includes(origin)) {
-            cb(null, true)
-        } else {
-            cb(new Error('Not allowed by Cors'))
-        }
-    },
-    credentials: true,
-    methods: ['GET', "POST", "PUT", "DELETE", "PATCH"],
-    allowedHeaders: ['Content-Type', "Authorization"]
-}))
-
-import workspaceRoutes, { publicWorkspaceRouter } from './routers/workspace.routes';
-// Public workspace routes (no auth) must be mounted BEFORE the protected ones
-app.use('/api/workspaces', publicWorkspaceRouter);
-app.use('/api/workspaces', workspaceRoutes);
-
-
-import authRouter from './routers/auth.routes'
-app.use('/api', authRouter);
-
-import contetnRouter from './routers/content.routes'
-app.use('/api', contetnRouter);
-
-import dashRouter from './routers/dash.routes'
-app.use('/api', dashRouter);
-
-import shareLinkRouter from './routers/shareLink.routes';
-app.use('/api', shareLinkRouter);
-
-import tagQueryRouter from './routers/tagQuery.routes'
-app.use('/api', tagQueryRouter)
-
-import otpRoutes from './routers/otp.routes'
-app.use('/api', otpRoutes);
-
-
-
-
-import todoRoutes from './routers/todo.routes';
-app.use('/api', todoRoutes);
-
-import workspaceTodoRoutes from './routers/workspaceTodo.routes';
-app.use('/api/workspace-todos', workspaceTodoRoutes);
-
-
-import expenseRoutes from './routers/expense.routes';
-app.use('/api/expenses', expenseRoutes);
-
-import userRoutes from './routers/user.routes'
-app.use('/api', userRoutes);
-
-import docRoutes from './routers/doc.routes';
-app.use('/api/docs', docRoutes);
-
-import drawingRoutes from './routers/drawing.routes';
-app.use('/api/drawings', drawingRoutes);
-
-import slideRoutes from './routers/slide.routes';
-app.use('/api/slides', slideRoutes);
-
-import slideAiRoutes from './routers/slideAi.routes';
-app.use('/api/slides/ai', slideAiRoutes);
-
-import docAiRoutes from './routers/docAi.routes';
-app.use('/api/docs/ai', docAiRoutes);
-
-import taskAiRoutes from './routers/taskAi.routes';
-app.use('/api/todos/ai', taskAiRoutes);
-
-import livekitRoutes from './routers/livekit.routes';
-app.use('/api/livekit', livekitRoutes);
-
-import uploadRoutes from './routers/upload.routes';
-app.use('/api/collab/upload', uploadRoutes);
-
-import emailRoutes from './routers/email.routes';
-app.use('/api/email', emailRoutes);
-
-
-import notificationRoutes from './routers/notification.routes';
-app.use('/api/notifications', notificationRoutes);
-
-import recentVisitRoutes from './routers/recentVisit.routes';
-app.use('/api/recent-visits', recentVisitRoutes);
-
-
-
-
-// import reminderRoutes from './routers/reminder.routes'
-// app.use('/api', reminderRoutes);
-
-app.use(errorHandler);
-
-// Initialize reminder system based on mode
-if (USE_BULLMQ) {
-    console.log('📋 Reminder System Mode: BullMQ');
-    console.log('⚠️  Make sure to run the worker separately: ts-node src/worker/reminderWorker.ts');
-} else {
-    console.log('📋 Reminder System Mode: Cron + DB Polling');
-    startCronScheduler();
+// All data lives in Postgres (Prisma). It connects lazily on the first query; see src/db/prisma.ts.
+if (!process.env.DATABASE_URL) {
+    throw new Error('DATABASE_URL is missing (Postgres). Locally: `npm run db:start`, then set it in backend/.env.');
 }
+
+// Reminder emails: the cron polls Postgres every minute for due reminders.
+startCronScheduler();
+
+// Postgres has no TTL index: delete expired OTPs and share links periodically
+// (the endpoints also reject expired rows).
+startOtpCleanupCron();
+startShareLinkCleanupCron();
+
+// Learning rollover: every 15 min (and once now) for users whose local day changed: streak settling,
+// and (routine on only) day slots, backfill, triage healing. Idempotent.
+startLearningCron();
+
+// Morning nudge email (daily loop v2): every 15 min, one digest per learner per local day, at or
+// after their nudgeTime. Idempotent (User.lastNudgeDay).
+startMorningNudgeCron();
+
+// Recall mode (Claude API): tomorrow's questions as one Message Batch at 02:30 server time, and a
+// poll every 10 min that stores ended batches. Both idle without CLAUDE_API_KEY;
+// RECALL_NIGHTLY_BATCH=off stops the nightly submission.
+startRecallCrons();
 
 const PORT = process.env.PORT
 app.listen(PORT, () => {
     console.log(`Server runnin on : http://localhost:${PORT}`);
-    
+
     // Initialize and start collaboration server for real-time editing
     initializeCollaboration();
     startCollaborationServer();
 })
-
-module.exports = app;

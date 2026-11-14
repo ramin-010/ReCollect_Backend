@@ -1,0 +1,51 @@
+// Whiteboard (drawings): the Prisma schema parts removed from prisma/schema.prisma on 2026-11-14.
+// Kept for reference only: Prisma reads prisma/schema.prisma (prisma.config.ts), never this file.
+// The tables were dropped by prisma/migrations/*_drop_whiteboard; they were created by *_init.
+//
+// To restore the module: put these back into prisma/schema.prisma, create a migration, then move
+// _archive/drawing/src/** and _archive/drawing/tests/** back to the same paths under backend/.
+//
+// 1. In `model User` (after `recentVisits RecentVisit[]`):
+//      drawings              Drawing[]
+//      drawingCollaborations DrawingCollaborator[]
+//
+// 2. In `enum RecentVisitItemType`, the value `drawing` (between `doc` and `slide`).
+//
+// 3. The models (they use `enum CollaboratorRole`, which stays in the schema for docs):
+
+model Drawing {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Client-generated id, unique per user.
+  localId      String
+  /// Trimmed.
+  name         String
+  /// Base64-encoded Yjs update, stored as text exactly like in Mongo (bytea comes later).
+  yjsState     String?
+  thumbnail    String   @default("")
+  /// [{ imageId (Excalidraw fileId), cloudUrl, cloudPublicId }]
+  cloudImages  Json     @default("[]")
+  /// Token for anonymous share links; unique when set (Mongo: unique + sparse).
+  shareToken   String?  @unique
+  shareEnabled Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  collaborators DrawingCollaborator[]
+
+  @@unique([userId, localId])
+}
+
+/// Drawing.collaborators[] in Mongo.
+model DrawingCollaborator {
+  drawingId String
+  drawing   Drawing          @relation(fields: [drawingId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      CollaboratorRole @default(editor)
+  addedAt   DateTime         @default(now())
+
+  @@id([drawingId, userId])
+  @@index([userId])
+}

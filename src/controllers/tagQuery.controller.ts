@@ -1,12 +1,12 @@
-import tagsSchema from "../models/tagsSchema";
 import { Request, Response, NextFunction } from "express";
-import ErrorResponse from "../utils/errorResponse";
-import { success } from "zod";
+import { searchTagsByPrefix, serializeTag } from "../services/tags/tags.service";
 
-
-
+/**
+ * GET /api/tagQuery/search?q=… — at most 5 tags whose name starts with q (case-insensitive).
+ * Body: { success, data: [{ _id, name }], count }. An empty q returns no tags.
+ */
 export const tagSearchQuery = async(req : Request, res : Response, next : NextFunction) : Promise<void> =>{
-    try{    
+    try{
         const qParam = req.query?.q;
 
         const q = typeof qParam === 'string' ? qParam.trim() : '';
@@ -19,14 +19,8 @@ export const tagSearchQuery = async(req : Request, res : Response, next : NextFu
             })
         }
 
-        const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-        const regex = new RegExp('^'+escaped, 'i');
-
-        const result = await tagsSchema.find({name : regex})
-        .limit(5)
-        .select('name')
-        .lean()
+        // The old prefix RegExp escaped the input; startsWithInsensitive escapes LIKE wildcards.
+        const result = (await searchTagsByPrefix(q)).map(serializeTag);
 
         res.status(200).json({
             success : true,
@@ -36,5 +30,5 @@ export const tagSearchQuery = async(req : Request, res : Response, next : NextFu
 
     }catch(err : any){
         next(err);
-    }   
+    }
 }

@@ -1,0 +1,124 @@
+// Builds the Express app: middleware, routes and the error handler, in the same order as before.
+// It does NOT connect to MongoDB, start crons, listen or start Hocuspocus; src/index.ts does that.
+// Tests import this file directly (supertest).
+//
+// Order matters: userRoutes is mounted on '/api' with router.use(authMiddleware), so every
+// '/api/*' request that reaches it (all routers mounted after it) goes through auth first.
+import 'dotenv/config';
+import express, { Application } from 'express'
+import morgan from 'morgan';
+import cors from 'cors'
+import cookieParser from 'cookie-parser';
+
+import errorHandler from './middlwares/errorHandler';
+
+import workspaceRoutes, { publicWorkspaceRouter } from './routers/workspace.routes';
+import authRouter from './routers/auth.routes'
+import shareLinkRouter from './routers/shareLink.routes';
+import tagQueryRouter from './routers/tagQuery.routes'
+import otpRoutes from './routers/otp.routes'
+import todoRoutes from './routers/todo.routes';
+import workspaceTodoRoutes from './routers/workspaceTodo.routes';
+import userRoutes from './routers/user.routes'
+import docRoutes from './routers/doc.routes';
+import docAiRoutes from './routers/docAi.routes';
+import taskAiRoutes from './routers/taskAi.routes';
+import uploadRoutes from './routers/upload.routes';
+import notificationRoutes from './routers/notification.routes';
+import recentVisitRoutes from './routers/recentVisit.routes';
+import learningRoutes from './routers/learning.routes';
+import agentRoutes from './routers/agent.routes';
+import apiTokenRoutes from './routers/apiToken.routes';
+import canvasRoutes from './routers/canvas.routes';
+import recallRoutes, { aiRouter } from './routers/recall.routes';
+
+// Cut on the pg-migration branch (files in backend/_archive): content, dashboards (dash),
+// expenses, slides + slide AI, livekit, email (Gmail). Whiteboard (drawings + drawing AI): backend/_archive/drawing.
+
+const allowOrigin = [
+    'http://localhost:3005',
+    'http://localhost:5173',
+    'http://192.168.40.58:3005',
+    'https://re-collect.in',
+    'https://api.re-collect.in',
+    'https://www.re-collect.in'
+].filter(Boolean)
+
+export function createApp(): Application {
+    const app: Application = express();
+
+    app.use(express.json({ limit: '50mb' }));
+    app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+    if (process.env.NODE_ENV !== 'test') {
+        app.use(morgan('dev'));
+    }
+    app.use(cookieParser())
+    //  disable caching for the API
+    app.use((req, res, next) => {
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+        res.setHeader('Surrogate-Control', 'no-store'); // Tells Cloudflare explicitly not to cache
+        next();
+    });
+
+    app.use(cors({
+        origin: (origin, cb) => {
+            if (!origin || allowOrigin.includes(origin)) {
+                cb(null, true)
+            } else {
+                cb(new Error('Not allowed by Cors'))
+            }
+        },
+        credentials: true,
+        methods: ['GET', "POST", "PUT", "DELETE", "PATCH"],
+        allowedHeaders: ['Content-Type', "Authorization"]
+    }))
+
+    // Public workspace routes (no auth) must be mounted BEFORE the protected ones
+    app.use('/api/workspaces', publicWorkspaceRouter);
+    app.use('/api/workspaces', workspaceRoutes);
+
+    app.use('/api', authRouter);
+    app.use('/api', shareLinkRouter);
+    app.use('/api', tagQueryRouter)
+    app.use('/api', otpRoutes);
+
+    app.use('/api', todoRoutes);
+    app.use('/api/workspace-todos', workspaceTodoRoutes);
+
+    app.use('/api', userRoutes);
+
+    // Learning (Revise's dashboard): /api/today, /api/revisions, /api/subjects, … (LEARNING_SPEC §2)
+    app.use('/api', learningRoutes);
+
+    // Agents (HOME_DOCS_AGENT_PLAN §3): the MCP server's API, and personal access tokens (cookie only).
+    // Which endpoints accept a token at all: src/services/apiTokens/tokenRoutes.ts.
+    app.use('/api/agent', agentRoutes);
+    app.use('/api/tokens', apiTokenRoutes);
+    // Canvas tools (CANVAS_BLOCK_SPEC §9, step 3): "Tidy up" and "Save as SVG/PNG" for a board.
+    app.use('/api/canvas', canvasRoutes);
+
+    // AI (HOME_DOCS_AGENT_PLAN §4, the Claude API): Recall mode and the spend meter. Cookie only;
+    // 503 AI_NOT_CONFIGURED without CLAUDE_API_KEY.
+    app.use('/api/recall', recallRoutes);
+    app.use('/api/ai', aiRouter);
+
+    app.use('/api/docs', docRoutes);
+    app.use('/api/docs/ai', docAiRoutes);
+    app.use('/api/todos/ai', taskAiRoutes);
+    app.use('/api/collab/upload', uploadRoutes);
+
+    app.use('/api/notifications', notificationRoutes);
+    app.use('/api/recent-visits', recentVisitRoutes);
+
+    // import reminderRoutes from './routers/reminder.routes'
+    // app.use('/api', reminderRoutes);
+
+    app.use(errorHandler);
+
+    return app;
+}
+
+const app = createApp();
+export default app;

@@ -1,0 +1,15 @@
+{
+  // Type-checks tests, the Prisma seed and the configs (the build tsconfig only covers src/).
+  // Run: npm run typecheck
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false,
+    "types": ["node"]
+  },
+  "include": ["src", "tests", "prisma/seed.ts", "prisma.config.ts"],
+  "exclude": ["dist", "node_modules", "_archive"]
+}

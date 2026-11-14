@@ -1,7 +1,12 @@
 import { Request, Response } from 'express';
-import RecentVisit from '../models/recentVisitSchema';
-
-const MAX_RECENT_VISITS = 20;
+import { requireUser } from '../middlwares/auth';
+import { serializeRecentVisit } from '../db/serializers/recentVisit';
+import {
+  isRecentVisitItemType,
+  listRecentVisits,
+  removeVisit as removeVisitRow,
+  trackVisit as trackVisitRow,
+} from '../services/recentVisits/recentVisits.service';
 
 /**
  * POST /api/recent-visits
@@ -9,41 +14,23 @@ const MAX_RECENT_VISITS = 20;
  */
 export const trackVisit = async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).user._id;
-    const { itemId, itemType, title, route } = req.body;
+    const user = requireUser(req);
+    const { itemId, itemType, title, route } = req.body ?? {};
 
     if (!itemId || !itemType || !route) {
       return res.status(400).json({ success: false, message: 'itemId, itemType, and route are required' });
     }
-
-    // Upsert: if item already visited, just update visitedAt and title
-    await RecentVisit.findOneAndUpdate(
-      { user: userId, itemId },
-      {
-        $set: {
-          itemType,
-          title: title || 'Untitled',
-          route,
-          visitedAt: new Date(),
-        },
-      },
-      { upsert: true, new: true }
-    );
-
-    // Cap at MAX_RECENT_VISITS: delete oldest entries beyond the limit
-    const count = await RecentVisit.countDocuments({ user: userId });
-    if (count > MAX_RECENT_VISITS) {
-      const oldest = await RecentVisit.find({ user: userId })
-        .sort({ visitedAt: -1 })
-        .skip(MAX_RECENT_VISITS)
-        .select('_id');
-      
-      if (oldest.length > 0) {
-        await RecentVisit.deleteMany({
-          _id: { $in: oldest.map((v) => v._id) },
-        });
-      }
+    // Mongo stored any string here (update validators were off); the Postgres column is an enum.
+    if (!isRecentVisitItemType(itemType)) {
+      return res.status(400).json({ success: false, message: 'Invalid itemType' });
     }
+
+    await trackVisitRow(user.id, {
+      itemId: String(itemId),
+      itemType,
+      title: title ? String(title) : undefined,
+      route: String(route),
+    });
 
     return res.status(200).json({ success: true });
   } catch (error: any) {
@@ -58,14 +45,9 @@ export const trackVisit = async (req: Request, res: Response) => {
  */
 export const getRecentVisits = async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).user._id;
-
-    const visits = await RecentVisit.find({ user: userId })
-      .sort({ visitedAt: -1 })
-      .limit(MAX_RECENT_VISITS)
-      .lean();
-
-    return res.status(200).json({ success: true, data: visits });
+    const user = requireUser(req);
+    const visits = await listRecentVisits(user.id);
+    return res.status(200).json({ success: true, data: visits.map(serializeRecentVisit) });
   } catch (error: any) {
     console.error('Error fetching recent visits:', error);
     return res.status(500).json({ success: false, message: 'Failed to fetch recent visits' });
@@ -78,11 +60,8 @@ export const getRecentVisits = async (req: Request, res: Response) => {
  */
 export const removeVisit = async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).user._id;
-    const { itemId } = req.params;
-
-    await RecentVisit.findOneAndDelete({ user: userId, itemId });
-
+    const user = requireUser(req);
+    await removeVisitRow(user.id, String(req.params.itemId));
     return res.status(200).json({ success: true });
   } catch (error: any) {
     console.error('Error removing visit:', error);

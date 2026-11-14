@@ -1,0 +1,142 @@
+// Auth flows. Controllers validate input and shape HTTP responses; this file holds the logic.
+// Error messages and status codes are the ones the Mongo version produced (some are typos on
+// purpose, e.g. "user does not exist"; the frontend shows them as they are).
+import crypto from 'crypto';
+import { prisma } from '../../db/prisma';
+import ErrorResponse from '../../utils/errorResponse';
+import { hashPassword, verifyPassword } from './password';
+import { createAndSendOtp, deleteOtp, readSignupData, verifyOtp } from './otp.service';
+import type { GoogleIdentity } from './google.service';
+import {
+    applyGoogleLogin,
+    claimGhostUser,
+    createUser,
+    findUserByEmail,
+    findUserByEmailWithPassword,
+    setUserPassword,
+    type SafeUser,
+} from '../users/users.service';
+
+/** POST /signup (no OTP). The email is used exactly as typed, as before. */
+export async function signupWithPassword(input: { name: string; email: string; password: string }): Promise<SafeUser> {
+    const existingUser = await findUserByEmail(input.email);
+    if (existingUser) {
+        throw new ErrorResponse(400, 'User already exists');
+    }
+    return createUser({ email: input.email, name: input.name, password: input.password });
+}
+
+/** POST /login. Exact email match, as before. */
+export async function loginWithPassword(input: { email: string; password: string }): Promise<SafeUser> {
+    const user = await findUserByEmailWithPassword(input.email);
+    if (!user) {
+        throw new ErrorResponse(400, 'user does not exist');
+    }
+    const isMatched = await verifyPassword(input.password, user.password);
+    if (!isMatched) throw new ErrorResponse(400, 'wrong password');
+
+    const { password: _password, ...safeUser } = user;
+    return safeUser;
+}
+
+/**
+ * POST /pre-signup: send a signup OTP. The password is hashed before it is stored with the OTP.
+ * Placeholder (ghost) users may sign up: verify-signup then claims the account. (The Mongo
+ * version rejected them here, so its claim branch was unreachable even though invite emails
+ * send ghosts to /signup.)
+ */
+export async function startEmailSignup(input: {
+    name: string;
+    email: string;
+    password: string;
+}): Promise<'otp-sent' | 'email-taken' | 'email-failed'> {
+    const existingUser = await findUserByEmail(input.email.toLowerCase());
+    if (existingUser && !existingUser.isGhost) return 'email-taken';
+
+    const passwordHash = await hashPassword(input.password);
+    const emailSent = await createAndSendOtp(input.email, 'signup', { name: input.name, passwordHash });
+    return emailSent ? 'otp-sent' : 'email-failed';
+}
+
+/**
+ * POST /verify-signup: check the OTP, then create the user, or claim a ghost user with the
+ * same email (keeps its id, so existing invites/assignments stay attached).
+ */
+export async function completeEmailSignup(
+    email: string,
+    code: string
+): Promise<{ status: 'created'; user: SafeUser } | { status: 'missing-signup-data' }> {
+    const storedOtp = await verifyOtp(email, code, 'signup');
+    const signupData = readSignupData(storedOtp.signupData);
+    if (!signupData) {
+        return { status: 'missing-signup-data' };
+    }
+
+    const normalizedEmail = email.toLowerCase();
+    const user = await prisma.$transaction(async (tx) => {
+        const existing = await findUserByEmail(normalizedEmail, tx);
+        let result: SafeUser;
+        if (existing && existing.isGhost) {
+            // Claim the ghost account
+            result = await claimGhostUser(existing.id, signupData, tx);
+            console.log(`[auth] Ghost user claimed via email signup: ${email}`);
+        } else if (existing) {
+            throw new ErrorResponse(400, 'User already exists');
+        } else {
+            result = await createUser(
+                { email: normalizedEmail, name: signupData.name, passwordHash: signupData.passwordHash },
+                tx
+            );
+        }
+        await deleteOtp(storedOtp.id, tx);
+        return result;
+    });
+
+    return { status: 'created', user };
+}
+
+/** POST /forgot-password. */
+export async function requestPasswordReset(email: string): Promise<'no-user' | 'otp-sent' | 'email-failed'> {
+    const user = await findUserByEmail(email.toLowerCase());
+    if (!user) return 'no-user';
+    const emailSent = await createAndSendOtp(email, 'password-reset');
+    return emailSent ? 'otp-sent' : 'email-failed';
+}
+
+/** POST /reset-password: OTP first (throws on a bad/expired code), then the new password. */
+export async function resetPasswordWithOtp(
+    email: string,
+    code: string,
+    newPassword: string
+): Promise<'reset' | 'user-not-found'> {
+    const storedOtp = await verifyOtp(email, code, 'password-reset');
+
+    const user = await findUserByEmail(email.toLowerCase());
+    if (!user) return 'user-not-found';
+
+    await setUserPassword(user.id, newPassword);
+    await deleteOtp(storedOtp.id);
+    return 'reset';
+}
+
+/** POST /auth/google after the token was verified: log in, link, claim a ghost, or create. */
+export async function loginWithGoogle(identity: GoogleIdentity): Promise<SafeUser> {
+    const normalizedEmail = identity.email.toLowerCase();
+    const existing = await findUserByEmail(normalizedEmail);
+
+    if (existing) {
+        if (existing.isGhost) console.log(`[auth] Ghost user claimed via Google: ${identity.email}`);
+        return applyGoogleLogin(existing, { googleId: identity.googleId, picture: identity.picture });
+    }
+
+    // Create a new user (no password needed for Google auth)
+    return createUser({
+        email: normalizedEmail,
+        name: identity.name || 'Google User',
+        googleId: identity.googleId,
+        authProvider: 'google',
+        avatar: identity.picture || '',
+        // Placeholder, never used for login. Was google_<googleId>_<Date.now()>, which is guessable.
+        password: `google_${crypto.randomBytes(18).toString('hex')}`,
+    });
+}

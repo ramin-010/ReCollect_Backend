@@ -6,27 +6,14 @@ module.exports = {
             watch: false,
             env_file: ".env",
             env: {
-                NODE_ENV: "development",
-                USE_BULLMQ: "false"
+                NODE_ENV: "development"
             },
             env_production: {
-                NODE_ENV: "production",
-                USE_BULLMQ: "false"
-            }
-        },
-        {
-            name: "second-brain-worker",
-            script: "./dist/worker/reminderWorker.js",
-            watch: false,
-            env_file: ".env",
-            env: {
-                NODE_ENV: "development",
-                USE_BULLMQ: "false"
-            },
-            env_production: {
-                NODE_ENV: "production",
-                USE_BULLMQ: "false"
+                NODE_ENV: "production"
             }
         }
+        // The BullMQ "second-brain-worker" (dist/worker/reminderWorker.js) was removed: it only
+        // delivered legacy Content reminders (cut). Reminders are sent by the in-process cron, and
+        // the BullMQ/Redis mode (USE_BULLMQ) is gone.
     ]
 };

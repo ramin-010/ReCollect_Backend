@@ -1,0 +1,16 @@
+%% A token-bucket rate limiter: the decision flow for one request.
+flowchart TB
+  req([Request arrives]) --> key[Build key: user id + route]
+  key --> get[(Read bucket from Redis)]
+  get --> has{Bucket exists?}
+  has -->|no| create[Create bucket with full tokens]
+  has -->|yes| refill[Refill tokens for the time passed]
+  create --> check
+  refill --> check{Tokens left?}
+  check -->|yes| take[Take one token]
+  check -->|no| reject[Reply 429 Too Many Requests]:::red
+  take --> save[(Write bucket back, with a TTL)]
+  save --> pass([Forward to the service]):::green
+  reject --> hdr[Set the Retry-After header]
+  note for check: Token bucket: 100 tokens, refills 10 per second
+  note for save: A Lua script makes the read and the write atomic

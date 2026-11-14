@@ -1,8 +1,8 @@
+// OTP endpoints (Postgres). Logic lives in src/services/auth/otp.service.ts.
 import { Request, Response, NextFunction } from "express";
 import { z } from 'zod';
-import OTP from '../models/otpSchema';
-import { sendOtpEmail } from '../utils/otpEmailTemplate';
 import ErrorResponse from "../utils/errorResponse";
+import { createAndSendOtp, deleteOtp, verifyOtp as verifyOtpCode } from '../services/auth/otp.service';
 
 const generateOtpSchema = z.object({
     email: z.string().email({ message: 'Please provide a valid email address' })
@@ -13,50 +13,10 @@ const verifyOtpSchema = z.object({
     otp: z.string().length(4, { message: 'OTP must be exactly 4 digits' })
 });
 
-export const generateUniqueOtp = (): string => {
-    return Math.floor(1000 + Math.random() * 9000).toString();
-};
-
-export const createAndSendOtp = async (email: string, purpose: 'signup' | 'password-reset', signupData?: { name: string; password: string }): Promise<boolean> => {
-    await OTP.deleteMany({ email: email.toLowerCase() });
-    
-    const otp = generateUniqueOtp();
-    
-    await OTP.create({
-        email: email.toLowerCase(),
-        otp,
-        purpose,
-        signupData
-    });
-    
-    return await sendOtpEmail(email, otp); 
-};
-
-export const verifyOtpInternal = async (email: string, otp: string, purpose?: 'signup' | 'password-reset') => {
-    const query: any = { email: email.toLowerCase() };
-    if (purpose) query.purpose = purpose;
-    
-    const storedOtp = await OTP.findOne(query);
-    
-    if (!storedOtp) {
-        throw new ErrorResponse(400, 'OTP has expired or does not exist. Please request a new one.');
-    }
-    
-    if (storedOtp.otp !== otp) {
-        throw new ErrorResponse(400, 'Invalid OTP. Please check and try again.');
-    }
-    
-    return storedOtp;
-};
-
-export const deleteOtp = async (otpId: string) => {
-    await OTP.deleteOne({ _id: otpId });
-};
-
 export const generateOtp = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
     try {
         const result = generateOtpSchema.safeParse(req.body);
-        
+
         if (!result.success) {
             return res.status(400).json({
                 success: false,
@@ -85,7 +45,7 @@ export const generateOtp = async (req: Request, res: Response, next: NextFunctio
 export const verifyOtp = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
     try {
         const result = verifyOtpSchema.safeParse(req.body);
-        
+
         if (!result.success) {
             return res.status(400).json({
                 success: false,
@@ -95,8 +55,8 @@ export const verifyOtp = async (req: Request, res: Response, next: NextFunction)
         }
 
         const { email, otp } = result.data;
-        const storedOtp = await verifyOtpInternal(email, otp);
-        await deleteOtp(storedOtp._id as string);
+        const storedOtp = await verifyOtpCode(email, otp);
+        await deleteOtp(storedOtp.id);
 
         res.status(200).json({
             success: true,
@@ -111,7 +71,7 @@ export const verifyOtp = async (req: Request, res: Response, next: NextFunction)
 export const generateOtpAuth = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
     try {
         const user = req.user;
-        
+
         if (!user || !user.email) {
             throw new ErrorResponse(401, 'User not authenticated');
         }
@@ -136,12 +96,12 @@ export const generateOtpAuth = async (req: Request, res: Response, next: NextFun
 export const generateOtpForEmail = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
     try {
         const user = req.user;
-        
+
         if (!user || !user.email) {
             throw new ErrorResponse(401, 'User not authenticated');
         }
 
-        const { email } = req.body;
+        const { email } = req.body ?? {};
         if (!email || typeof email !== 'string') {
             throw new ErrorResponse(400, 'Please provide a valid email address');
         }

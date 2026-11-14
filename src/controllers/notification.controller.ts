@@ -1,9 +1,20 @@
-import { Request, Response, NextFunction, RequestHandler } from 'express';
-import mongoose from 'mongoose';
-import NotificationModel from '../models/notificationSchema';
-import WorkspaceModel from '../models/workspaceSchema';
-import ActivityLogModel from '../models/activityLogSchema';
+import { RequestHandler } from 'express';
+import { requireUser } from '../middlwares/auth';
 import ErrorResponse from '../utils/errorResponse';
+import { serializeNotification } from '../db/serializers/notification';
+import {
+    acceptNotification as acceptNotificationRow,
+    countUnreadNotifications,
+    declineNotification as declineNotificationRow,
+    deleteNotification as deleteNotificationRow,
+    listNotifications,
+    markAllNotificationsRead,
+    markNotificationRead,
+    NOTIFICATION_NOT_FOUND,
+    NOTIFICATION_NOT_FOUND_OR_HANDLED,
+    parsePagination,
+    workspaceRoleHash,
+} from '../services/notifications/notifications.service';
 
 /**
  * GET /api/notifications
@@ -11,49 +22,16 @@ import ErrorResponse from '../utils/errorResponse';
  */
 export const getNotifications: RequestHandler = async (req, res, next) => {
     try {
-        const userId = String(req.user?._id);
-        const page = Math.max(1, parseInt(req.query.page as string) || 1);
-        const limit = Math.min(50, Math.max(1, parseInt(req.query.limit as string) || 20));
+        const user = requireUser(req);
+        const { page, limit } = parsePagination(req.query.page, req.query.limit);
         const filter = (req.query.filter as string) || 'all';
-        const skip = (page - 1) * limit;
 
-        const query: any = {
-            recipient: new mongoose.Types.ObjectId(userId),
-            // Only show notifications that are scheduled for now or earlier (or not scheduled)
-            $or: [
-                { scheduledFor: null },
-                { scheduledFor: { $lte: new Date() } },
-            ],
-        };
-
-        // Apply filter
-        if (filter === 'unread') {
-            query.isRead = false;
-        } else if (filter === 'actionable') {
-            query.category = 'actionable';
-            query.status = 'pending';
-        }
-
-        const [notifications, total] = await Promise.all([
-            NotificationModel.find(query)
-                .sort({ createdAt: -1 })
-                .skip(skip)
-                .limit(limit)
-                .populate('sender', 'name email avatar')
-                .lean(),
-            NotificationModel.countDocuments(query),
-        ]);
+        const { rows, pagination } = await listNotifications(user.id, { page, limit, filter });
 
         res.status(200).json({
             success: true,
-            data: notifications,
-            pagination: {
-                page,
-                limit,
-                total,
-                totalPages: Math.ceil(total / limit),
-                hasMore: skip + notifications.length < total,
-            },
+            data: rows.map(serializeNotification),
+            pagination,
         });
     } catch (err) {
         next(err);
@@ -65,33 +43,8 @@ export const getNotifications: RequestHandler = async (req, res, next) => {
  */
 export const getUnreadCount: RequestHandler = async (req, res, next) => {
     try {
-        const userId = String(req.user?._id);
-
-        // Count unread notifications
-        const count = await NotificationModel.countDocuments({
-            recipient: new mongoose.Types.ObjectId(userId),
-            isRead: false,
-            $or: [
-                { scheduledFor: null },
-                { scheduledFor: { $lte: new Date() } },
-            ],
-        });
-
-        // Build workspace role hash for drift detection
-        // Uses the existing 'members.user' index — lightweight query
-        const workspaces = await WorkspaceModel.find(
-            { 'members.user': new mongoose.Types.ObjectId(userId) },
-            { _id: 1, members: { $elemMatch: { user: new mongoose.Types.ObjectId(userId) } } }
-        ).lean();
-
-        const roleHash = workspaces
-            .map(w => {
-                const member = w.members?.[0];
-                return `${w._id}:${member?.role || 'unknown'}`;
-            })
-            .sort()
-            .join('|');
-            console.log("worksace info ", roleHash, count)
+        const user = requireUser(req);
+        const [count, roleHash] = await Promise.all([countUnreadNotifications(user.id), workspaceRoleHash(user.id)]);
         res.status(200).json({ success: true, data: { count, workspaceRoleHash: roleHash } });
     } catch (err) {
         next(err);
@@ -103,20 +56,14 @@ export const getUnreadCount: RequestHandler = async (req, res, next) => {
  */
 export const markAsRead: RequestHandler = async (req, res, next) => {
     try {
-        const userId = String(req.user?._id);
-        const notificationId = req.params.id;
-
-        const notification = await NotificationModel.findOneAndUpdate(
-            { _id: notificationId, recipient: new mongoose.Types.ObjectId(userId) },
-            { isRead: true },
-            { new: true }
-        ).lean();
+        const user = requireUser(req);
+        const notification = await markNotificationRead(user.id, String(req.params.id));
 
         if (!notification) {
-            throw new ErrorResponse(404, 'Notification not found');
+            throw new ErrorResponse(404, NOTIFICATION_NOT_FOUND);
         }
 
-        res.status(200).json({ success: true, data: notification });
+        res.status(200).json({ success: true, data: serializeNotification(notification) });
     } catch (err) {
         next(err);
     }
@@ -127,13 +74,8 @@ export const markAsRead: RequestHandler = async (req, res, next) => {
  */
 export const markAllAsRead: RequestHandler = async (req, res, next) => {
     try {
-        const userId = String(req.user?._id);
-
-        await NotificationModel.updateMany(
-            { recipient: new mongoose.Types.ObjectId(userId), isRead: false },
-            { isRead: true }
-        );
-
+        const user = requireUser(req);
+        await markAllNotificationsRead(user.id);
         res.status(200).json({ success: true, message: 'All notifications marked as read' });
     } catch (err) {
         next(err);
@@ -146,135 +88,9 @@ export const markAllAsRead: RequestHandler = async (req, res, next) => {
  */
 export const acceptNotification: RequestHandler = async (req, res, next) => {
     try {
-        const userId = String(req.user?._id);
-        const notificationId = req.params.id;
-
-        const notification = await NotificationModel.findOne({
-            _id: notificationId,
-            recipient: new mongoose.Types.ObjectId(userId),
-            category: 'actionable',
-            status: 'pending',
-        });
-
-        if (!notification) {
-            throw new ErrorResponse(404, 'Notification not found or already handled');
-        }
-
-        // ── Switch on type to perform the appropriate action ──
-        switch (notification.type) {
-            case 'workspace_invite': {
-                const { workspaceId, role } = notification.metadata || {};
-                if (!workspaceId) {
-                    throw new ErrorResponse(400, 'Invalid notification data');
-                }
-
-                const workspace = await WorkspaceModel.findById(workspaceId);
-                if (!workspace) {
-                    throw new ErrorResponse(404, 'Workspace no longer exists');
-                }
-
-                // Check if already a member
-                const alreadyMember = workspace.members.some(
-                    m => m.user.toString() === userId
-                );
-                if (!alreadyMember) {
-                    workspace.members.push({
-                        user: new mongoose.Types.ObjectId(userId),
-                        role: role || 'member',
-                        joinedAt: new Date(),
-                    });
-                    await workspace.save();
-
-                    // Log activity
-                    await ActivityLogModel.create({
-                        workspace: workspace._id,
-                        actor: notification.sender || new mongoose.Types.ObjectId(userId),
-                        action: 'member_joined',
-                        targetUser: new mongoose.Types.ObjectId(userId),
-                        metadata: `Accepted invite`,
-                    });
-                }
-                break;
-            }
-
-            case 'workspace_join_request': {
-                // Admin is approving a user's request to join
-                const { workspaceId } = notification.metadata || {};
-                const requesterId = notification.sender?.toString();
-                if (!workspaceId || !requesterId) {
-                    throw new ErrorResponse(400, 'Invalid notification data');
-                }
-
-                const workspace = await WorkspaceModel.findById(workspaceId);
-                if (!workspace) {
-                    throw new ErrorResponse(404, 'Workspace no longer exists');
-                }
-
-                // Check if already a member
-                const alreadyMember = workspace.members.some(
-                    m => m.user.toString() === requesterId
-                );
-                if (!alreadyMember) {
-                    workspace.members.push({
-                        user: new mongoose.Types.ObjectId(requesterId),
-                        role: 'member',
-                        joinedAt: new Date(),
-                    });
-                    await workspace.save();
-
-                    // Log activity
-                    await ActivityLogModel.create({
-                        workspace: workspace._id,
-                        actor: new mongoose.Types.ObjectId(userId),
-                        action: 'member_joined',
-                        targetUser: new mongoose.Types.ObjectId(requesterId),
-                        metadata: `Approved join request`,
-                    });
-
-                    // Notify the requester that they've been approved
-                    await NotificationModel.create({
-                        recipient: new mongoose.Types.ObjectId(requesterId),
-                        sender: new mongoose.Types.ObjectId(userId),
-                        category: 'informational',
-                        type: 'workspace_join_approved',
-                        title: 'Join Request Approved',
-                        message: `Your request to join "${workspace.name}" has been approved!`,
-                        metadata: {
-                            workspaceId: workspace._id,
-                            workspaceName: workspace.name,
-                        },
-                        status: 'pending',
-                    });
-                }
-
-                // Dismiss all duplicate join request notifications for same requester+workspace
-                await NotificationModel.updateMany(
-                    {
-                        _id: { $ne: notification._id },
-                        type: 'workspace_join_request',
-                        status: 'pending',
-                        'metadata.workspaceId': workspaceId,
-                        sender: new mongoose.Types.ObjectId(requesterId),
-                    },
-                    { status: 'dismissed', isRead: true }
-                );
-                break;
-            }
-
-            // ── Future types can be added here ──
-            // case 'doc_collab_invite': { ... break; }
-            // case 'slide_collab_invite': { ... break; }
-
-            default:
-                // For unknown actionable types, just mark accepted
-                break;
-        }
-
-        notification.status = 'accepted';
-        notification.isRead = true;
-        await notification.save();
-
-        res.status(200).json({ success: true, data: notification, message: 'Notification accepted' });
+        const user = requireUser(req);
+        const notification = await acceptNotificationRow(user.id, String(req.params.id));
+        res.status(200).json({ success: true, data: serializeNotification(notification), message: 'Notification accepted' });
     } catch (err) {
         next(err);
     }
@@ -285,25 +101,14 @@ export const acceptNotification: RequestHandler = async (req, res, next) => {
  */
 export const declineNotification: RequestHandler = async (req, res, next) => {
     try {
-        const userId = String(req.user?._id);
-        const notificationId = req.params.id;
-
-        const notification = await NotificationModel.findOneAndUpdate(
-            {
-                _id: notificationId,
-                recipient: new mongoose.Types.ObjectId(userId),
-                category: 'actionable',
-                status: 'pending',
-            },
-            { status: 'declined', isRead: true },
-            { new: true }
-        ).lean();
+        const user = requireUser(req);
+        const notification = await declineNotificationRow(user.id, String(req.params.id));
 
         if (!notification) {
-            throw new ErrorResponse(404, 'Notification not found or already handled');
+            throw new ErrorResponse(404, NOTIFICATION_NOT_FOUND_OR_HANDLED);
         }
 
-        res.status(200).json({ success: true, data: notification, message: 'Notification declined' });
+        res.status(200).json({ success: true, data: serializeNotification(notification), message: 'Notification declined' });
     } catch (err) {
         next(err);
     }
@@ -314,16 +119,11 @@ export const declineNotification: RequestHandler = async (req, res, next) => {
  */
 export const deleteNotification: RequestHandler = async (req, res, next) => {
     try {
-        const userId = String(req.user?._id);
-        const notificationId = req.params.id;
+        const user = requireUser(req);
+        const deleted = await deleteNotificationRow(user.id, String(req.params.id));
 
-        const notification = await NotificationModel.findOneAndDelete({
-            _id: notificationId,
-            recipient: new mongoose.Types.ObjectId(userId),
-        });
-
-        if (!notification) {
-            throw new ErrorResponse(404, 'Notification not found');
+        if (!deleted) {
+            throw new ErrorResponse(404, NOTIFICATION_NOT_FOUND);
         }
 
         res.status(200).json({ success: true, message: 'Notification deleted' });

@@ -1,0 +1,137 @@
+// Today's plan (LOOP_V2_SPEC §2) on top of the pure engine (services/learning/plan.ts): the inputs
+// GET /api/today and the morning nudge share, and POST /api/revisions/fresh-start.
+//
+// The plan is computed on every read and never stored: GET /api/today stays write-free.
+import { prisma, type DbClient } from '../../db/prisma';
+import {
+    daysLate,
+    lastSeenBefore,
+    planFreshStart,
+    planMode,
+    planToday,
+    revisionMinutes,
+    type DayString,
+    type PlanMode,
+    type PlanTodayResult,
+    type RevisionWithSubject,
+} from '../learning';
+import { serializeRevisionItem } from '../../db/serializers/learning';
+import { dayRange, fromDbDay, fromDbDayOrNull, lockLearningContext, toDbDay, toEngineRevision, type LearningContext, type LearningUserRow } from './common';
+import { itemSource, type RevisionWithItem } from './revisions.service';
+import { itemSubjects } from './rollover.service';
+
+/** Revisions the plan needs: pending ones due by today, plus the ones completed today (user zone). */
+export function planRevisionWhere(userId: string, today: DayString, tz: string) {
+    return {
+        userId,
+        OR: [{ status: 'pending' as const, scheduledFor: { lte: toDbDay(today) } }, { status: 'done' as const, completedAt: dayRange(today, tz) }],
+    };
+}
+
+/** Comeback mode needs to know whether the user ever revised before today, but only when the app was never seen before today. */
+export function needsHistoryCheck(user: Pick<LearningUserRow, 'lastSeenDay' | 'prevSeenDay'>, today: DayString): boolean {
+    return lastSeenBefore({ today, lastSeenDay: fromDbDayOrNull(user.lastSeenDay), prevSeenDay: fromDbDayOrNull(user.prevSeenDay) }) === null;
+}
+
+/** Any revision completed before today (user zone). */
+export async function hasRevisionHistory(userId: string, today: DayString, tz: string): Promise<boolean> {
+    const row = await prisma.revision.findFirst({ where: { userId, status: 'done', completedAt: { lt: dayRange(today, tz).gte } }, select: { id: true } });
+    return row !== null;
+}
+
+export function modeOf(user: Pick<LearningUserRow, 'busyUntil' | 'lastSeenDay' | 'prevSeenDay'>, today: DayString, hasHistory: boolean): PlanMode {
+    return planMode({
+        today,
+        busyUntil: fromDbDayOrNull(user.busyUntil),
+        lastSeenDay: fromDbDayOrNull(user.lastSeenDay),
+        prevSeenDay: fromDbDayOrNull(user.prevSeenDay),
+        hasHistory,
+    });
+}
+
+/** A revision row (with its topic/capture) as the engine sees it, keeping the row for serializing. */
+export type PlanRow = RevisionWithSubject & { row: RevisionWithItem };
+
+export function toPlanRow(r: RevisionWithItem): PlanRow {
+    return { ...toEngineRevision(r), subjectId: r.topic?.subject?.id ?? r.capture?.subject?.id ?? null, row: r };
+}
+
+export interface ComputedPlan {
+    mode: PlanMode;
+    result: PlanTodayResult<PlanRow>;
+    /** Revisions completed today, most recently scheduled first. */
+    doneToday: PlanRow[];
+}
+
+/** planToday over the rows of `planRevisionWhere` (any order). */
+export function computePlan(
+    ctx: Pick<LearningContext, 'today' | 'tz'> & { user: Pick<LearningUserRow, 'busyUntil' | 'lastSeenDay' | 'prevSeenDay' | 'dailyBudgetMin'> },
+    rows: readonly PlanRow[],
+    goalSubjectIds: Iterable<string>,
+    hasHistory: boolean
+): ComputedPlan {
+    const { today } = ctx;
+    const mode = modeOf(ctx.user, today, hasHistory);
+    const doneToday = rows
+        .filter((r) => r.status === 'done')
+        .sort((a, b) => (a.scheduledFor < b.scheduledFor ? 1 : a.scheduledFor > b.scheduledFor ? -1 : a.id < b.id ? -1 : 1));
+    const result = planToday({ candidates: rows, today, budgetMin: ctx.user.dailyBudgetMin, mode, goalSubjectIds, doneToday });
+    return { mode, result, doneToday };
+}
+
+/** A plan item: the RevisionItem shape plus `minutes` (and `daysLate` when overdue). */
+export function serializePlanItem(r: PlanRow, today: DayString, extras: { canUndo?: boolean } = {}) {
+    const late = r.status === 'pending' && r.scheduledFor < today;
+    return serializeRevisionItem(r.row, itemSource(r.row), {
+        ...(late ? { daysLate: daysLate(r.scheduledFor, today) } : {}),
+        ...extras,
+        minutes: revisionMinutes(r),
+    });
+}
+
+/** Subjects of the user's ACTIVE goals (a relation filter, no include: safe on any client). */
+export async function activeGoalSubjectIds(userId: string, db: DbClient = prisma): Promise<string[]> {
+    const rows = await db.goalSubject.findMany({ where: { goal: { userId, status: 'active' } }, select: { subjectId: true } });
+    return [...new Set(rows.map((r) => r.subjectId))];
+}
+
+// ─── POST /api/revisions/fresh-start ───────────────────────────────────
+
+/**
+ * Reschedules every overdue pending chain (planFreshStart): each chain's earliest pending
+ * revision is spread over today and the next days at what fits the daily budget, and its later
+ * cycles keep their gaps. One transaction, the user row locked (complete / reschedule lock it
+ * too). `dryRun` computes the same answer without writing (for the confirmation text).
+ */
+export async function freshStart(userId: string, opts: { dryRun?: boolean | undefined } = {}, now: Date = new Date()): Promise<{ moved: number; spreadDays: number }> {
+    return prisma.$transaction(
+        async (tx) => {
+            const ctx = await lockLearningContext(tx, userId, now);
+            const { today, tz } = ctx;
+            const pending = await tx.revision.findMany({
+                where: { userId, status: 'pending' },
+                select: { id: true, topicId: true, captureId: true, cycleNumber: true, intervalDays: true, scheduledFor: true, completedAt: true, status: true },
+            });
+            if (!pending.some((r) => fromDbDay(r.scheduledFor) < today)) return { moved: 0, spreadDays: 0 };
+            const doneToday = await tx.revision.findMany({ where: { userId, status: 'done', completedAt: dayRange(today, tz) }, select: { cycleNumber: true } });
+            const subjectOf = await itemSubjects(tx, userId, pending);
+            const goalSubjectIds = await activeGoalSubjectIds(userId, tx);
+
+            const plan = planFreshStart({
+                revisions: pending.map((r) => ({ ...toEngineRevision(r), subjectId: subjectOf(r) })),
+                today,
+                budgetMin: ctx.user.dailyBudgetMin,
+                goalSubjectIds,
+                doneToday,
+            });
+            if (!opts.dryRun) {
+                for (const p of plan.patches) {
+                    if (p.scheduledFor === undefined) continue;
+                    await tx.revision.update({ where: { id: p.id }, data: { scheduledFor: toDbDay(p.scheduledFor) }, select: { id: true } });
+                }
+            }
+            return { moved: plan.moved, spreadDays: plan.spreadDays };
+        },
+        { timeout: 60_000 }
+    );
+}

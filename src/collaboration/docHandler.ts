@@ -1,118 +1,107 @@
-import { DocumentHandler, CollabDocument, registerDocumentHandler } from './hocuspocus';
-import Doc from '../models/docSchema';
-import { batchDeleteFromCloud } from '../controllers/content.controller';
+// Hocuspocus handler for docs (rooms `doc_<id>`): who may connect, load/store of the Yjs state,
+// and the Cloudinary orphan-image cleanup when someone disconnects. DB access goes through
+// src/services/docs/docs.service.ts; yjsState stays Base64 text.
+import { DocumentHandler, CollabAccess, CollabDocument, registerDocumentHandler, hocuspocusServer } from './hocuspocus';
+import { batchDeleteFromCloud } from '../utils/cloudinary';
 import { generatePreviewAndMetadata } from '../utils/previewUtils';
-import * as Y from 'yjs';
+import { extractImageIdsFromYDoc, extractImageIdsFromYjsState } from '../services/docs/docContent';
+import { docProblem, repairDoc } from '../services/docs/docRepair';
+import type * as Y from 'yjs';
+import { partitionCloudImages, readCloudImages } from '../services/uploads/cloudImages';
+import {
+  findDocImageState,
+  getDocLiveRole,
+  loadDocYjsState,
+  removeDocCloudImages,
+  storeDocYjsState,
+  undoableSnapshotStates,
+} from '../services/docs/docs.service';
 
-function extractImageIdsFromYjsState(yjsStateBase64: string): string[] {
+/**
+ * Image ids used by the doc's live (in-memory) state, if Hocuspocus still holds it. The stored
+ * state lags behind it (stores are debounced 2–10 s), so an image inserted just before someone
+ * disconnects is only in the live document.
+ */
+function liveImageIds(docId: string): string[] {
   try {
-    const ydoc = new Y.Doc();
-    const state = Buffer.from(yjsStateBase64, 'base64');
-    Y.applyUpdate(ydoc, state);
-    
-    const fragment = ydoc.getXmlFragment('default');
-    const imageIds: string[] = [];
-    
-    function traverse(element: any) {
-      if (element.nodeName === 'resizableImage' || element.nodeName === 'image') {
-        const attrs = element.getAttributes();
-        if (attrs.imageId) {
-          imageIds.push(attrs.imageId);
-        }
-      }
-      if (element.toArray) {
-        for (const child of element.toArray()) {
-          traverse(child);
-        }
-      }
-    }
-    
-    traverse(fragment);
-    ydoc.destroy();
-    return imageIds;
+    const live = (hocuspocusServer as any).hocuspocus?.documents?.get(`doc_${docId}`);
+    return live ? extractImageIdsFromYDoc(live) : [];
   } catch (err) {
-    console.error('[docHandler] Failed to extract imageIds from yjsState:', err);
+    console.error('[docHandler] Failed to read the live document:', err);
     return [];
   }
 }
 
 const docHandler: DocumentHandler = {
-  async authorize(userId: string | null, docId: string, _shareToken?: string): Promise<boolean> {
+  /**
+   * Docs don't support anonymous access (share links only lead to an access request). Owner and
+   * editors connect read-write; viewers connect read-only (Hocuspocus drops their updates).
+   */
+  async authorize(userId: string | null, docId: string, _shareToken?: string): Promise<CollabAccess | null> {
     try {
-      // Docs don't support anonymous access
-      if (!userId) return false;
-      
-      const doc = await Doc.findById(docId);
-      if (!doc) return false;
-
-      const isOwner = doc.user.toString() === userId;
-      if (isOwner) return true;
-
-      const collaborator = doc.collaborators?.find(
-        (c: any) => c.user.toString() === userId // Allow both editors and viewers
-      );
-
-      return !!collaborator;
-    } catch {
-      return false;
-    }
-  },
-
-  async load(docId: string): Promise<CollabDocument | null> {
-    try {
-      const doc = await Doc.findById(docId) as any;
-      if (!doc) return null;
-
-      return {
-        id: doc._id.toString(),
-        yjsState: doc.yjsState,
-      };
+      if (!userId) return null;
+      const role = await getDocLiveRole(docId, userId);
+      if (role === null) return null;
+      return role === 'viewer' ? 'view' : 'edit';
     } catch {
       return null;
     }
   },
 
-  async save(docId: string, yjsState: string): Promise<void> {    const { previewState, metadata } = generatePreviewAndMetadata(yjsState);
-    
-    const updateData: any = {
-      yjsState,
-      previewState,
-      updatedAt: new Date(),
-    };
-    
-    if (metadata.title !== undefined) {
-      console.log("metadata.title", metadata.title)
-      updateData.title = metadata.title;
+  async load(docId: string): Promise<CollabDocument | null> {
+    try {
+      const doc = await loadDocYjsState(docId);
+      if (!doc) return null;
+      return { id: doc.id, yjsState: doc.yjsState ?? undefined };
+    } catch {
+      return null;
     }
-    if (metadata.coverImage !== undefined) {
-      updateData.coverImage = metadata.coverImage;
-    }
-    
-    await Doc.findByIdAndUpdate(docId, updateData);
   },
 
+  /** Legacy blocks (columns) and stray list items fixed on load; anything still invalid is logged. */
+  repair(docId: string, document: Y.Doc): number {
+    const repairs = repairDoc(document);
+    if (repairs > 0) console.log(`[docHandler] doc ${docId}: ${repairs} repair(s) on load (columns flattened or list items re-wrapped)`);
+    const problem = docProblem(document);
+    if (problem) console.warn(`[docHandler] doc ${docId} does not fit the schema after load: ${problem}`);
+    return repairs;
+  },
+
+  async save(docId: string, yjsState: string): Promise<void> {
+    const { previewState, metadata } = generatePreviewAndMetadata(yjsState);
+    await storeDocYjsState(docId, {
+      yjsState,
+      previewState,
+      title: metadata.title,
+      coverImage: metadata.coverImage,
+    });
+  },
+
+  /**
+   * Delete Cloudinary images the doc no longer uses (not in the stored nor in the live state, nor
+   * in a snapshot an agent edit can still be undone to).
+   */
   async cleanup(docId: string): Promise<void> {
-    const doc = await Doc.findById(docId) as any;
+    const doc = await findDocImageState(docId);
     if (!doc?.yjsState) return;
-    
-    const currentImageIds = extractImageIdsFromYjsState(doc.yjsState);
-    const currentImageIdsSet = new Set(currentImageIds);
-    const existingImages = doc?.cloudImages || [];
-    
-    const orphanedImages = existingImages.filter(
-      (img: any) => !currentImageIdsSet.has(img.imageId)
-    );
-    console.log('orphanedImages', orphanedImages, "length", orphanedImages.length);
-    if (orphanedImages.length > 0) {
-      const publicIdsToDelete = orphanedImages.map((img: any) => img.cloudPublicId);
-      await batchDeleteFromCloud(publicIdsToDelete);
-      
-      const updatedCloudImages = existingImages.filter(
-        (img: any) => currentImageIdsSet.has(img.imageId)
-      );
-      
-      await Doc.findByIdAndUpdate(docId, { cloudImages: updatedCloudImages });
+
+    const storedIds = extractImageIdsFromYjsState(doc.yjsState);
+    if (storedIds === null) return; // unreadable state: never treat that as "no images"
+
+    const undoIds: string[] = [];
+    for (const state of await undoableSnapshotStates(docId)) {
+      const ids = extractImageIdsFromYjsState(state);
+      if (ids === null) return; // same rule for an unreadable snapshot
+      undoIds.push(...ids);
     }
+
+    const inUse = new Set([...storedIds, ...liveImageIds(docId), ...undoIds]);
+    const { orphaned } = partitionCloudImages(readCloudImages(doc.cloudImages), inUse);
+    if (orphaned.length === 0) return;
+
+    console.log(`[docHandler] Cleanup ${docId}: deleting ${orphaned.length} orphaned image(s)`);
+    await batchDeleteFromCloud(orphaned.map((img) => img.cloudPublicId));
+    await removeDocCloudImages(docId, orphaned.map((img) => img.imageId));
   },
 };
 

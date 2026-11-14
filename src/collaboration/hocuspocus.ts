@@ -18,11 +18,24 @@ export interface CollabDocument {
   yjsState: string | undefined;
   }
 
+/**
+ * What a live connection may do: 'edit' = read-write, 'view' = read-only (the connection gets
+ * Hocuspocus `connectionConfig.readOnly`, so its document updates are neither applied, broadcast
+ * nor stored; awareness such as cursors still works).
+ */
+export type CollabAccess = 'edit' | 'view';
+
 export interface DocumentHandler {
-  authorize(userId: string | null, docId: string, shareToken?: string): Promise<boolean>;
+  /** null = may not connect. */
+  authorize(userId: string | null, docId: string, shareToken?: string): Promise<CollabAccess | null>;
   load(docId: string): Promise<CollabDocument | null>;
   save(docId: string, yjsState: string): Promise<void>;
   cleanup?(docId: string): Promise<void>;
+  /**
+   * Fix the loaded state before anyone sees it (blocks the editor no longer has). Returns how
+   * many repairs it made; when any, the repaired state is stored right away.
+   */
+  repair?(docId: string, document: Y.Doc): number;
 }
 
 
@@ -111,7 +124,8 @@ export function disconnectUser(docId: string, userId: string, remainingCount: nu
 }
 
 
-import User from '../models/userSchema';
+// Users live in Postgres now (same JWT as the REST API).
+import { findUserById } from '../services/users/users.service';
 
 async function authenticateUser(token: string): Promise<CollabUser | null> {
   if (!process.env.JWT_SECRET) {
@@ -119,17 +133,17 @@ async function authenticateUser(token: string): Promise<CollabUser | null> {
   }
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET) as { id: string };
-    const user = await User.findById(decoded.id).select('-password') as any;
-    
+    const decoded = jwt.verify(token, process.env.JWT_SECRET) as { id?: unknown };
+    const user = typeof decoded.id === 'string' ? await findUserById(decoded.id) : null;
+
     if (!user) return null;
 
     return {
-      id: user._id.toString(),
+      id: user.id,
       name: user.name || '',
       email: user.email || '',
       avatar: user.avatar as string | undefined,
-      color: getRandomColor(user._id.toString()),
+      color: getRandomColor(user.id),
     };
   } catch {
     return null;
@@ -157,7 +171,7 @@ export const hocuspocusServer = new Server({
   debounce: 2000,
   maxDebounce: 10000,
   
-  async onAuthenticate({ token, documentName, request }) {
+  async onAuthenticate({ token, documentName, request, connectionConfig }) {
     // CSWSH Protection: Validate Origin header before any auth logic.
     // Browsers always send the Origin header on WebSocket upgrades.
     // A missing Origin means a non-browser client (not vulnerable to CSWSH).
@@ -203,41 +217,20 @@ export const hocuspocusServer = new Server({
       user = await authenticateUser(authToken);
     }
     if (user) {
-      const canEdit = await handler.authorize(user.id, parsed.id, shareToken);
-      if (!canEdit) {
+      const access = await handler.authorize(user.id, parsed.id, shareToken);
+      if (!access) {
         throw new Error('Not authorized to edit this document');
       }
+      // Viewers may watch live but not write: Hocuspocus rejects their Yjs updates.
+      connectionConfig.readOnly = access !== 'edit';
 
       const key = `${documentName}:${user.id}`;
       activeConnections.set(key, { userId: user.id, documentName, user });
       
       return { user };
     }
-    if (shareToken && parsed.prefix === 'drawing') {
-      const canAccess = await handler.authorize(null, parsed.id, shareToken);
-      
-      if (!canAccess) {
-        throw new Error('Invalid or disabled share link');
-      }
-      const guestId = `guest_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      const guestNames = ['Fox', 'Owl', 'Bear', 'Wolf', 'Deer', 'Hawk', 'Lynx', 'Raven', 'Seal', 'Otter'];
-      const randomName = guestNames[Math.floor(Math.random() * guestNames.length)];
-      
-      const guestUser: CollabUser = {
-        id: guestId,
-        name: `Guest ${randomName}`,
-        email: '',
-        avatar: undefined,
-        color: getRandomColor(guestId),
-      };
 
-      const key = `${documentName}:${guestId}`;
-      activeConnections.set(key, { userId: guestId, documentName, user: guestUser, isGuest: true });
-      
-      return { user: guestUser, isGuest: true };
-    }
-
-
+    // No anonymous (guest) connections: a doc share link only leads to an access request.
     throw new Error('Authentication required');
   },
 
@@ -258,6 +251,10 @@ export const hocuspocusServer = new Server({
       if (doc?.yjsState) {
         const state = Buffer.from(doc.yjsState, 'base64');
         Y.applyUpdate(document, state);
+      }
+      // Changes made while loading are not stored by Hocuspocus, so a repair is saved here.
+      if (handler.repair && handler.repair(parsed.id, document) > 0) {
+        await handler.save(parsed.id, Buffer.from(Y.encodeStateAsUpdate(document)).toString('base64'));
       }
     } catch (error) {
       console.error(`[Hocuspocus] ❌ Error loading ${parsed.prefix}:${parsed.id}:`, error);

@@ -1,0 +1,1307 @@
+// Recollect: PostgreSQL schema (Prisma 7, same setup as Revise: prisma-client-js + @prisma/adapter-pg).
+//
+// It mirrors the 13 kept Mongoose models (deleted after the port; see git history) field for field: defaults, enums, indexes.
+// Read backend/docs/MIGRATION_CONVENTIONS.md before porting a module.
+//
+// Conventions
+// - Ids are cuid strings. The REST API still calls them `_id` (see src/db/serializers).
+// - Embedded arrays that are queried became child/join tables (DocCollaborator, DocBannedUser,
+//   WorkspaceMember, Space, TodoAssignee, TodoTag). Embedded data that is never queried became Json.
+// - Mongoose `timestamps: true` became createdAt/updatedAt.
+// - Mongo had no foreign keys. Here, rows owned by a user/doc/workspace/todo CASCADE when the parent
+//   is deleted; optional references (sender, targetUser, targetTask, space on a todo) SET NULL.
+// - Defaults Prisma cannot express (share-link expiry, invite tokens, reminderEmail = email,
+//   todo completedAt, trimming, lowercasing, bcrypt) are done in code; see src/db/defaults.ts.
+// - Cut features (content, dashboards, expenses, email, slides, livekit) are not modelled. The
+//   whiteboard was cut later: its tables are dropped by the drop_whiteboard migration (code and
+//   schema in backend/_archive/drawing).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================================================
+// Users & auth
+// ============================================================================
+
+enum UserStatus {
+  active
+  pending
+}
+
+enum AuthProvider {
+  local
+  google
+}
+
+model User {
+  id            String       @id @default(cuid())
+  /// Trimmed; at most 50 characters (Mongoose maxLength).
+  name          String       @db.VarChar(50)
+  /// Unique and trimmed. NOT lowercased by the model (only some flows lowercase it), as in Mongo.
+  email         String       @unique
+  /// Defaults to `email` on create (old Mongoose pre-save hook): the users service does it.
+  reminderEmail String?      @unique
+  phone         String       @default("")
+  /// bcrypt hash. Omitted from every query by default: see the global `omit` in src/db/prisma.ts.
+  password      String?
+  avatar        String       @default("")
+  cloudPublicId String       @default("")
+  cloudProvider String       @default("")
+  status        UserStatus   @default(active)
+  /// Placeholder user created when someone is invited/assigned by email before signing up.
+  isGhost       Boolean      @default(false)
+  googleId      String       @default("")
+  authProvider  AuthProvider @default(local)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  docs                 Doc[]
+  docCollaborations    DocCollaborator[]
+  docBans              DocBannedUser[]
+  shareLinks           ShareLink[]
+  accessRequests       AccessRequest[]
+  todos                Todo[]
+  todoAssignments      TodoAssignee[]
+  ownedWorkspaces      Workspace[]
+  workspaceMemberships WorkspaceMember[]
+  inviteLinksCreated   WorkspaceInviteLink[]
+  activities           ActivityLog[]         @relation("ActivityActor")
+  activitiesAsTarget   ActivityLog[]         @relation("ActivityTargetUser")
+  notifications        Notification[]        @relation("NotificationRecipient")
+  notificationsSent    Notification[]        @relation("NotificationSender")
+  recentVisits         RecentVisit[]
+  reminders            Reminder[]
+
+  // ── Learning (Revise's dashboard; see the Learning section at the end) ──
+  /// IANA zone for learning days ("today", streaks, slots, goal due days).
+  timezone                 String      @default("Asia/Kolkata")
+  /// Revise Workspace.routineMode.
+  routineMode              RoutineMode @default(MASTER)
+  /// Global revision streak = engine StreakState. lastGlobalStreakDay = last credited day,
+  /// or the last rest day bridged by the rollover.
+  globalStreak             Int         @default(0)
+  longestGlobalStreak      Int         @default(0)
+  lastGlobalStreakDay      DateTime?   @db.Date
+  /// StreakSnapshot { current, longest, lastCreditDay } from just before the last credit (same-day undo).
+  globalStreakBeforeCredit Json?
+  /// Last local day the rollover finished for this user (null = never).
+  learningRolledOverDay    DateTime?   @db.Date
+
+  // ── Daily loop v2 settings (LOOP_V2_SPEC §1) ──
+  /// The size of Today in minutes (5–120).
+  dailyBudgetMin    Int       @default(25)
+  /// Time blocks / timeline / Day Manager / triage / debrief / catch-up. Off: GET /api/today
+  /// returns schedule/triage/todayDebrief null and the rollover creates no slots.
+  routineEnabled    Boolean   @default(false)
+  /// Busy mode is on while today <= busyUntil (a local day).
+  busyUntil         DateTime? @db.Date
+  nudgeEmailEnabled Boolean   @default(true)
+  /// 'HH:mm', the user's local time for the morning email.
+  nudgeTime         String    @default("08:30")
+  /// Local day the morning email was last sent (idempotency).
+  lastNudgeDay      DateTime? @db.Date
+  /// Local day of the last POST /api/learning/ensure-today (the app was opened).
+  lastSeenDay       DateTime? @db.Date
+  /// lastSeenDay as it was before today's first visit, so "comeback" mode lasts the whole day
+  /// after ensure-today moved lastSeenDay to today.
+  prevSeenDay       DateTime? @db.Date
+
+  subjects       Subject[]
+  topics         Topic[]
+  captures       Capture[]
+  revisions      Revision[]
+  subjectStreaks SubjectStreak[]
+  dailyHistory   DailyHistory[]
+  timeBlocks     TimeBlock[]
+  scheduleSlots  DailyScheduleSlot[]
+  dayDebriefs    DayDebrief[]
+  quickNotes     QuickNote[]
+  focusItems     FocusItem[]
+  goals          Goal[]
+
+  // ── Agents (personal access tokens, the agent edit log; see the Agents section at the end) ──
+  apiTokens       ApiToken[]
+  agentEdits      AgentEdit[]
+  idempotencyKeys IdempotencyKey[]
+
+  // ── AI (Recall mode, the spend meter, the weekly coach; see the AI section at the end) ──
+  recallSets RecallSet[]
+  aiUsage    AiUsage[]
+  aiSettings AiSettings?
+  coachNotes CoachNote[]
+
+  @@index([googleId])
+}
+
+enum OtpPurpose {
+  signup
+  password_reset @map("password-reset")
+}
+
+model Otp {
+  id         String     @id @default(cuid())
+  /// Stored lowercased.
+  email      String
+  /// 4 digits.
+  otp        String
+  /// Signup only: { name, passwordHash }. The password is hashed before it is stored.
+  signupData Json?
+  purpose    OtpPurpose @default(signup)
+  /// An OTP is valid for 180 s after createdAt. Mongo deleted it with a TTL index; here the
+  /// OTP service checks the age explicitly and a cron deletes expired rows.
+  createdAt  DateTime   @default(now())
+
+  @@index([email])
+  @@index([createdAt])
+}
+
+// ============================================================================
+// Docs, collaboration, sharing
+// ============================================================================
+
+enum DocType {
+  notes
+  meeting
+  project
+  personal
+}
+
+enum CollaboratorRole {
+  editor
+  viewer
+}
+
+model Doc {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Trimmed.
+  title        String
+  /// Base64-encoded Yjs update, stored as text exactly like in Mongo (bytea comes later).
+  yjsState     String?
+  previewState String?
+  docType      DocType  @default(notes)
+  coverImage   String?
+  isPinned     Boolean  @default(false)
+  isArchived   Boolean  @default(false)
+  /// [{ imageId, cloudUrl, cloudPublicId }]
+  cloudImages  Json     @default("[]")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  collaborators  DocCollaborator[]
+  bannedUsers    DocBannedUser[]
+  shareLinks     ShareLink[]
+  accessRequests AccessRequest[]
+  /// Learning topics whose content is this doc (at most one per user).
+  topics         Topic[]
+  /// States taken before agent edits (Undo), and the agent edit log.
+  snapshots      DocSnapshot[]
+  agentEdits     AgentEdit[]
+  /// Recall question sets written from this doc.
+  recallSets     RecallSet[]
+
+  @@index([userId])
+  @@index([userId, updatedAt(sort: Desc)])
+}
+
+/// Doc.collaborators[] in Mongo (queried as 'collaborators.user' 23 times).
+model DocCollaborator {
+  id      String           @id @default(cuid())
+  docId   String
+  doc     Doc              @relation(fields: [docId], references: [id], onDelete: Cascade)
+  userId  String
+  user    User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role    CollaboratorRole @default(editor)
+  addedAt DateTime         @default(now())
+
+  @@unique([docId, userId])
+  @@index([userId])
+}
+
+/// Doc.bannedUsers[] in Mongo.
+model DocBannedUser {
+  id       String   @id @default(cuid())
+  docId    String
+  doc      Doc      @relation(fields: [docId], references: [id], onDelete: Cascade)
+  userId   String
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bannedAt DateTime @default(now())
+
+  @@unique([docId, userId])
+  @@index([userId])
+}
+
+/// Only doc links are left (content/dashboard/slide links were cut).
+enum ShareLinkType {
+  doc
+}
+
+model ShareLink {
+  id        String           @id @default(cuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      ShareLinkType    @default(doc)
+  role      CollaboratorRole @default(viewer)
+  docId     String
+  doc       Doc              @relation(fields: [docId], references: [id], onDelete: Cascade)
+  slug      String           @unique
+  /// Mongo default: now + 3 days, deleted by a TTL index. Set it with defaultShareLinkExpiry()
+  /// (src/db/defaults.ts); queries already filter expiresAt > now.
+  expiresAt DateTime
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  accessRequests AccessRequest[]
+
+  @@index([userId, docId, expiresAt])
+  @@index([docId])
+  @@index([expiresAt])
+}
+
+enum AccessRequestStatus {
+  pending
+  approved
+  rejected
+}
+
+model AccessRequest {
+  id          String              @id @default(cuid())
+  userId      String
+  user        User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  docId       String
+  doc         Doc                 @relation(fields: [docId], references: [id], onDelete: Cascade)
+  shareLinkId String
+  shareLink   ShareLink           @relation(fields: [shareLinkId], references: [id], onDelete: Cascade)
+  status      AccessRequestStatus @default(pending)
+  role        CollaboratorRole    @default(viewer)
+  requestedAt DateTime            @default(now())
+  respondedAt DateTime?
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  @@unique([userId, docId])
+  @@index([docId, status])
+  @@index([shareLinkId])
+}
+
+// ============================================================================
+// Tags & todos
+// ============================================================================
+
+/// Global task labels (no owner), as in Mongo ('Tags').
+model Tag {
+  id        String   @id @default(cuid())
+  /// Unique and trimmed.
+  name      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  todos TodoTag[]
+}
+
+enum TodoStatus {
+  pending
+  in_progress
+  review
+  blocked
+  complete
+}
+
+enum TodoPriority {
+  low
+  normal
+  medium
+  high
+  urgent
+}
+
+enum TodoVisibility {
+  private
+  shared
+  workspace
+}
+
+model Todo {
+  id           String         @id @default(cuid())
+  userId       String
+  user         User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Trimmed.
+  title        String
+  /// Rich text (TipTap JSON serialized to a string), as in Mongo.
+  description  String?
+  status       TodoStatus     @default(pending)
+  priority     TodoPriority   @default(low)
+  dueDate      DateTime?
+  reminderDate DateTime?
+  /// Set when status becomes 'complete' (old Mongoose pre-save hook): the todos service does it.
+  completedAt  DateTime?
+  /// [{ id, text, isCompleted }]
+  subtasks     Json           @default("[]")
+  /// [{ imageId, cloudPublicId }]
+  cloudImages  Json           @default("[]")
+  /// { pattern: 'daily' | 'weekly' | 'monthly', interval } or null.
+  recurrence   Json?
+  assignedAt   DateTime?
+  visibility   TodoVisibility @default(private)
+  workspaceId  String?
+  workspace    Workspace?     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  /// One of the workspace's spaces (Workspace.spaces[]._id in Mongo).
+  spaceId      String?
+  space        Space?         @relation(fields: [spaceId], references: [id], onDelete: SetNull)
+  /// [{ type: 'doc' | 'content' | 'slide', refId, title }]. Queried with
+  /// `array_contains` (Mongo $elemMatch); the GIN index serves that.
+  references   Json           @default("[]")
+  /// Revise weekly/monthly goals (Home "Weekly" tab, Monday review).
+  goalType     GoalType       @default(NONE)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  assignees  TodoAssignee[]
+  tags       TodoTag[]
+  reminders  Reminder[]
+  activities ActivityLog[]
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([userId, status])
+  @@index([userId, priority])
+  @@index([userId, dueDate])
+  @@index([references(ops: JsonbPathOps)], type: Gin)
+  @@index([workspaceId, visibility])
+  @@index([workspaceId, visibility, status])
+  @@index([workspaceId, spaceId])
+}
+
+/// Todo.assignees[] in Mongo. Order rows by createdAt to get the old array order.
+model TodoAssignee {
+  todoId    String
+  todo      Todo     @relation(fields: [todoId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([todoId, userId])
+  @@index([userId])
+}
+
+/// Todo.tags[] in Mongo. Order rows by createdAt to get the old array order.
+model TodoTag {
+  todoId    String
+  todo      Todo     @relation(fields: [todoId], references: [id], onDelete: Cascade)
+  tagId     String
+  tag       Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([todoId, tagId])
+  @@index([tagId])
+}
+
+// ============================================================================
+// Workspaces
+// ============================================================================
+
+enum WorkspaceRole {
+  admin
+  member
+  viewer
+}
+
+model Workspace {
+  id        String   @id @default(cuid())
+  /// Trimmed; at most 100 characters (Mongoose maxlength).
+  name      String   @db.VarChar(100)
+  ownerId   String
+  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  /// { membersCanViewOverview: boolean }
+  settings  Json     @default("{\"membersCanViewOverview\":false}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members     WorkspaceMember[]
+  spaces      Space[]
+  todos       Todo[]
+  inviteLinks WorkspaceInviteLink[]
+  activities  ActivityLog[]
+
+  @@index([ownerId])
+}
+
+/// Workspace.members[] in Mongo (queried as 'members.user' 10 times). The owner is not
+/// necessarily a member row, exactly as in Mongo.
+model WorkspaceMember {
+  workspaceId String
+  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role        WorkspaceRole @default(member)
+  joinedAt    DateTime      @default(now())
+
+  @@id([workspaceId, userId])
+  @@index([userId])
+}
+
+/// Workspace.spaces[] in Mongo; each space had its own _id, which Todo.spaceId and
+/// WorkspaceInviteLink.space point to. Order by createdAt to get the old array order.
+model Space {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  /// Trimmed; at most 50 characters (Mongoose maxlength).
+  name        String    @db.VarChar(50)
+  createdAt   DateTime  @default(now())
+
+  todos       Todo[]
+  inviteLinks WorkspaceInviteLink[]
+
+  @@index([workspaceId])
+}
+
+model WorkspaceInviteLink {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  /// Set when the link is for one space.
+  spaceId     String?
+  space       Space?    @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  /// URL-safe random token. Generate it with generateInviteToken() (src/db/defaults.ts);
+  /// Mongo's default was crypto.randomBytes(24).toString('base64url').
+  token       String    @unique
+  createdById String
+  createdBy   User      @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  /// null = never expires.
+  expiresAt   DateTime?
+  /// null = unlimited.
+  maxUses     Int?
+  useCount    Int       @default(0)
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([workspaceId, isActive])
+}
+
+enum ActivityAction {
+  task_created
+  task_completed
+  task_assigned
+  task_unassigned
+  task_status_changed
+  task_priority_changed
+  task_due_date_changed
+  task_content_changed
+  member_joined
+  member_removed
+  workspace_created
+}
+
+model ActivityLog {
+  id           String         @id @default(cuid())
+  workspaceId  String
+  workspace    Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  actorId      String
+  actor        User           @relation("ActivityActor", fields: [actorId], references: [id], onDelete: Cascade)
+  action       ActivityAction
+  targetTaskId String?
+  targetTask   Todo?          @relation(fields: [targetTaskId], references: [id], onDelete: SetNull)
+  targetUserId String?
+  targetUser   User?          @relation("ActivityTargetUser", fields: [targetUserId], references: [id], onDelete: SetNull)
+  /// Free-form text (e.g. a task-title snapshot or status change), as in Mongo.
+  metadata     String?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  @@index([workspaceId, createdAt(sort: Desc)])
+  @@index([actorId])
+  @@index([targetTaskId])
+}
+
+// ============================================================================
+// Notifications, recent visits
+// ============================================================================
+
+enum NotificationCategory {
+  actionable
+  informational
+  promotional
+}
+
+enum NotificationStatus {
+  pending
+  accepted
+  declined
+  dismissed
+}
+
+model Notification {
+  id           String               @id @default(cuid())
+  recipientId  String
+  recipient    User                 @relation("NotificationRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+  senderId     String?
+  sender       User?                @relation("NotificationSender", fields: [senderId], references: [id], onDelete: SetNull)
+  category     NotificationCategory
+  /// Free-form: workspace_invite, task_assigned, task_reminder, …
+  type         String
+  title        String
+  message      String               @default("")
+  icon         String?
+  /// Flexible payload per type. Queried by metadata.workspaceId: use a Prisma JSON path filter
+  /// ({ path: ['workspaceId'], equals: id }). Ids inside are plain strings now.
+  metadata     Json                 @default("{}")
+  status       NotificationStatus   @default(pending)
+  isRead       Boolean              @default(false)
+  /// Don't show before this time.
+  scheduledFor DateTime?
+  expiresAt    DateTime?
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+
+  @@index([recipientId, isRead, createdAt(sort: Desc)])
+  @@index([recipientId, status])
+  @@index([recipientId, type])
+  @@index([senderId])
+}
+
+/// 'slide' stays accepted because the unchanged frontend still records slide visits.
+enum RecentVisitItemType {
+  doc
+  slide
+  workspace
+}
+
+/// No createdAt/updatedAt (Mongo had timestamps: false).
+model RecentVisit {
+  id        String              @id @default(cuid())
+  userId    String
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Plain id string of the visited item (no foreign key: it can be a doc, slide or workspace).
+  itemId    String
+  itemType  RecentVisitItemType
+  title     String              @default("Untitled")
+  route     String
+  visitedAt DateTime            @default(now())
+
+  @@unique([userId, itemId])
+  @@index([userId, visitedAt(sort: Desc)])
+}
+
+// ============================================================================
+// Reminders
+// ============================================================================
+
+/// Only todo reminders are left ('note' reminders belonged to the cut Content feature).
+enum ReminderType {
+  todo
+}
+
+enum ReminderStatus {
+  pending
+  /// Claimed by the cron while the email is being sent (the cron set it, but it was missing
+  /// from the Mongo enum).
+  processing
+  sent
+  failed
+  cancelled
+}
+
+model Reminder {
+  id           String         @id @default(cuid())
+  userId       String
+  user         User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type         ReminderType   @default(todo)
+  todoId       String
+  todo         Todo           @relation(fields: [todoId], references: [id], onDelete: Cascade)
+  reminderDate DateTime
+  message      String         @default("")
+  emailSent    Boolean        @default(false)
+  status       ReminderStatus @default(pending)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  @@index([userId, reminderDate])
+  @@index([status, reminderDate])
+  @@index([type, status])
+  @@index([todoId])
+}
+
+// ============================================================================
+// Learning (Revise's dashboard). Owned by a Recollect user (one Revise workspace = one user).
+// @db.Date columns hold the user's LOCAL calendar day (engine DayString): write with
+// dayToUtcMidnight(day), read with dayFromUtcMidnight(date). Instants stay timestamps.
+// ============================================================================
+
+enum RoutineMode {
+  MASTER
+  DAILY
+}
+
+enum RevisionStatus {
+  pending
+  done
+  /// In Revise's schema; nothing writes it.
+  missed
+}
+
+enum CaptureType {
+  NOTE
+  LINK
+}
+
+enum GoalType {
+  NONE
+  WEEKLY
+  MONTHLY
+}
+
+enum SlotStatus {
+  UPCOMING
+  ACTIVE
+  COMPLETED
+  SKIPPED
+  PARTIAL
+}
+
+enum BlockLogStatus {
+  COMPLETED
+  SKIPPED
+  PARTIAL
+}
+
+enum QuickNoteCategory {
+  /// "Vault"
+  PRIMARY
+  /// "Scratch"
+  TEMPORARY
+}
+
+model Subject {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name         String
+  description  String?
+  icon         String?
+  /// Hex. New subjects get '#007acc' (Revise's default).
+  color        String?
+  lastActiveAt DateTime @default(now())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  topics   Topic[]
+  captures Capture[]
+  streaks  SubjectStreak[]
+  history  DailyHistory[]
+  goals    GoalSubject[]
+
+  @@index([userId, createdAt])
+}
+
+/// A doc + a subject + its revisions.
+model Topic {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subjectId    String
+  subject      Subject  @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  /// The content. SET NULL when the doc is deleted: the topic and its revision history survive,
+  /// and POST /api/topics/:id/doc creates a fresh doc.
+  docId        String?
+  doc          Doc?     @relation(fields: [docId], references: [id], onDelete: SetNull)
+  /// Shown only when there is no doc (otherwise doc.title).
+  title        String
+  /// Revise's per-subject Tag rows, as names.
+  tags         String[] @default([])
+  sortOrder    Float?
+  /// Where it is on its subject's path (BUDDY_PLAN B1). Existing topics were learned: done.
+  status       TopicStatus @default(done)
+  startedAt    DateTime?
+  doneAt       DateTime?
+  /// What to do next on it, written by an agent (at most 300 characters).
+  nextStep     String?     @db.VarChar(300)
+  isArchived   Boolean  @default(false)
+  /// Imported topics only: Revise canvasData verbatim, for a later read-only canvas view. Never edited.
+  legacyCanvas Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  revisions Revision[]
+  captures  Capture[]
+
+  @@unique([userId, docId])
+  @@index([subjectId])
+}
+
+/// Revise NOTE/LINK captures: the Inbox and "Note" revisions. (TASK captures became Todos.)
+model Capture {
+  id            String      @id @default(cuid())
+  userId        String
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type          CaptureType @default(NOTE)
+  title         String?
+  content       String?
+  url           String?
+  /// LINK that is an uploaded file.
+  cloudPublicId String?
+  fileType      String?
+  /// Revise NoteCategory.name (the "#tag").
+  category      String?
+  isPinned      Boolean     @default(false)
+  subjectId     String?
+  subject       Subject?    @relation(fields: [subjectId], references: [id], onDelete: SetNull)
+  topicId       String?
+  topic         Topic?      @relation(fields: [topicId], references: [id], onDelete: SetNull)
+  /// [{ url, publicId, fileName, fileType }]
+  attachments   Json        @default("[]")
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  revisions Revision[]
+
+  @@index([userId, subjectId, createdAt(sort: Desc)])
+  @@index([topicId])
+}
+
+model Revision {
+  id           String         @id @default(cuid())
+  /// Owner, copied from the topic/capture so dashboard queries need no joins.
+  userId       String
+  user         User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Exactly one of topicId / captureId is set (CHECK constraint in the migration SQL).
+  topicId      String?
+  topic        Topic?         @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  captureId    String?
+  capture      Capture?       @relation(fields: [captureId], references: [id], onDelete: Cascade)
+  /// 1..4
+  cycleNumber  Int
+  /// 1, 3, 7, 21
+  intervalDays Int
+  scheduledFor DateTime       @db.Date
+  completedAt  DateTime?
+  status       RevisionStatus @default(pending)
+  /// engine CompletionUndo { revisionId, completedDay, shifts[] }: set by complete, cleared by uncomplete.
+  undo         Json?
+  createdAt    DateTime       @default(now())
+
+  /// Recall mode: the question sets for this review (at most one unfinished).
+  recallSets RecallSet[]
+
+  @@unique([topicId, cycleNumber])
+  @@unique([captureId, cycleNumber])
+  @@index([userId, status, scheduledFor])
+  @@index([userId, completedAt])
+}
+
+model SubjectStreak {
+  userId           String
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subjectId        String
+  subject          Subject   @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  currentStreak    Int       @default(0)
+  longestStreak    Int       @default(0)
+  /// Revise lastCalculated (its epoch default becomes NULL).
+  lastCreditDay    DateTime? @db.Date
+  beforeLastCredit Json?
+
+  @@id([userId, subjectId])
+}
+
+model DailyHistory {
+  id               String   @id @default(cuid())
+  userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subjectId        String
+  subject          Subject  @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  date             DateTime @db.Date
+  revisionsDue     Int
+  revisionsDone    Int
+  streakMaintained Boolean
+
+  @@unique([userId, subjectId, date])
+}
+
+model TimeBlock {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  /// 'HH:mm'
+  startTime String
+  endTime   String
+  color     String
+  /// 0 = Mon … 6 = Sun (DAILY routine); null for MASTER blocks and one-offs.
+  dayOfWeek Int?
+  /// Set = a one-off block for that day only.
+  date      DateTime? @db.Date
+  createdAt DateTime  @default(now())
+
+  sessionLogs BlockSessionLog[]
+  slots       DailyScheduleSlot[]
+
+  @@index([userId])
+}
+
+model BlockSessionLog {
+  id          String         @id @default(cuid())
+  timeBlockId String
+  timeBlock   TimeBlock      @relation(fields: [timeBlockId], references: [id], onDelete: Cascade)
+  date        DateTime       @db.Date
+  status      BlockLogStatus
+  remark      String?
+  minutesDone Int?
+  createdAt   DateTime       @default(now())
+
+  @@unique([timeBlockId, date])
+  @@index([date])
+}
+
+model DailyScheduleSlot {
+  id              String     @id @default(cuid())
+  userId          String
+  user            User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sourceBlockId   String?
+  sourceBlock     TimeBlock? @relation(fields: [sourceBlockId], references: [id], onDelete: SetNull)
+  date            DateTime   @db.Date
+  title           String
+  color           String
+  startTime       String
+  endTime         String
+  status          SlotStatus @default(UPCOMING)
+  actualStartTime String?
+  actualEndTime   String?
+  remark          String?
+  minutesDone     Int?
+  sortOrder       Int        @default(0)
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  @@unique([sourceBlockId, date])
+  @@index([userId, date])
+}
+
+model DayDebrief {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date            DateTime @db.Date
+  blocksPlanned   Int      @default(0)
+  blocksCompleted Int      @default(0)
+  blocksSkipped   Int      @default(0)
+  totalFocusedMin Int      @default(0)
+  /// 1-5
+  energy          Int?
+  focus           Int?
+  mood            Int?
+  tags            String[] @default([])
+  narrative       String?
+  tomorrowIntent  String?
+  freeWrite       String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([userId, date])
+}
+
+model QuickNote {
+  /// Client-made UUID: the widget upserts by id for optimistic saves. No default.
+  id          String            @id
+  userId      String
+  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  content     String
+  isPinned    Boolean           @default(false)
+  category    QuickNoteCategory @default(PRIMARY)
+  /// [{ url, publicId, fileName, fileType }]
+  attachments Json              @default("[]")
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  @@index([userId, createdAt])
+}
+
+// ============================================================================
+// Daily loop v2 (LOOP_V2_SPEC §3–4): focus lines and goals with deadlines.
+// ============================================================================
+
+/// One of up to 3 focus lines for a local day (no times). A 4th → 409 FOCUS_LIMIT.
+model FocusItem {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// The user's local day.
+  day       DateTime  @db.Date
+  /// Trimmed; at most 140 characters.
+  text      String    @db.VarChar(140)
+  done      Boolean   @default(false)
+  sortOrder Int       @default(0)
+  createdAt DateTime  @default(now())
+  /// Provenance: 'agent' when an access token (an agent) created it; agentName = the agent's name.
+  createdBy CreatedBy @default(user)
+  agentName String?   @db.VarChar(60)
+
+  @@index([userId, day])
+}
+
+/// A topic's place on its subject's path (BUDDY_PLAN B1).
+enum TopicStatus {
+  planned
+  in_progress
+  done
+  skipped
+}
+
+enum GoalStatus {
+  active
+  done
+  archived
+}
+
+/// A goal with a deadline ("Goals" in the UI means only these; Todo.goalType weekly/monthly items
+/// are "This week" / "This month" todos). At most 3 active → 409 GOAL_LIMIT.
+model Goal {
+  id        String     @id @default(cuid())
+  userId    String
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Trimmed; at most 120 characters.
+  title     String     @db.VarChar(120)
+  /// At most 500 characters.
+  why       String?    @db.VarChar(500)
+  /// The user's local day.
+  deadline  DateTime   @db.Date
+  status    GoalStatus @default(active)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  /// Provenance: 'agent' when an access token (an agent) created it; agentName = the agent's name.
+  createdBy CreatedBy  @default(user)
+  agentName String?    @db.VarChar(60)
+
+  subjects   GoalSubject[]
+  milestones GoalMilestone[]
+
+  @@index([userId, status])
+}
+
+/// Goal ↔ Subject (many-to-many): revisions of an active goal's subjects come first in Today's plan.
+model GoalSubject {
+  goalId    String
+  goal      Goal     @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  subjectId String
+  subject   Subject  @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([goalId, subjectId])
+  @@index([subjectId])
+}
+
+model GoalMilestone {
+  id        String    @id @default(cuid())
+  goalId    String
+  goal      Goal      @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  /// Trimmed; at most 140 characters.
+  title     String    @db.VarChar(140)
+  /// The user's local day, optional.
+  dueDay    DateTime? @db.Date
+  done      Boolean   @default(false)
+  /// Set when `done` becomes true, cleared when it becomes false.
+  doneAt    DateTime?
+  sortOrder Int       @default(0)
+  /// Provenance: 'agent' when an access token (an agent) created it; agentName = the agent's name.
+  createdBy CreatedBy @default(user)
+  agentName String?   @db.VarChar(60)
+
+  @@index([goalId, sortOrder])
+}
+
+// ============================================================================
+// Agents (Phase C1, HOME_DOCS_AGENT_PLAN §3): a coding agent (Claude Code through the MCP server)
+// reads and writes docs and learning data with a personal access token. Every agent write is logged
+// (AgentEdit: Home's "From your agent", Undo); doc writes keep the state from before (DocSnapshot).
+// ============================================================================
+
+/// Who created a goal, milestone or focus line.
+enum CreatedBy {
+  user
+  agent
+}
+
+enum AgentEditKind {
+  doc_create
+  doc_append
+  doc_replace_section
+  /// update_canvas: a board changed in place (Undo takes the agent's exact change back, like doc_append).
+  doc_canvas_update
+  goal_create
+  goal_update
+  milestone_add
+  milestone_update
+  /// A milestone an agent removed (Undo puts it back, with its id).
+  milestone_remove
+  focus_add
+  /// A focus line an agent changed (text or done; Undo puts the old values back).
+  focus_update
+  /// A focus line an agent removed (Undo puts it back, with its id).
+  focus_remove
+  /// Planned topics an agent put on a subject's path (Undo removes them while still planned and docless).
+  path_plan
+  /// A topic an agent changed on its path (title, status, next step, place; Undo puts them back).
+  topic_update
+  pocket_add
+  revision_schedule
+  subject_create
+}
+
+/// A personal access token (Settings → Tokens): `Authorization: Bearer rcl_…`. Only the SHA-256 of
+/// the token is stored; the plain token is shown once, when it is created.
+model ApiToken {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Trimmed; at most 100 characters.
+  name       String    @db.VarChar(100)
+  /// SHA-256 (hex) of the whole token.
+  tokenHash  String    @unique
+  /// The token's first 12 characters, for display ("rcl_ab12cd34").
+  prefix     String    @db.VarChar(12)
+  /// A subset of 'read', 'docs:write', 'learning:write'.
+  scopes     String[]
+  /// Updated at most once a minute.
+  lastUsedAt DateTime?
+  /// Set = revoked (the token stops working; the row stays for the list).
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  edits AgentEdit[]
+
+  @@index([userId, createdAt])
+}
+
+/// A doc's whole Yjs state just before an agent edit, for Undo.
+model DocSnapshot {
+  id          String   @id @default(cuid())
+  docId       String
+  doc         Doc      @relation(fields: [docId], references: [id], onDelete: Cascade)
+  /// Base64 Yjs state of the doc before the edit (the format of Doc.yjsState).
+  yjsState    String
+  /// Base64 Yjs update the agent applied on top of `yjsState`. Undo reverts exactly this change, so
+  /// what people typed after it is kept. Null = Undo restores the whole snapshot.
+  agentUpdate String?
+  createdAt   DateTime @default(now())
+
+  edits AgentEdit[]
+
+  @@index([docId, createdAt])
+}
+
+/// One agent write (Home's "From your agent": Open / Keep = seen / Undo).
+model AgentEdit {
+  id         String        @id @default(cuid())
+  userId     String
+  user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// The token the agent used (null for a cookie session, or after the token row is deleted).
+  tokenId    String?
+  token      ApiToken?     @relation(fields: [tokenId], references: [id], onDelete: SetNull)
+  docId      String?
+  doc        Doc?          @relation(fields: [docId], references: [id], onDelete: Cascade)
+  kind       AgentEditKind
+  /// The X-Agent-Name header, or the token's name.
+  agentName  String        @db.VarChar(60)
+  /// A short human line, e.g. `Added 3 paragraphs to "Postgres locks"`.
+  summary    String        @db.VarChar(300)
+  /// Doc edits: the state before the edit.
+  snapshotId String?
+  snapshot   DocSnapshot?  @relation(fields: [snapshotId], references: [id], onDelete: SetNull)
+  /// The row the edit created or changed (doc, goal, milestone, focus line, quick note, topic, subject).
+  entityId   String?
+  /// What Undo needs besides the snapshot: previous field values, ids created along the way.
+  undoData   Json?
+  createdAt  DateTime      @default(now())
+  undoneAt   DateTime?
+  seenAt     DateTime?
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([docId])
+  @@index([snapshotId])
+  @@index([tokenId])
+}
+
+/// `Idempotency-Key` header on agent POSTs: a repeat within 24 h gets the first response back.
+model IdempotencyKey {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  key         String   @db.VarChar(200)
+  /// Method, path and a hash of the body: the same key with a different request is a 422.
+  fingerprint String
+  /// Null while the first request is still running.
+  statusCode  Int?
+  response    Json?
+  createdAt   DateTime @default(now())
+
+  @@unique([userId, key])
+  @@index([createdAt])
+}
+
+// ============================================================================
+// AI: Recall mode (HOME_DOCS_AGENT_PLAN §4, Phase D). Claude writes questions from a due doc,
+// grades the typed answers against it, and the result moves the revision (strong → next cycle,
+// partial → again in 2 days, weak → tomorrow). Every Claude call is an AiUsage row (cost from its
+// `usage`), capped per user per month (AiSettings). Code: src/services/recall, src/services/claude.
+// Also: practice notes (src/services/practice: plain Docs, no table of their own) and the weekly
+// coach (CoachNote, src/services/coach).
+// ============================================================================
+
+/// A question set's state. `pending` = waiting for the nightly Message Batch to write it.
+enum RecallSetStatus {
+  pending
+  ready
+  failed
+}
+
+/// One answer's grade, and a whole set's result.
+enum RecallGrade {
+  strong
+  partial
+  weak
+}
+
+/// "Knew it" / "Didn't know": graded without a model call.
+enum RecallSelfMark {
+  knew
+  didnt
+}
+
+/// What an AI call was for (the spend meter's rows).
+enum AiFeature {
+  recall_questions
+  recall_grade
+  practice_note
+  weekly_coach
+}
+
+/// The questions for one review (one revision) of a doc or capture. At most one unfinished set per
+/// revision: the services create and take over sets only under a row lock on the revision.
+model RecallSet {
+  id          String          @id @default(cuid())
+  userId      String
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  revisionId  String
+  revision    Revision        @relation(fields: [revisionId], references: [id], onDelete: Cascade)
+  /// The doc the questions were written from (topic revisions); null for captures. SET NULL when
+  /// the doc is deleted (the set and its attempts stay).
+  docId       String?
+  doc         Doc?            @relation(fields: [docId], references: [id], onDelete: SetNull)
+  /// The revision's cycle when the set was written (1..4).
+  cycleNumber Int
+  /// [{ id, kind, prompt, answerKey, sourceQuote }]. answerKey never goes to the client; the
+  /// sourceQuote only as the quote of a self-marked answer.
+  questions   Json            @default("[]")
+  status      RecallSetStatus
+  /// The model that wrote the questions (or will: the batch's model while pending).
+  model       String          @db.VarChar(100)
+  /// The Message Batch writing (or that wrote) the questions; null for sets written on demand.
+  batchId     String?         @db.VarChar(100)
+  /// Why the questions could not be written (status failed).
+  error       String?         @db.VarChar(500)
+  createdAt   DateTime        @default(now())
+  finishedAt  DateTime?
+  result      RecallGrade?
+  /// The finish response { result, effect, counts }, so a second finish returns it unchanged.
+  outcome     Json?
+
+  attempts RecallAttempt[]
+
+  @@index([revisionId, finishedAt])
+  @@index([userId, createdAt])
+  @@index([batchId])
+}
+
+/// One answer to one question of a set (re-answering replaces it).
+model RecallAttempt {
+  id         String          @id @default(cuid())
+  setId      String
+  set        RecallSet       @relation(fields: [setId], references: [id], onDelete: Cascade)
+  questionId String          @db.VarChar(20)
+  /// The typed answer; null for a self-mark.
+  answer     String?
+  selfMark   RecallSelfMark?
+  grade      RecallGrade
+  /// At most two sentences: what was missing or wrong. '' for a self-mark or a complete answer.
+  feedback   String          @default("")
+  /// The doc's own passage that answers the question.
+  quote      String?
+  createdAt  DateTime        @default(now())
+
+  @@unique([setId, questionId])
+}
+
+/// One Claude API call or one Message Batch request: its tokens and cost (spend meter, monthly cap).
+model AiUsage {
+  id               String    @id @default(cuid())
+  userId           String
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  feature          AiFeature
+  /// The model that produced the answer (a refusal fallback's model when one served it).
+  model            String    @db.VarChar(100)
+  /// Uncached input tokens.
+  inputTokens      Int       @default(0)
+  outputTokens     Int       @default(0)
+  cacheReadTokens  Int       @default(0)
+  cacheWriteTokens Int       @default(0)
+  /// A Message Batch request (half price).
+  batch            Boolean   @default(false)
+  /// From src/services/claude/pricing.ts at the time of the call.
+  costUsd          Decimal   @db.Decimal(10, 6)
+  createdAt        DateTime  @default(now())
+
+  @@index([userId, createdAt])
+}
+
+/// Per-user AI settings (Settings → AI). No row = the defaults.
+model AiSettings {
+  userId        String   @id
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Questions and grading stop for the rest of the (local) month once spend reaches this.
+  monthlyCapUsd Decimal  @default(20) @db.Decimal(10, 2)
+  updatedAt     DateTime @updatedAt
+}
+
+/// A Message Batch the nightly job submitted. The poller stores its results once it has ended.
+model AiBatch {
+  /// Anthropic's batch id (msgbatch_…).
+  id           String    @id @db.VarChar(100)
+  feature      AiFeature
+  model        String    @db.VarChar(100)
+  /// { [custom_id]: userId }: who pays for each request, even if its set or revision is gone.
+  owners       Json      @default("{}")
+  requestCount Int
+  createdAt    DateTime  @default(now())
+  /// Set once the results are stored (or the batch is given up on).
+  endedAt      DateTime?
+  /// What the poller saw, e.g. "4 succeeded, 1 errored".
+  summary      String?   @db.VarChar(300)
+
+  @@index([endedAt])
+}
+
+/// A weekly coach note (Home's weekly review): five lines on the 7 days ending the day before it
+/// was written (the user's zone) and 3 suggested focus lines. POST /api/ai/coach writes one; a
+/// second POST the same local day returns it unless ?fresh=1. Code: src/services/coach.
+model CoachNote {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// The window's first and last local days (weekEnd = the day before the note was written).
+  weekStart DateTime @db.Date
+  weekEnd   DateTime @db.Date
+  /// { strong, slipping, fix, deadline }: one or two sentences each, at most 220 characters.
+  lines     Json
+  /// Exactly 3 suggested focus lines, each at most 140 characters (a FocusItem's limit).
+  focus     Json
+  /// The model that wrote it; 'none' = a week with nothing in it, written without a model call.
+  model     String   @db.VarChar(100)
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+}

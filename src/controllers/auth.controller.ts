@@ -1,18 +1,26 @@
-import { Request, Response, NextFunction, CookieOptions } from "express";
+// Auth endpoints (Postgres). Logic lives in src/services/auth; this file validates input and
+// shapes responses exactly like the Mongo version (same messages, including the old typos).
+import { Request, Response, NextFunction } from "express";
 import { z } from 'zod'
-import User, { User as UserType } from '../models/userSchema'
 import ErrorResponse from "../utils/errorResponse";
-import Dashboard from '../models/dashboardSchema'
-import { createAndSendOtp, verifyOtpInternal, deleteOtp } from './otp.controller';
-import { OAuth2Client } from 'google-auth-library';
+import { serializeUser } from '../db/serializers';
+import { sendTokenResponse, clearAuthCookies } from '../services/auth/token';
+import { verifyGoogleIdentity } from '../services/auth/google.service';
+import {
+    completeEmailSignup,
+    loginWithGoogle,
+    loginWithPassword,
+    requestPasswordReset,
+    resetPasswordWithOtp,
+    signupWithPassword,
+    startEmailSignup,
+} from '../services/auth/auth.service';
 
 const userSignupSchema = z.object({
     name: z.string().min(1, { message: 'Name cannot be empty' }),
     email: z.string().email({ message: 'email is not valid' }),
     password: z.string().min(8, { message: 'Password must be atleast 8 charachter long' })
 });
-
-type UserSignup = z.infer<typeof userSignupSchema>
 
 export const Signup = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
     try {
@@ -24,19 +32,8 @@ export const Signup = async (req: Request, res: Response, next: NextFunction): P
                 error: result.error.flatten()
             })
         }
-        const { email, name, password } = result.data as UserSignup;
-        const existingUser = await User.findOne({ email }).exec();
 
-        if (existingUser) {
-            throw new ErrorResponse(400, "User already exists")
-        }
-
-        const user = await User.create({
-            email,
-            name,
-            password
-        });
-
+        const user = await signupWithPassword(result.data);
         sendTokenResponse(user, 200, res)
     } catch (err: any) {
         next(err);
@@ -47,8 +44,6 @@ const userLoginSchema = z.object({
     email: z.string().email({ message: 'email is not valid' }),
     password: z.string().min(8, { message: "password must be atleast 8 character long" })
 })
-
-type UserLogin = z.infer<typeof userLoginSchema>
 
 export const login = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
     try {
@@ -61,16 +56,7 @@ export const login = async (req: Request, res: Response, next: NextFunction): Pr
             })
         }
 
-        const { email, password } = result.data as UserLogin
-
-        const user = await User.findOne({ email }).select('+password').exec();
-        if (!user) {
-            throw new ErrorResponse(400, "user does not exist")
-        }
-        const isMatched = await user.comparePassword(password);
-        if (!isMatched) throw new ErrorResponse(400, "wrong password");
-
-        req.user = user;
+        const user = await loginWithPassword(result.data);
         sendTokenResponse(user, 200, res);
     } catch (err: any) {
         next(err)
@@ -79,15 +65,14 @@ export const login = async (req: Request, res: Response, next: NextFunction): Pr
 
 export const Getme = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-        const user = req.user as UserType;
-
-        const dashboards = await Dashboard.find({ user: user._id })
-            .select('name description user contents createdAt updatedAt')
-            .lean();
+        if (!req.user) {
+            throw new ErrorResponse(401, "Not authorized, no token found");
+        }
 
         res.status(200).json({
             success: true,
-            data: { dashboards, user },
+            // Dashboards were cut; the key stays (always empty) because the frontend still reads it.
+            data: { dashboards: [], user: serializeUser(req.user) },
             message: 'get me succeded'
         })
     } catch (err: any) {
@@ -95,67 +80,9 @@ export const Getme = async (req: Request, res: Response, next: NextFunction): Pr
     }
 }
 
-function sendTokenResponse(user: UserType, statusCode: number, res: Response): void {
-    const token = user.getSignedJwtToken();
-
-    if (!process.env.JWT_COOKIE_EXPIRE) {
-        throw new ErrorResponse(400, 'JWT_COOKIE_EXPIRE is undefined')
-    }
-    const JWT_COOKIE_EXPIRE = parseInt(process.env.JWT_COOKIE_EXPIRE);
-    const maxAge = JWT_COOKIE_EXPIRE * 24 * 60 * 60 * 1000;
-
-    const isProduction = process.env.NODE_ENV === 'production';
-    // Let the browser default to the API host natively for standard cross-origin setups
-    const cookieDomain = isProduction ? process.env.COOKIE_DOMAIN || undefined : undefined;
-
-    const options: CookieOptions = {
-        expires: new Date(Date.now() + maxAge),
-        httpOnly: true,
-        secure: isProduction, // Needs to be false for local HTTP testing
-        sameSite: isProduction ? 'none' : 'lax', // Needs to be 'none' for cross-domain API 
-        domain: cookieDomain
-    }
-    
-    const userObj = user.toObject();
-    delete userObj.password;
-
-    res.status(statusCode)
-        .cookie('token', token, options)
-        // Non-HTTP-only hint cookie — readable by frontend JS for instant routing
-        .cookie('auth_hint', '1', {
-            httpOnly: false,
-            secure: isProduction,
-            sameSite: isProduction ? 'none' : 'lax',
-            expires: new Date(Date.now() + maxAge),
-            domain: cookieDomain
-        })
-        .json({
-            success: true,
-            data: userObj
-        })
-}
-
 export const logout = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
     try {
-        const isProduction = process.env.NODE_ENV === 'production';
-        const cookieDomain = isProduction ? process.env.COOKIE_DOMAIN || undefined : undefined;
-        
-        res.cookie('token', '', {
-            httpOnly: true,
-            expires: new Date(0),
-            secure: isProduction,
-            sameSite: isProduction ? 'none' : 'lax',
-            domain: cookieDomain
-        });
-
-        // Clear the auth hint cookie too
-        res.cookie('auth_hint', '', {
-            httpOnly: false,
-            expires: new Date(0),
-            secure: isProduction,
-            sameSite: isProduction ? 'none' : 'lax',
-            domain: cookieDomain
-        });
+        clearAuthCookies(res);
 
         res.status(200).json({
             success: true,
@@ -184,19 +111,16 @@ export const preSignup = async (req: Request, res: Response, next: NextFunction)
             });
         }
 
-        const { name, email, password } = result.data;
+        const outcome = await startEmailSignup(result.data);
 
-        const existingUser = await User.findOne({ email: email.toLowerCase() }).exec();
-        if (existingUser) {
+        if (outcome === 'email-taken') {
             return res.status(400).json({
                 success: false,
                 message: 'Email already registered. Please login instead.'
             });
         }
 
-        const emailSent = await createAndSendOtp(email, 'signup', { name, password });
-
-        if (!emailSent) {
+        if (outcome === 'email-failed') {
             return res.status(500).json({
                 success: false,
                 message: 'Failed to send OTP email. Please try again.'
@@ -231,40 +155,16 @@ export const verifySignup = async (req: Request, res: Response, next: NextFuncti
         }
 
         const { email, otp } = result.data;
+        const outcome = await completeEmailSignup(email, otp);
 
-        const storedOtp = await verifyOtpInternal(email, otp, 'signup');
-
-        if (!storedOtp.signupData) {
+        if (outcome.status === 'missing-signup-data') {
             return res.status(400).json({
                 success: false,
                 message: 'Signup data not found. Please start the signup process again.'
             });
         }
 
-        // Check if a ghost user exists with this email — merge instead of creating new
-        let user = await User.findOne({ email: email.toLowerCase() }).select('+password');
-
-        if (user && user.isGhost) {
-            // Claim the ghost account
-            user.name = storedOtp.signupData.name;
-            user.password = storedOtp.signupData.password;
-            user.isGhost = false;
-            user.status = 'active';
-            await user.save();
-            console.log(`[auth] Ghost user claimed via email signup: ${email}`);
-        } else if (user) {
-            throw new ErrorResponse(400, 'User already exists');
-        } else {
-            user = await User.create({
-                email: email.toLowerCase(),
-                name: storedOtp.signupData.name,
-                password: storedOtp.signupData.password
-            });
-        }
-
-        await deleteOtp(storedOtp._id as string);
-
-        sendTokenResponse(user, 201, res);
+        sendTokenResponse(outcome.user, 201, res);
 
     } catch (err: any) {
         next(err);
@@ -287,26 +187,16 @@ export const forgotPassword = async (req: Request, res: Response, next: NextFunc
             });
         }
 
-        const { email } = result.data;
+        const outcome = await requestPasswordReset(result.data.email);
 
-        const user = await User.findOne({ email: email.toLowerCase() }).exec();
-
-        if (!user) {
-            return res.status(200).json({
-                success: true,
-                message: 'If an account exists with this email, an OTP has been sent.'
-            });
-        }
-
-        const emailSent = await createAndSendOtp(email, 'password-reset');
-
-        if (!emailSent) {
+        if (outcome === 'email-failed') {
             return res.status(500).json({
                 success: false,
                 message: 'Failed to send OTP email. Please try again.'
             });
         }
 
+        // Same answer whether or not the account exists.
         res.status(200).json({
             success: true,
             message: 'If an account exists with this email, an OTP has been sent.'
@@ -336,22 +226,14 @@ export const resetPassword = async (req: Request, res: Response, next: NextFunct
         }
 
         const { email, otp, newPassword } = result.data;
+        const outcome = await resetPasswordWithOtp(email, otp, newPassword);
 
-        const storedOtp = await verifyOtpInternal(email, otp, 'password-reset');
-
-        const user = await User.findOne({ email: email.toLowerCase() });
-
-        if (!user) {
+        if (outcome === 'user-not-found') {
             return res.status(400).json({
                 success: false,
                 message: 'User not found.'
             });
         }
-
-        user.password = newPassword;
-        await user.save();
-
-        await deleteOtp(storedOtp._id as string);
 
         res.status(200).json({
             success: true,
@@ -364,97 +246,11 @@ export const resetPassword = async (req: Request, res: Response, next: NextFunct
 };
 
 // --- Google OAuth ---
-const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT);
-
 export const googleLogin = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
     try {
-        const { credential, accessToken } = req.body;
-
-        if (!credential && !accessToken) {
-            throw new ErrorResponse(400, 'Google credential token or access token is required');
-        }
-
-        let email: string, name: string, googleId: string, picture: string | undefined;
-
-        if (credential) {
-            // Verify the Google ID token
-            const clientId = process.env.GOOGLE_CLIENT;
-            if (!clientId) {
-                throw new ErrorResponse(500, 'Google Client ID is not configured');
-            }
-
-            const ticket = await googleClient.verifyIdToken({
-                idToken: credential,
-                audience: clientId,
-            });
-
-            const payload = ticket.getPayload();
-            if (!payload || !payload.email) {
-                throw new ErrorResponse(400, 'Invalid Google token');
-            }
-
-            email = payload.email;
-            name = payload.name || 'Google User';
-            googleId = payload.sub;
-            picture = payload.picture;
-        } else {
-            // Verify the access token
-            const response = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-                headers: {
-                    Authorization: `Bearer ${accessToken}`
-                }
-            });
-
-            if (!response.ok) {
-                throw new ErrorResponse(400, 'Invalid Google access token');
-            }
-
-            const payload = await response.json();
-            
-            if (!payload || !payload.email) {
-                throw new ErrorResponse(400, 'Invalid Google user info payload');
-            }
-
-            email = payload.email;
-            name = payload.name || 'Google User';
-            googleId = payload.sub;
-            picture = payload.picture;
-        }
-
-        // Check if user already exists
-        let user = await User.findOne({ email: email.toLowerCase() }).exec();
-
-        if (user) {
-            // Ghost user claiming
-            if (user.isGhost) {
-                user.isGhost = false;
-                user.status = 'active';
-                console.log(`[auth] Ghost user claimed via Google: ${email}`);
-            }
-            // User exists — update googleId if not already set
-            if (!user.googleId) {
-                user.googleId = googleId;
-                user.authProvider = 'google';
-                if (picture && !user.avatar) {
-                    user.avatar = picture;
-                }
-                await user.save();
-            } else {
-                // Save in case only ghost fields changed
-                await user.save();
-            }
-        } else {
-            // Create a new user (no password needed for Google auth)
-            user = await User.create({
-                email: email.toLowerCase(),
-                name: name || 'Google User',
-                googleId,
-                authProvider: 'google',
-                avatar: picture || '',
-                password: `google_${googleId}_${Date.now()}`, // placeholder, never used for login
-            });
-        }
-
+        const { credential, accessToken } = req.body ?? {};
+        const identity = await verifyGoogleIdentity({ credential, accessToken });
+        const user = await loginWithGoogle(identity);
         sendTokenResponse(user, 200, res);
     } catch (err: any) {
         next(err);

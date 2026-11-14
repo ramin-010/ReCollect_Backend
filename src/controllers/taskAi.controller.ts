@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { generateAIContent } from '../services/ai/aiOrchestrator';
 import { TASK_AI_SYSTEM_PROMPT } from '../services/ai/taskAiSystemPrompt';
+import { calendarDateIn, DEFAULT_TIME_ZONE } from '../utils/timezone';
 
 // ---------------------------------------------------------------------------
 // Controller: POST /api/todos/ai/generate
@@ -13,8 +14,10 @@ export const generateTaskContent = async (req: Request, res: Response, next: Nex
       return res.status(400).json({ message: 'A prompt is required.' });
     }
 
-    // Build context to inject into the prompt
-    const today = new Date().toISOString().split('T')[0];
+    // Build context to inject into the prompt.
+    // "Today" is the user's date, not the UTC one (toISOString() was a day behind between 00:00 and
+    // 05:30 IST, so "tomorrow" came back as today). Per-user time zones are not stored yet.
+    const today = calendarDateIn(new Date(), DEFAULT_TIME_ZONE);
     const membersContext = workspaceMembers.length > 0
       ? `WORKSPACE_MEMBERS:\n${workspaceMembers.map((m: any) => `- ${m.name} (${m.email})`).join('\n')}`
       : 'WORKSPACE_MEMBERS: none (personal task, no assignees available)';

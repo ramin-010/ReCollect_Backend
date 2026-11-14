@@ -1,8 +1,7 @@
 // Email Service for Sending Reminders
+// No database access: callers pass plain { name, email } objects (the unused Mongoose model type
+// imports were removed in the Postgres port).
 import nodemailer from 'nodemailer';
-import { Reminder } from '../models/reminderSchema';
-import { User } from '../models/userSchema';
-import { Content } from '../models/contentSchema';
 
 // Create reusable transporter
 const createTransporter = () => {
@@ -155,43 +154,7 @@ const uiQuote = (text: string, label: string = 'Description'): string => `
 </div>`;
 
 
-// ─── 1. Note Reminder ─────────────────────────────────────────────────
-export const sendReminderEmail = async (
-  user: any,
-  content: any,
-  reminder: any
-): Promise<boolean> => {
-  try {
-    const transporter = createTransporter();
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-
-    const descriptionBlock = content.description
-      ? uiQuote(`${content.description.substring(0, 200)}${content.description.length > 200 ? '…' : ''}`)
-      : '';
-
-    const emailContent = `
-      ${uiHeading(`Reminder: ${content.title}`)}
-      ${uiBody(`Hi ${user.name}, ${reminder.message || 'here is your scheduled reminder.'}`)}
-      
-      <div style="margin: 0 0 8px;">
-        ${uiButton(`${frontendUrl}/dashboard/${content.DashId}?note=${content._id}`, 'View in ReCollect')}
-      </div>
-      
-      ${descriptionBlock}
-    `;
-
-    await transporter.sendMail({
-      from: `"ReCollect" <${process.env.EMAIL_FROM || 'noreply@recollect.com'}>`,
-      to: user.email,
-      subject: `Reminder: ${content.title}`,
-      html: wrapEmail(emailContent, frontendUrl)
-    });
-    return true;
-  } catch (error) {
-    console.error('Failed to send reminder email:', error);
-    return false;
-  }
-};
+// ─── 1. Note Reminder: removed with the legacy Content feature (sendReminderEmail) ───
 
 // ─── 2. Welcome ───────────────────────────────────────────────────────
 export const sendWelcomeEmail = async (user: any): Promise<boolean> => {
@@ -296,3 +259,78 @@ export const sendAccessApprovedEmail = async (
 
 // NOTE: sendTaskAssignmentEmail has been moved to:
 //   - controllers/workspace/workspaceEmails.ts (sendWorkspaceTaskAssignmentEmail + sendWorkspaceInviteEmail)
+
+// ─── 6. Morning nudge (daily loop v2, LOOP_V2_SPEC §7) ──────────────────
+// Sent by the nudge cron (src/services/learningDb/nudge.service.ts), which builds the content.
+// Plain and calm: today's top items, active goals with days left, one button.
+
+export interface MorningNudgeEmail {
+  subject: string;
+  heading: string;
+  intro: string;
+  /** The top planned items (at most 3). */
+  items: Array<{ title: string; detail: string }>;
+  /** Planned items beyond `items`. */
+  moreCount: number;
+  /** Active goals: "228 days left", "Due today", … */
+  goals: Array<{ title: string; when: string }>;
+}
+
+const escapeHtml = (value: string): string =>
+  value.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c);
+
+const uiGoals = (goals: MorningNudgeEmail['goals']): string => `
+<div style="margin: 24px 0;">
+  <p style="margin: 0 0 8px; font-size: 13px; font-weight: 600; color: ${TEXT_BLACK}; text-transform: uppercase; letter-spacing: 0.05em;">Goals</p>
+  <div style="padding-left: 16px; border-left: 2px solid ${BORDER_COLOR};">
+    ${goals
+      .map(
+        (g) =>
+          `<p style="margin: 0 0 6px; font-size: 15px; color: ${TEXT_BLACK}; line-height: 1.6;">${escapeHtml(g.title)} <span style="color: ${TEXT_GRAY};">&middot; ${escapeHtml(g.when)}</span></p>`
+      )
+      .join('')}
+  </div>
+</div>`;
+
+/** The same digest as plain text (the multipart alternative). */
+export function morningNudgeText(nudge: MorningNudgeEmail, appUrl: string): string {
+  const lines = [nudge.heading, nudge.intro, ''];
+  for (const item of nudge.items) lines.push(`- ${item.title} (${item.detail})`);
+  if (nudge.moreCount > 0) lines.push(`+ ${nudge.moreCount} more in today's plan.`);
+  if (nudge.goals.length > 0) {
+    lines.push('', 'Goals');
+    for (const g of nudge.goals) lines.push(`- ${g.title}: ${g.when}`);
+  }
+  lines.push('', `Open Recollect: ${appUrl}`);
+  return lines.join('\n');
+}
+
+export const sendMorningNudgeEmail = async (to: { name: string; email: string }, nudge: MorningNudgeEmail): Promise<boolean> => {
+  try {
+    const transporter = createTransporter();
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+
+    const emailContent = `
+      ${uiHeading(escapeHtml(nudge.heading))}
+      ${uiBody(escapeHtml(nudge.intro))}
+      ${nudge.items.map((item) => uiActionItem(escapeHtml(item.title), escapeHtml(item.detail))).join('')}
+      ${nudge.moreCount > 0 ? uiBody(`+ ${nudge.moreCount} more in today's plan.`) : ''}
+      ${nudge.goals.length > 0 ? uiGoals(nudge.goals) : ''}
+      <div style="margin: 24px 0 8px;">
+        ${uiButton(frontendUrl, 'Open Recollect')}
+      </div>
+    `;
+
+    await transporter.sendMail({
+      from: `"ReCollect" <${process.env.EMAIL_FROM || 'noreply@recollect.com'}>`,
+      to: to.email,
+      subject: nudge.subject,
+      html: wrapEmail(emailContent, frontendUrl),
+      text: morningNudgeText(nudge, frontendUrl),
+    });
+    return true;
+  } catch (error) {
+    console.error('Failed to send morning nudge email:', error);
+    return false;
+  }
+};

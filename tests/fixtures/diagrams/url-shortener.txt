@@ -1,0 +1,11 @@
+flowchart LR
+  user([User]) -->|HTTPS| cdn[CDN] --> lb[Load balancer]
+  subgraph api [API tier]
+    a1[API server 1]
+    a2[API server 2]
+  end
+  lb --> a1 & a2
+  a1 & a2 -->|read| cache[(Redis)]:::red
+  a1 & a2 -->|write| db[(Postgres primary)]:::blue
+  db -.->|CDC| q[[Outbox queue]]:::yellow
+  note: Writes go to the primary; reads try the cache first.

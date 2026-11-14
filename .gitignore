@@ -24,3 +24,9 @@ pnpm-debug.log*
 
 # TypeScript
 tsconfig.tsbuildinfo
+
+# local dev Postgres (embedded, see scripts/dev-db.mjs)
+.devdb/
+
+# Git Bash crash dumps
+*.stackdump

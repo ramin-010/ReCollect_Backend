@@ -1,7 +1,6 @@
 import { generateWithGroq } from './groqProvider';
 import { generateWithGoogle } from './googleProvider';
 import { generateWithCohere } from './cohereProvider';
-import { SYSTEM_PROMPT as SLIDE_SYSTEM_PROMPT } from './systemPrompt';
 
 export interface AIGenerationResult {
   raw: string;
@@ -72,10 +71,5 @@ export async function generateAIContent(prompt: string, systemPrompt: string): P
   throw new Error('All AI providers failed. Please try again later.');
 }
 
-/**
- * Backward-compatible wrapper for slide generation.
- * Uses the slide-specific system prompt.
- */
-export async function generateSlideContent(prompt: string): Promise<AIGenerationResult> {
-  return generateAIContent(prompt, SLIDE_SYSTEM_PROMPT);
-}
+// generateSlideContent (slide decks) was removed with the slides feature;
+// its prompt lives in _archive/src/services/ai/systemPrompt.ts.

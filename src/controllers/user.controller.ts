@@ -1,7 +1,19 @@
+// User profile endpoints (Postgres). DB access lives in src/services/users/users.service.ts.
 import { Request, Response, NextFunction } from "express";
 import { z } from 'zod';
-import User from '../models/userSchema';
 import ErrorResponse from "../utils/errorResponse";
+import { deleteFromCloud } from "../utils/cloudinary";
+import { serializeUser, serializeUserSummary } from '../db/serializers';
+import { verifyPassword } from '../services/auth/password';
+import {
+  deleteUser,
+  findUserById,
+  findUserByIdWithPassword,
+  searchUsers as searchUsersInDb,
+  setUserAvatar,
+  setUserPassword,
+  updateUserProfile as updateUserProfileInDb,
+} from '../services/users/users.service';
 
 
 interface CloudFileOutput extends Express.Multer.File {
@@ -14,6 +26,7 @@ const updateProfileSchema = z.object({
   email: z.string().email().optional(),
   phone: z.string().max(20).optional(),
   reminderEmail: z.string().email().optional(),
+  // Accepted but not stored (they were never in the user model; Mongoose dropped them silently).
   bio: z.string().max(500).optional(),
   preferences: z.object({
     theme: z.enum(['light', 'dark', 'blue', 'gray']).optional(),
@@ -22,21 +35,19 @@ const updateProfileSchema = z.object({
   }).optional()
 });
 
-import { deleteFromCloud } from "./content.controller";
-
 export const getUserProfile = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
   try {
     const userId = req.user?._id;
-    
-    const user = await User.findById(userId).select('-password');
-    
+
+    const user = userId ? await findUserById(userId) : null;
+
     if (!user) {
       throw new ErrorResponse(404, "User not found");
     }
-    
+
     res.status(200).json({
       success: true,
-      data: user
+      data: serializeUser(user)
     });
   } catch (err: any) {
     next(err);
@@ -46,9 +57,9 @@ export const getUserProfile = async (req: Request, res: Response, next: NextFunc
 export const updateUserProfile = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
   try {
     const userId = req.user?._id;
-    
+
     const result = updateProfileSchema.safeParse(req.body);
-    
+
     if (!result.success) {
       return res.status(400).json({
         success: false,
@@ -56,44 +67,20 @@ export const updateUserProfile = async (req: Request, res: Response, next: NextF
         errors: result.error.flatten()
       });
     }
-    
-    const updateData = result.data;
-    
-        if (updateData.email) {
-      const existingUser = await User.findOne({ 
-        email: updateData.email, 
-        _id: { $ne: userId } 
-      });
-      
-      if (existingUser) {
-        throw new ErrorResponse(400, "Email already in use");
-      }
-    }
 
-    if (updateData.reminderEmail) {
-      const existingReminderUser = await User.findOne({ 
-        reminderEmail: updateData.reminderEmail, 
-        _id: { $ne: userId } 
-      });
-      
-      if (existingReminderUser) {
-        throw new ErrorResponse(400, "This alternative email is already in use by another account");
-      }
-    }
-    
-    const updatedUser = await User.findByIdAndUpdate(
-      userId,
-      updateData,
-      { new: true, runValidators: true }
-    ).select('-password');
-    
+    const { name, email, phone, reminderEmail } = result.data;
+
+    const updatedUser = userId
+      ? await updateUserProfileInDb(userId, { name, email, phone, reminderEmail })
+      : null;
+
     if (!updatedUser) {
       throw new ErrorResponse(404, "User not found");
     }
-    
+
     res.status(200).json({
       success: true,
-      data: updatedUser
+      data: serializeUser(updatedUser)
     });
   } catch (err: any) {
     next(err);
@@ -108,33 +95,33 @@ export const uploadProfilePicture = async (req: Request, res: Response, next: Ne
     if (!files || !files.avatar || !files?.avatar[0]) {
       throw new ErrorResponse(400, "No image file provided");
     }
-    
+
     const avatarFile = files.avatar[0] as CloudFileOutput;
-    
+
     const avatarUrl = avatarFile.cloudUrl || avatarFile.path;
     const avatarPublicId = avatarFile.cloudPublicId;
     const avatarProvider = avatarFile.cloudProvider;
-    
+
     if (!avatarUrl) {
       throw new ErrorResponse(500, "Failed to upload image");
     }
-    
-    const updatedUser = await User.findByIdAndUpdate(
-      userId,
-      { avatar: avatarUrl, cloudPublicId: avatarPublicId, cloudProvider: avatarProvider },
-    ).select('-password');
-    
-    const existingAvatar = updatedUser?.cloudPublicId || '';
-   
-    console.log("Existing Avatar",existingAvatar); 
+
+    // Returns the user as it was before the update, so the previous image can be deleted.
+    const previousUser = userId
+      ? await setUserAvatar(userId, { url: avatarUrl, cloudPublicId: avatarPublicId || '', cloudProvider: avatarProvider || '' })
+      : null;
+
+    const existingAvatar = previousUser?.cloudPublicId || '';
+
+    console.log("Existing Avatar",existingAvatar);
     if(existingAvatar){
       await deleteFromCloud(existingAvatar);
     }
-    
-    if (!updatedUser) {
+
+    if (!previousUser) {
       throw new ErrorResponse(404, "User not found");
     }
-    
+
     res.status(200).json({
       success: true,
       data: {
@@ -152,27 +139,27 @@ export const deleteUserAccount = async (req: Request, res: Response, next: NextF
       throw new ErrorResponse(401, "Not authenticated");
     }
     const userId = req.user.id;
-    const { password } = req.body;
-    
+    const { password } = req.body ?? {};
+
     if (!password) {
       throw new ErrorResponse(400, "Password required to delete account");
     }
-    
-        const user = await User.findById(userId).select('+password');
-    
+
+    const user = await findUserByIdWithPassword(userId);
+
     if (!user) {
       throw new ErrorResponse(404, "User not found");
     }
-    
-    const isMatch = await user.comparePassword(password);
-    
+
+    const isMatch = await verifyPassword(String(password), user.password);
+
     if (!isMatch) {
       throw new ErrorResponse(401, "Invalid password");
     }
-    
-        await User.findByIdAndDelete(userId);
-    
-        
+
+    // Postgres cascades the user's own rows (docs, todos, owned workspaces, …); Mongo left them orphaned.
+    await deleteUser(userId);
+
     res.status(200).json({
       success: true,
       message: "Account deleted successfully"
@@ -186,81 +173,24 @@ export const deleteUserAccount = async (req: Request, res: Response, next: NextF
 export const getUserSettings = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
   try {
     const userId = req.user?.id;
-    console.log("ENTERED");
     if (!userId) {
       throw new ErrorResponse(401, 'User not authenticated');
     }
 
-        const user = await User.findById(userId)
-      .populate({
-        path: 'archivedNotes',
-        select: 'title body links tags visibility description updatedAt isPinned isArchived connections',
-        populate: [
-          {
-            path: 'tags',
-            select: 'name'
-          },
-          {
-            path: 'body'
-          }
-        ]
-      })
-      .populate({
-        path: 'favoriteNotes',
-        select: 'title body links tags visibility description updatedAt isPinned isArchived connections',
-        populate: [
-          {
-            path: 'tags',
-            select: 'name'
-          },
-          {
-            path: 'body'
-          }
-        ]
-      })
-      .select('-password')
-      .lean();
-
-      console.log(user);
+    const user = await findUserById(userId);
 
     if (!user) {
       throw new ErrorResponse(404, 'User not found');
     }
 
-        const Dashboard = (await import('../models/dashboardSchema')).default;
-
-        const archivedNoteIds = (user.archivedNotes || []).map((note: any) => note._id);
-    const favoriteNoteIds = (user.favoriteNotes || []).map((note: any) => note._id);
-    const allContentIds = [...new Set([...archivedNoteIds, ...favoriteNoteIds])];
-
-        const dashboards = await Dashboard.find({
-      user: userId,
-      contents: { $in: allContentIds }
-    }).select('_id contents').lean();
-
-    const contentToDashboardMap = new Map<string, string>();
-    dashboards.forEach((dashboard: any) => {
-      dashboard.contents.forEach((contentId: any) => {
-        contentToDashboardMap.set(contentId.toString(), dashboard._id.toString());
-      });
-    });
-
-        const enrichedArchivedNotes = (user.archivedNotes || []).map((note: any) => ({
-      ...note,
-      DashId: contentToDashboardMap.get(note._id.toString()) || ''
-    }));
-
-    const enrichedFavoriteNotes = (user.favoriteNotes || []).map((note: any) => ({
-      ...note,
-      DashId: contentToDashboardMap.get(note._id.toString()) || ''
-    }));
-
     res.status(200).json({
       success: true,
       data: {
-        user,
-        archivedNotes: enrichedArchivedNotes,
-        favoriteNotes: enrichedFavoriteNotes
+        user: serializeUser(user),
+        // Archived/favourite notes belonged to the cut legacy Content feature. The keys stay
+        // (always empty) because the settings page still reads them.
+        archivedNotes: [],
+        favoriteNotes: []
       },
       message: 'User settings fetched successfully'
     });
@@ -280,13 +210,13 @@ const changePasswordSchema = z.object({
 export const changePassword = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
   try {
     const userId = req.user?._id;
-    
+
     if (!userId) {
       throw new ErrorResponse(401, 'User not authenticated');
     }
 
     const result = changePasswordSchema.safeParse(req.body);
-    
+
     if (!result.success) {
       return res.status(400).json({
         success: false,
@@ -295,16 +225,11 @@ export const changePassword = async (req: Request, res: Response, next: NextFunc
       });
     }
 
-    const { newPassword } = result.data;
+    const updated = await setUserPassword(userId, result.data.newPassword);
 
-        const user = await User.findById(userId).select('+password');
-    
-    if (!user) {
+    if (!updated) {
       throw new ErrorResponse(404, 'User not found');
     }
-
-        user.password = newPassword;
-    await user.save();
 
     res.status(200).json({
       success: true,
@@ -316,9 +241,10 @@ export const changePassword = async (req: Request, res: Response, next: NextFunc
 };
 
 /**
- * GET /api/user/search?q=...
+ * GET /api/search?q=...
  * Searches users by name or email (for assignee picker)
- * Returns only non-ghost, active users
+ * Returns only non-ghost users, never the caller. ILIKE with the input escaped (it used to be an
+ * unescaped RegExp).
  */
 export const searchUsers = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
   try {
@@ -332,27 +258,11 @@ export const searchUsers = async (req: Request, res: Response, next: NextFunctio
       });
     }
 
-    const searchRegex = new RegExp(q.trim(), 'i');
-
-    const users = await User.find({
-      $and: [
-        { _id: { $ne: currentUserId } },            // Exclude self
-        { isGhost: { $ne: true } },                   // Exclude ghost users
-        {
-          $or: [
-            { name: searchRegex },
-            { email: searchRegex }
-          ]
-        }
-      ]
-    })
-    .select('name email avatar')
-    .limit(10)
-    .lean();
+    const users = await searchUsersInDb(q.trim(), currentUserId);
 
     res.status(200).json({
       success: true,
-      data: users
+      data: users.map(serializeUserSummary)
     });
   } catch (err: any) {
     next(err);

@@ -1,0 +1,38 @@
+%% A chat system: clients, the edge, realtime servers, storage and async fan-out.
+%% No direction on purpose: Recollect picks the one that shows bigger in a doc.
+flowchart
+  web([Web app])@{ kind: client }
+  mobile([Mobile app])@{ kind: mobile }
+  web & mobile -->|HTTPS| cdn[CDN]@{ kind: cdn }
+  web & mobile -->|WebSocket| lb[Load balancer]@{ kind: lb }
+  subgraph edge [Edge]
+    gw[API gateway]@{ kind: gateway }
+    auth[Auth service]@{ kind: auth }
+  end
+  lb --> gw
+  gw -->|verify token| auth
+  subgraph core [Chat core]
+    subgraph realtime [Realtime]:::blue
+      ws1[WS server 1]@{ kind: service }
+      ws2[WS server 2]@{ kind: service }
+    end
+    chat[Chat service]@{ kind: service }
+    presence[Presence service]@{ kind: service }
+  end
+  gw --> ws1 & ws2
+  ws1 & ws2 -->|send| chat
+  ws1 & ws2 -.->|heartbeat| presence
+  chat -->|write| msgs[(Messages DB)]@{ kind: database }:::blue
+  presence -->|TTL keys| redis[(Redis)]@{ kind: cache }:::red
+  chat -.->|message.sent| bus[[Event bus]]@{ kind: stream }:::yellow
+  subgraph async [Async workers]
+    fanout[Fan-out worker]@{ kind: worker }
+    push[Push sender]@{ kind: notify }
+    search[Search indexer]@{ kind: search }
+  end
+  bus -.-> fanout & push & search
+  fanout -->|deliver| ws1 & ws2
+  push -->|APNs / FCM| ext[Push providers]@{ kind: external }:::gray
+  search --> idx[(Search index)]@{ kind: search }
+  note for msgs: Partitioned by conversation id
+  note for bus: At-least-once: consumers are idempotent
