@@ -20,6 +20,7 @@ import { canvasNodesIn, findCanvasElement, mergedCanvas } from '../docs/diagram/
 import { quoted, type AgentActor } from './agentEditLog';
 import { currentContent, logDocChange, requireEditableDoc } from './agentDocs.service';
 import { withLiveDoc } from './liveDoc';
+import { BLOCKS_FRAGMENT, hasBlocks } from '../docs/blocks/serverEditor';
 
 export interface UpdateCanvasInput extends CanvasEdits {
     /** The whole new diagram in the text form (instead of add / remove / rename). */
@@ -84,7 +85,9 @@ export async function updateCanvasForAgent(actor: AgentActor, docId: string, can
     const laid = await layoutDiagram(graph);
 
     const { change, merged } = await withLiveDoc(docId, actor.agentName, (live) => {
-        const element = findCanvasElement(live.fragment, canvasId);
+        // A doc on the new editor keeps the canvas block (its canvasId and height props) in "blocks";
+        // the old fragment's copy is frozen since the switch.
+        const element = (hasBlocks(live.doc) ? findCanvasElement(live.doc.getXmlFragment(BLOCKS_FRAGMENT), canvasId) : null) ?? findCanvasElement(live.fragment, canvasId);
         if (!element) throw canvasNotFound(json, canvasId);
         const oldHeight = canvasHeight(element.getAttribute('height'));
         const request = { height: graph.height, notes: graph.notes, direction: graph.direction, laidDirection: laid.direction };

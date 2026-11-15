@@ -1,129 +1,320 @@
-// Doc sharing: share links (ShareLink), access requests (AccessRequest) and joining a doc through a
-// link. Only doc links exist now (content/dashboard/slide links were cut).
+// Sharing, rebuilt (MANAGER_AND_DOCS_PLAN §2, 2026-11-15): Notion's two ideas and nothing else.
 //
-// Rules carried over from Mongo:
-//   - A link lives 3 days (defaultShareLinkExpiry()); every lookup filters expiresAt > now.
-//   - Creating a link deletes the doc's previous links and access requests and lifts every ban.
-//   - One access request per user and doc (unique userId+docId): asking again resets it to pending.
-// Postgres has no TTL index, so deleteExpiredShareLinks() / startShareLinkCleanupCron() delete
-// expired links. A link that still has a PENDING request is kept until the request is answered:
-// requests cascade with their link, and in Mongo a pending request outlived its expired link.
-import { randomUUID } from 'crypto';
-import cron from 'node-cron';
+//   1. Publish: one switch. Anyone with /p/<slug> reads the doc (no login, never edit). The slug is
+//      stable until he switches it off; switching on again makes a new one. A trashed doc is never shown.
+//   2. People: named access by email ("can view" / "can edit"; they need an account). A logged-in reader
+//      of a published doc can ask to edit; he answers in the Share popover (a notification + an email).
+//
+// Gone with ShareLink and DocBannedUser: expiring links, editor links, joining by a link, bans (a
+// removed person can ask again, and he can decline). Every change to someone's access reaches their
+// open editor at once (D6): a new role reconnects them with it; removal closes their connection.
+//
+//   PUT    /api/docs/:id/publish { on }            owner              → { published }
+//   GET    /api/public/docs/:slug                  anyone             → the doc, read-only (readPublishedDoc)
+//   POST   /api/public/docs/:slug/request          a logged-in reader → asks to edit
+//   GET    /api/docs/:id/people                    owner, people      → DocPeopleJson (requests: owner only)
+//   POST   /api/docs/:id/people { email, role }    owner              → DocPeopleJson
+//   PATCH  /api/docs/:id/people/:userId { role }   owner              → DocPeopleJson
+//   DELETE /api/docs/:id/people/:userId            owner, or oneself  → DocPeopleJson | { left: true }
+//   POST   /api/docs/:id/requests/:reqId/approve   owner              → DocPeopleJson (they can edit)
+//   POST   /api/docs/:id/requests/:reqId/decline   owner              → DocPeopleJson
+import { randomBytes } from 'crypto';
+import * as Y from 'yjs';
 import type { CollaboratorRole } from '@prisma/client';
-import { prisma, type DbClient } from '../../db/prisma';
-import { defaultShareLinkExpiry } from '../../db/defaults';
-import { isUniqueViolation } from '../../db/errors';
-import { userSummarySelect } from '../../db/serializers';
+import { prisma } from '../../db/prisma';
+import { userSummarySelect, serializeUserSummary } from '../../db/serializers/user';
 import {
-    accessRequestInclude,
-    accessRequestWithDocInclude,
-    sharedDocLinkInclude,
-    type AccessRequestRow,
-    type AccessRequestWithDocRow,
-    type SharedDocLinkRow,
+    docPersonSelect,
+    docRequestSelect,
+    serializeDocPerson,
+    serializeDocRequest,
+    type DocPeopleJson,
+    type PublishedJson,
 } from '../../db/serializers/docSharing';
+import { docCollaboratorOrder } from '../../db/serializers/doc';
 import ErrorResponse from '../../utils/errorResponse';
-import { sendAccessApprovedEmail, sendAccessRequestEmail } from '../../utils/emailService';
-import { findDocCollaborator, isBannedFromDoc, isDocOwner } from './docPermissions';
+import { LearningHttpError } from '../learning/http';
+import { sendDocRequestEmail, sendDocSharedEmail, sendRequestApprovedEmail } from '../../utils/emailService';
+import { disconnectUser, refreshUserAccess } from '../../collaboration/hocuspocus';
+import { isDeliverableEmail } from '../learning/nudge';
+import { createNotification } from '../notifications/notifications.service';
+import { liveDocument } from '../agent/liveDoc';
+import { publicDocState } from './blocks/publicState';
+import { accessibleDocWhere, getDocRole, isDocOwner } from './docPermissions';
 
-/** A share link that has not expired (and is a doc link). */
-function activeLinkWhere(now: Date) {
-    return { type: 'doc' as const, expiresAt: { gt: now } };
+export type ShareRole = CollaboratorRole;
+export const SHARE_ROLES: readonly ShareRole[] = ['viewer', 'editor'];
+
+export const NOTIFY_DOC_REQUEST = 'doc_access_request';
+export const NOTIFY_DOC_SHARED = 'doc_shared';
+export const NOTIFY_DOC_APPROVED = 'doc_access_approved';
+
+const appUrl = () => (process.env.FRONTEND_URL || 'http://localhost:3005').replace(/\/+$/, '');
+
+/** The public page of a published doc. */
+export function publicUrl(slug: string): string {
+    return `${appUrl()}/p/${slug}`;
 }
 
-// ─── Share links ───────────────────────────────────────────────────────
+const SLUG_ALPHABET = 'abcdefghijkmnopqrstuvwxyz23456789';
 
 /**
- * POST /api/create-doc-link (owner only). Replaces the doc's links with a new one; its previous
- * links, access requests and bans are deleted in the same transaction. Returns the new slug.
+ * "Caching, part 2" → "caching-part-2-k7m2x9q4hz3a": the title's first words (so the link says what
+ * it is) and 12 random characters (about 60 bits; the slug is the only key to the page).
  */
-export async function createDocShareLink(ownerId: string, docId: string, role: CollaboratorRole): Promise<{ slug: string }> {
-    const doc = await prisma.doc.findUnique({ where: { id: docId }, select: { id: true, userId: true } });
-    if (!doc) throw new ErrorResponse(404, 'Document not found');
-    if (!isDocOwner(doc, ownerId)) throw new ErrorResponse(403, 'Only the document owner can generate share links');
+export function newPublicSlug(title: string): string {
+    let words = title
+        .normalize('NFKD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+    if (words.length > 40) {
+        const head = words.slice(0, 41);
+        const cut = head.lastIndexOf('-');
+        words = (cut > 0 ? head.slice(0, cut) : head.slice(0, 40)).replace(/-+$/g, '');
+    }
+    const bytes = randomBytes(12);
+    let tail = '';
+    for (const b of bytes) tail += SLUG_ALPHABET[b % SLUG_ALPHABET.length];
+    return words ? `${words}-${tail}` : tail;
+}
 
-    const slug = randomUUID();
-    await prisma.$transaction(async (tx) => {
-        await tx.shareLink.deleteMany({ where: { docId } });
-        await tx.docBannedUser.deleteMany({ where: { docId } });
-        await tx.accessRequest.deleteMany({ where: { docId } });
-        await tx.shareLink.create({
-            data: { userId: ownerId, docId, type: 'doc', role, slug, expiresAt: defaultShareLinkExpiry() },
-        });
+/** A slug we could have made (anything else is not looked up). */
+export function isPublicSlug(value: unknown): value is string {
+    return typeof value === 'string' && /^[a-z0-9-]{12,60}$/.test(value);
+}
+
+function published(doc: { publicSlug: string | null; publishedAt: Date | null }): PublishedJson | null {
+    return doc.publicSlug && doc.publishedAt ? { url: publicUrl(doc.publicSlug), slug: doc.publicSlug, since: doc.publishedAt } : null;
+}
+
+const notFound = () => new ErrorResponse(404, 'Doc not found');
+
+async function ownedDoc(docId: string, ownerId: string) {
+    const doc = await prisma.doc.findFirst({
+        where: { id: docId, ...accessibleDocWhere(ownerId) },
+        select: { id: true, title: true, userId: true, trashedAt: true, publicSlug: true, publishedAt: true, user: { select: { name: true } } },
     });
-    return { slug };
+    if (!doc) throw notFound();
+    if (!isDocOwner(doc, ownerId)) throw new ErrorResponse(403, 'Only the owner can change who has this doc');
+    return doc;
 }
 
-/** GET /api/doc/:slug (public): an unexpired doc link with the shared doc's fields, or null. */
-export function findActiveDocShareLink(slug: string, now: Date = new Date(), db: DbClient = prisma): Promise<SharedDocLinkRow | null> {
-    return db.shareLink.findFirst({ where: { slug, ...activeLinkWhere(now) }, include: sharedDocLinkInclude });
-}
+const titleOf = (doc: { title: string }) => doc.title.trim() || 'Untitled';
 
-export type JoinViaShareLinkResult = 'owner' | 'banned' | 'already-collaborator' | 'joined';
+// ─── Publish ───────────────────────────────────────────────────────────
 
 /**
- * POST /api/save/:slug ("save to my profile"): add the user as a collaborator with the link's role.
- * The doc is shared, not copied.
+ * Publish or unpublish (owner only). On: the doc's link (the same one when it is already on). Off:
+ * the link stops working. `updatedAt` stays (raw SQL), so the library's order doesn't move.
  */
-export async function joinDocViaShareLink(
-    slug: string,
-    userId: string,
-    db: DbClient = prisma
-): Promise<{ result: JoinViaShareLinkResult; docId: string }> {
-    const link = await db.shareLink.findFirst({ where: { slug, ...activeLinkWhere(new Date()) } });
-    if (!link) throw new ErrorResponse(404, 'Invalid or expired share link');
+export async function setDocPublished(ownerId: string, docId: string, on: boolean, now: Date = new Date()): Promise<PublishedJson | null> {
+    const doc = await ownedDoc(docId, ownerId);
+    if (!on) {
+        if (doc.publicSlug) await prisma.$executeRaw`UPDATE "Doc" SET "publicSlug" = NULL, "publishedAt" = NULL WHERE "id" = ${docId}`;
+        return null;
+    }
+    if (doc.trashedAt) throw new ErrorResponse(409, 'This doc is in the trash. Restore it to publish it.');
+    if (doc.publicSlug) return published(doc);
+    const slug = newPublicSlug(titleOf(doc));
+    await prisma.$executeRaw`UPDATE "Doc" SET "publicSlug" = ${slug}, "publishedAt" = ${now} WHERE "id" = ${docId} AND "publicSlug" IS NULL`;
+    const after = await prisma.doc.findUniqueOrThrow({ where: { id: docId }, select: { publicSlug: true, publishedAt: true } });
+    return published(after);
+}
 
-    const doc = await db.doc.findUnique({
-        where: { id: link.docId },
+// ─── The public page ───────────────────────────────────────────────────
+
+/**
+ * What the reader may do besides reading: 'anonymous' (not logged in), 'none' (may ask to edit),
+ * 'requested' (asked, waiting), or their own access in the app.
+ */
+export type PublicAccess = 'anonymous' | 'none' | 'requested' | 'owner' | 'editor' | 'viewer';
+
+export interface PublicDocJson {
+    title: string;
+    coverImage: string | null;
+    updatedAt: Date;
+    publishedAt: Date;
+    owner: { name: string };
+    /** The page's Y.Doc (blocks + their boards; ./blocks/publicState.ts), base64. */
+    state: string;
+    access: PublicAccess;
+    /** Only for someone who has the doc in the app ("Open in Recollect"). */
+    docId: string | null;
+}
+
+/** GET /api/public/docs/:slug: a published doc as anyone reads it. A trashed or unpublished doc is 404. */
+export async function readPublishedDoc(slug: string, viewerId: string | null): Promise<PublicDocJson> {
+    if (!isPublicSlug(slug)) throw new ErrorResponse(404, 'This page is not published');
+    const doc = await prisma.doc.findFirst({
+        where: { publicSlug: slug, trashedAt: null },
+        select: { id: true, title: true, coverImage: true, updatedAt: true, publishedAt: true, yjsState: true, userId: true, user: { select: { name: true } } },
+    });
+    if (!doc || !doc.publishedAt) throw new ErrorResponse(404, 'This page is not published');
+
+    // The live doc when an editor has it open (what he sees now), else the stored state.
+    const live = liveDocument(doc.id);
+    const ydoc = live ?? new Y.Doc();
+    let state: Uint8Array;
+    let title = doc.title;
+    let coverImage = doc.coverImage;
+    try {
+        if (!live && doc.yjsState) Y.applyUpdate(ydoc, doc.yjsState);
+        state = publicDocState(ydoc);
+        const meta = ydoc.getMap('metadata');
+        const metaTitle = meta.get('title');
+        if (typeof metaTitle === 'string' && metaTitle.trim()) title = metaTitle;
+        const metaCover = meta.get('coverImage');
+        if (metaCover !== undefined) coverImage = typeof metaCover === 'string' && metaCover ? metaCover : null;
+    } finally {
+        if (!live) ydoc.destroy();
+    }
+
+    return {
+        title: title.trim() || 'Untitled',
+        coverImage,
+        updatedAt: doc.updatedAt,
+        publishedAt: doc.publishedAt,
+        owner: { name: doc.user.name },
+        state: Buffer.from(state).toString('base64'),
+        ...(await readerAccess(doc, viewerId)),
+    };
+}
+
+async function readerAccess(doc: { id: string; userId: string }, viewerId: string | null): Promise<{ access: PublicAccess; docId: string | null }> {
+    if (!viewerId) return { access: 'anonymous', docId: null };
+    if (doc.userId === viewerId) return { access: 'owner', docId: doc.id };
+    const [person, request] = await Promise.all([
+        prisma.docCollaborator.findUnique({ where: { docId_userId: { docId: doc.id, userId: viewerId } }, select: { role: true } }),
+        prisma.accessRequest.findUnique({ where: { userId_docId: { userId: viewerId, docId: doc.id } }, select: { status: true } }),
+    ]);
+    if (person?.role === 'editor') return { access: 'editor', docId: doc.id };
+    if (request?.status === 'pending') return { access: 'requested', docId: person ? doc.id : null };
+    if (person) return { access: 'viewer', docId: doc.id };
+    return { access: 'none', docId: null };
+}
+
+// ─── People ────────────────────────────────────────────────────────────
+
+/** GET /api/docs/:id/people: the owner, the people with their roles, pending requests (owner only), the link. */
+export async function docPeople(docId: string, userId: string): Promise<DocPeopleJson> {
+    const doc = await prisma.doc.findFirst({
+        where: { id: docId, ...accessibleDocWhere(userId) },
         select: {
             id: true,
+            title: true,
             userId: true,
-            collaborators: { where: { userId }, select: { userId: true, role: true } },
-            bannedUsers: { where: { userId }, select: { userId: true } },
+            publicSlug: true,
+            publishedAt: true,
+            user: { select: userSummarySelect },
+            collaborators: { select: docPersonSelect, orderBy: docCollaboratorOrder },
         },
     });
-    if (!doc) throw new ErrorResponse(404, 'Document not found');
-
-    if (isDocOwner(doc, userId)) return { result: 'owner', docId: doc.id };
-    if (isBannedFromDoc(doc, userId)) return { result: 'banned', docId: doc.id };
-    if (findDocCollaborator(doc, userId)) return { result: 'already-collaborator', docId: doc.id };
-
-    try {
-        await db.docCollaborator.create({ data: { docId: doc.id, userId, role: link.role } });
-    } catch (err) {
-        if (isUniqueViolation(err)) return { result: 'already-collaborator', docId: doc.id };
-        throw err;
-    }
-    return { result: 'joined', docId: doc.id };
+    if (!doc) throw notFound();
+    const you = getDocRole(doc, userId);
+    if (!you) throw notFound();
+    const requests =
+        you === 'owner'
+            ? await prisma.accessRequest.findMany({ where: { docId, status: 'pending' }, select: docRequestSelect, orderBy: [{ requestedAt: 'desc' }, { id: 'desc' }] })
+            : [];
+    return {
+        docId: doc.id,
+        title: titleOf(doc),
+        owner: serializeUserSummary(doc.user),
+        you,
+        people: doc.collaborators.map(serializeDocPerson),
+        requests: requests.map(serializeDocRequest),
+        published: published(doc),
+    };
 }
 
-/** Delete expired links, except those with a pending access request. Returns how many were removed. */
-export async function deleteExpiredShareLinks(now: Date = new Date(), db: DbClient = prisma): Promise<number> {
-    const { count } = await db.shareLink.deleteMany({
-        where: { expiresAt: { lte: now }, accessRequests: { none: { status: 'pending' } } },
+function assertRole(role: unknown): ShareRole {
+    if (role !== 'editor' && role !== 'viewer') throw new ErrorResponse(400, 'The role is "viewer" (can view) or "editor" (can edit)');
+    return role;
+}
+
+const ROLE_WORDS: Record<ShareRole, string> = { editor: 'can edit', viewer: 'can view' };
+
+/**
+ * POST /api/docs/:id/people (owner): add someone by their account's email, or change the role of
+ * someone already added (`already`). A pending request of theirs is answered by it.
+ */
+export async function addDocPerson(
+    ownerId: string,
+    docId: string,
+    input: { email: unknown; role: unknown }
+): Promise<{ people: DocPeopleJson; already: boolean; name: string }> {
+    const email = typeof input.email === 'string' ? input.email.trim() : '';
+    if (!/^[^\s@]+@[^\s@]+$/.test(email)) throw new ErrorResponse(400, 'Write their email address');
+    const role = assertRole(input.role ?? 'editor');
+    const doc = await ownedDoc(docId, ownerId);
+    const person = await prisma.user.findFirst({
+        where: { email: { equals: email, mode: 'insensitive' }, isGhost: false },
+        select: { id: true, name: true, email: true },
     });
-    return count;
+    if (!person) throw new LearningHttpError(404, 'NO_ACCOUNT', 'No Recollect account uses that email. They need to sign up first.');
+    if (person.id === ownerId) throw new ErrorResponse(400, 'That is you: you own this doc');
+
+    const before = await prisma.docCollaborator.findUnique({ where: { docId_userId: { docId, userId: person.id } }, select: { role: true } });
+    await prisma.$transaction(async (tx) => {
+        await tx.docCollaborator.upsert({
+            where: { docId_userId: { docId, userId: person.id } },
+            create: { docId, userId: person.id, role },
+            update: { role },
+        });
+        await tx.accessRequest.updateMany({ where: { docId, userId: person.id, status: 'pending' }, data: { status: 'approved', respondedAt: new Date() } });
+    });
+    if (before && before.role !== role) refreshUserAccess(docId, person.id);
+    if (!before) await tellShared(person, doc, ownerId, role);
+    return { people: await docPeople(docId, ownerId), already: !!before, name: person.name };
+}
+
+async function tellShared(person: { id: string; name: string; email: string }, doc: { id: string; title: string; user: { name: string } }, ownerId: string, role: ShareRole) {
+    const title = titleOf(doc);
+    await createNotification({
+        recipientId: person.id,
+        senderId: ownerId,
+        category: 'informational',
+        type: NOTIFY_DOC_SHARED,
+        title: `${doc.user.name} shared "${title}" with you`,
+        message: `You ${ROLE_WORDS[role]}. It is in your Docs, under Shared.`,
+        metadata: { docId: doc.id, url: `/docs/${doc.id}` },
+    });
+    if (isDeliverableEmail(person.email))
+        sendDocSharedEmail(person, doc.user.name, title, doc.id, ROLE_WORDS[role]).catch((err) => console.error('Failed to send the shared-doc email:', err));
+}
+
+/** PATCH /api/docs/:id/people/:userId (owner). Their open editor reconnects with the new role. */
+export async function changeDocPersonRole(ownerId: string, docId: string, personId: string, role: unknown): Promise<DocPeopleJson> {
+    const next = assertRole(role);
+    await ownedDoc(docId, ownerId);
+    const { count } = await prisma.docCollaborator.updateMany({ where: { docId, userId: personId }, data: { role: next } });
+    if (count === 0) throw new ErrorResponse(404, 'They are not on this doc');
+    refreshUserAccess(docId, personId);
+    return docPeople(docId, ownerId);
 }
 
 /**
- * Hourly cleanup of expired share links (Mongo had a TTL index). Meant to be started by
- * src/index.ts next to the other crons, never by the app (tests must not schedule it).
+ * DELETE /api/docs/:id/people/:userId: the owner removes someone, or someone leaves. Their live
+ * connection closes at once. No ban: they may ask again (and he may decline).
  */
-export function startShareLinkCleanupCron() {
-    const task = cron.schedule('17 * * * *', async () => {
-        try {
-            const removed = await deleteExpiredShareLinks();
-            if (removed > 0) console.log(`🧹 Removed ${removed} expired share link(s)`);
-        } catch (err) {
-            console.error('Share link cleanup failed:', err);
-        }
+export async function removeDocPerson(actorId: string, docId: string, personId: string): Promise<DocPeopleJson | { left: true }> {
+    const doc = await prisma.doc.findFirst({
+        where: { id: docId, ...accessibleDocWhere(actorId) },
+        select: { id: true, userId: true, collaborators: { select: { userId: true } } },
     });
-    console.log('✓ Share link cleanup scheduled hourly.');
-    return task;
+    if (!doc) throw notFound();
+    const leaving = personId === actorId;
+    if (!leaving && !isDocOwner(doc, actorId)) throw new ErrorResponse(403, 'Only the owner can remove people');
+    if (personId === doc.userId) throw new ErrorResponse(400, 'The owner stays on the doc');
+    const { count } = await prisma.docCollaborator.deleteMany({ where: { docId, userId: personId } });
+    if (count === 0) throw new ErrorResponse(404, 'They are not on this doc');
+    disconnectUser(docId, personId, Math.max(0, doc.collaborators.length - 1), leaving, actorId);
+    return leaving ? { left: true } : docPeople(docId, actorId);
 }
 
-// ─── Access requests ───────────────────────────────────────────────────
+// ─── Requests ──────────────────────────────────────────────────────────
 
 export interface Requester {
     id: string;
@@ -132,127 +323,157 @@ export interface Requester {
 }
 
 /**
- * POST /api/docs/:id/request-access. Returns 'already-pending' when a pending request exists,
- * otherwise creates the request (or resets an answered one to pending) and emails the owner.
+ * POST /api/public/docs/:slug/request: a logged-in reader of a published doc asks to edit it (a
+ * viewer may ask too). One request per person and doc: asking again reopens an answered one.
  */
-export async function requestDocAccess(
-    docId: string,
-    requester: Requester,
-    shareLinkSlug: unknown
-): Promise<'already-pending' | 'requested'> {
-    // A missing slug must not reach the query: `slug: undefined` would match any link of the doc.
-    if (typeof shareLinkSlug !== 'string' || !shareLinkSlug) {
-        throw new ErrorResponse(404, 'Share link is invalid or expired');
-    }
-    const link = await prisma.shareLink.findFirst({ where: { slug: shareLinkSlug, docId, ...activeLinkWhere(new Date()) } });
-    if (!link) throw new ErrorResponse(404, 'Share link is invalid or expired');
-
-    const doc = await prisma.doc.findUnique({
-        where: { id: docId },
-        select: {
-            id: true,
-            title: true,
-            userId: true,
-            user: { select: userSummarySelect },
-            collaborators: { where: { userId: requester.id }, select: { userId: true, role: true } },
-            bannedUsers: { where: { userId: requester.id }, select: { userId: true } },
-        },
+export async function requestToEdit(slug: string, requester: Requester): Promise<'requested' | 'already-pending'> {
+    if (!isPublicSlug(slug)) throw new ErrorResponse(404, 'This page is not published');
+    const doc = await prisma.doc.findFirst({
+        where: { publicSlug: slug, trashedAt: null },
+        select: { id: true, title: true, userId: true, user: { select: { id: true, name: true, email: true } } },
     });
-    if (!doc) throw new ErrorResponse(404, 'Document not found');
-    if (isDocOwner(doc, requester.id)) throw new ErrorResponse(400, 'You are the owner of this document');
-    if (findDocCollaborator(doc, requester.id)) throw new ErrorResponse(400, 'You are already a collaborator');
-    if (isBannedFromDoc(doc, requester.id)) throw new ErrorResponse(403, 'Your access to this document has been revoked');
+    if (!doc) throw new ErrorResponse(404, 'This page is not published');
+    if (doc.userId === requester.id) throw new ErrorResponse(400, 'You own this doc');
+    const person = await prisma.docCollaborator.findUnique({ where: { docId_userId: { docId: doc.id, userId: requester.id } }, select: { role: true } });
+    if (person?.role === 'editor') throw new ErrorResponse(400, 'You can already edit this doc');
 
-    const key = { userId_docId: { userId: requester.id, docId } };
+    const key = { userId_docId: { userId: requester.id, docId: doc.id } };
     const existing = await prisma.accessRequest.findUnique({ where: key, select: { status: true } });
     if (existing?.status === 'pending') return 'already-pending';
-
     const request = await prisma.accessRequest.upsert({
         where: key,
-        create: { userId: requester.id, docId, shareLinkId: link.id, role: link.role, status: 'pending' },
-        update: { status: 'pending', shareLinkId: link.id, role: link.role, requestedAt: new Date(), respondedAt: null },
+        create: { userId: requester.id, docId: doc.id, role: 'editor', status: 'pending' },
+        update: { status: 'pending', role: 'editor', requestedAt: new Date(), respondedAt: null },
         select: { id: true },
     });
 
-    sendAccessRequestEmail(
-        { name: doc.user.name, email: doc.user.email },
-        { name: requester.name, email: requester.email },
-        doc.title,
-        docId,
-        request.id
-    ).catch((err) => console.error('Failed to send access request email:', err));
-
+    const title = titleOf(doc);
+    await createNotification({
+        recipientId: doc.userId,
+        senderId: requester.id,
+        category: 'informational',
+        type: NOTIFY_DOC_REQUEST,
+        title: `${requester.name} asks to edit "${title}"`,
+        message: `${requester.email} · answer in the doc's Share menu`,
+        metadata: { docId: doc.id, requestId: request.id, url: `/docs/${doc.id}?share=1` },
+    });
+    if (isDeliverableEmail(doc.user.email))
+        sendDocRequestEmail(doc.user, requester, title, doc.id).catch((err) => console.error('Failed to send the request email:', err));
     return 'requested';
 }
 
-async function assertDocOwner(docId: string, ownerId: string, message: string): Promise<{ id: string; title: string }> {
-    const doc = await prisma.doc.findFirst({ where: { id: docId, userId: ownerId }, select: { id: true, title: true } });
-    if (!doc) throw new ErrorResponse(403, message);
-    return doc;
-}
-
-/** GET /api/docs/:id/requests (owner only): pending requests, newest first. */
-export async function listPendingDocAccessRequests(docId: string, ownerId: string): Promise<AccessRequestRow[]> {
-    await assertDocOwner(docId, ownerId, 'Only the document owner can view access requests');
-    return prisma.accessRequest.findMany({
-        where: { docId, status: 'pending' },
-        include: accessRequestInclude,
-        orderBy: [{ requestedAt: 'desc' }, { id: 'desc' }],
-    });
-}
-
-/** GET /api/docs/pending-requests: pending requests on every doc the user owns, newest first. */
-export function listPendingAccessRequestsForOwner(ownerId: string, db: DbClient = prisma): Promise<AccessRequestWithDocRow[]> {
-    return db.accessRequest.findMany({
-        where: { status: 'pending', doc: { userId: ownerId } },
-        include: accessRequestWithDocInclude,
-        orderBy: [{ requestedAt: 'desc' }, { id: 'desc' }],
-    });
-}
-
 /**
- * POST /api/docs/:id/requests/:reqId/approve (owner only): the requester becomes a collaborator
- * with the requested role (an existing collaborator keeps theirs) and any ban on them is lifted.
- * The requester is emailed afterwards.
+ * POST /api/docs/:id/requests/:reqId/approve|decline (owner). Approve: they can edit (a viewer
+ * becomes an editor, reconnected at once), with a notification and an email. Decline: nothing is
+ * sent; they may ask again.
  */
-export async function approveDocAccessRequest(docId: string, requestId: string, owner: { id: string; name: string }): Promise<void> {
-    const doc = await assertDocOwner(docId, owner.id, 'Only the document owner can approve requests');
-
+export async function answerDocRequest(ownerId: string, docId: string, requestId: string, answer: 'approve' | 'decline'): Promise<DocPeopleJson> {
+    const doc = await ownedDoc(docId, ownerId);
     const request = await prisma.accessRequest.findFirst({
         where: { id: requestId, docId, status: 'pending' },
-        include: accessRequestInclude,
+        select: { id: true, userId: true, user: { select: { id: true, name: true, email: true } } },
     });
-    if (!request) throw new ErrorResponse(404, 'Access request not found or already processed');
+    if (!request) throw new ErrorResponse(404, 'This request was answered already');
 
+    const status = answer === 'approve' ? 'approved' : 'rejected';
+    let promoted = false;
     await prisma.$transaction(async (tx) => {
-        // Claim it first, so two approvals of the same request can't both go through.
-        const { count } = await tx.accessRequest.updateMany({
-            where: { id: request.id, status: 'pending' },
-            data: { status: 'approved', respondedAt: new Date() },
+        // Claim it first, so two answers can't both go through.
+        const { count } = await tx.accessRequest.updateMany({ where: { id: request.id, status: 'pending' }, data: { status, respondedAt: new Date() } });
+        if (count === 0) throw new ErrorResponse(404, 'This request was answered already');
+        if (answer === 'approve') {
+            const before = await tx.docCollaborator.findUnique({ where: { docId_userId: { docId, userId: request.userId } }, select: { role: true } });
+            promoted = !!before;
+            await tx.docCollaborator.upsert({
+                where: { docId_userId: { docId, userId: request.userId } },
+                create: { docId, userId: request.userId, role: 'editor' },
+                update: { role: 'editor' },
+            });
+        }
+        // His notification about it is answered too.
+        await tx.notification.updateMany({
+            where: { recipientId: ownerId, type: NOTIFY_DOC_REQUEST, metadata: { path: ['requestId'], equals: request.id } },
+            data: { isRead: true, status: answer === 'approve' ? 'accepted' : 'declined' },
         });
-        if (count === 0) throw new ErrorResponse(404, 'Access request not found or already processed');
-        await tx.docCollaborator.upsert({
-            where: { docId_userId: { docId, userId: request.userId } },
-            create: { docId, userId: request.userId, role: request.role },
-            update: {},
-        });
-        await tx.docBannedUser.deleteMany({ where: { docId, userId: request.userId } });
     });
 
-    sendAccessApprovedEmail(
-        { name: request.user.name, email: request.user.email },
-        owner.name || 'The owner',
-        doc.title,
-        docId
-    ).catch((err) => console.error('Failed to send approval email:', err));
+    if (answer === 'approve') {
+        if (promoted) refreshUserAccess(docId, request.userId);
+        const title = titleOf(doc);
+        await createNotification({
+            recipientId: request.userId,
+            senderId: ownerId,
+            category: 'informational',
+            type: NOTIFY_DOC_APPROVED,
+            title: `You can edit "${title}"`,
+            message: `${doc.user.name} said yes. It is in your Docs, under Shared.`,
+            metadata: { docId, url: `/docs/${docId}` },
+        });
+        if (isDeliverableEmail(request.user.email))
+            sendRequestApprovedEmail(request.user, doc.user.name, title, docId).catch((err) => console.error('Failed to send the approval email:', err));
+    }
+    return docPeople(docId, ownerId);
 }
 
-/** POST /api/docs/:id/requests/:reqId/reject (owner only). */
-export async function rejectDocAccessRequest(docId: string, requestId: string, ownerId: string): Promise<void> {
-    await assertDocOwner(docId, ownerId, 'Only the document owner can reject requests');
-    const { count } = await prisma.accessRequest.updateMany({
-        where: { id: requestId, docId, status: 'pending' },
-        data: { status: 'rejected', respondedAt: new Date() },
-    });
-    if (count === 0) throw new ErrorResponse(404, 'Access request not found or already processed');
+// ─── For agents and the manager (read only; publishing and adding people need his tap) ──────
+
+export interface DocSharingForAgent {
+    _id: string;
+    title: string;
+    published: { url: string; since: string } | null;
+    people: Array<{ name: string; role: ShareRole; addedAt: string }>;
+    requests: Array<{ name: string; requestedAt: string }>;
+}
+
+/** GET /api/agent/docs/:id/sharing (his own docs only). */
+export async function docSharingForAgent(userId: string, docId: string): Promise<DocSharingForAgent> {
+    const doc = await prisma.doc.findFirst({ where: { id: docId, userId }, select: { id: true } });
+    if (!doc) throw notFound();
+    const p = await docPeople(docId, userId);
+    return {
+        _id: p.docId,
+        title: p.title,
+        published: p.published ? { url: p.published.url, since: p.published.since.toISOString() } : null,
+        people: p.people.map((x) => ({ name: x.name, role: x.role, addedAt: x.addedAt.toISOString() })),
+        requests: p.requests.map((r) => ({ name: r.user.name, requestedAt: r.requestedAt.toISOString() })),
+    };
+}
+
+/** The words of a level-3 card (MANAGER_AND_DOCS_PLAN §3.2), checked now: what "Do it" will do. */
+export async function describeShareAction(
+    userId: string,
+    input: { docId: string } & ({ kind: 'publish'; on: boolean } | { kind: 'person'; email: string; role: ShareRole | 'remove' })
+): Promise<string> {
+    const doc = await ownedDoc(input.docId, userId);
+    const title = `"${titleOf(doc)}"`;
+    if (input.kind === 'publish') {
+        if (input.on && doc.trashedAt) throw new ErrorResponse(409, 'This doc is in the trash. Restore it to publish it.');
+        if (input.on) return doc.publicSlug ? `${title} is published already` : `Publish ${title} to the web: anyone with the link can read it (never edit)`;
+        if (!doc.publicSlug) throw new LearningHttpError(400, 'NOTHING_TO_DO', `${title} is not published`);
+        return `Stop publishing ${title}: its link stops working`;
+    }
+    const person = await prisma.user.findFirst({ where: { email: { equals: input.email.trim(), mode: 'insensitive' }, isGhost: false }, select: { id: true, name: true } });
+    if (!person) throw new LearningHttpError(404, 'NO_ACCOUNT', 'No Recollect account uses that email. They need to sign up first.');
+    if (person.id === userId) throw new ErrorResponse(400, 'That is him: he owns this doc');
+    if (input.role === 'remove') return `Remove ${person.name} from ${title}`;
+    return `Share ${title} with ${person.name} (${input.email.trim()}): they ${ROLE_WORDS[input.role]}`;
+}
+
+/** Runs a share action on his tap; says what happened. */
+export async function runShareAction(
+    userId: string,
+    input: { docId: string } & ({ kind: 'publish'; on: boolean } | { kind: 'person'; email: string; role: ShareRole | 'remove' })
+): Promise<string> {
+    if (input.kind === 'publish') {
+        const link = await setDocPublished(userId, input.docId, input.on);
+        return link ? `Published: ${link.url}` : 'Not published any more';
+    }
+    if (input.role === 'remove') {
+        const person = await prisma.user.findFirst({ where: { email: { equals: input.email.trim(), mode: 'insensitive' } }, select: { id: true, name: true } });
+        if (!person) throw new ErrorResponse(404, 'No Recollect account uses that email');
+        await removeDocPerson(userId, input.docId, person.id);
+        return `Removed ${person.name}`;
+    }
+    const { name, already } = await addDocPerson(userId, input.docId, { email: input.email, role: input.role });
+    return already ? `${name} ${ROLE_WORDS[input.role]} now` : `Shared with ${name}: they ${ROLE_WORDS[input.role]}`;
 }

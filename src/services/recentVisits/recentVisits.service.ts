@@ -48,13 +48,18 @@ export async function trackVisit(userId: string, input: TrackVisitInput, now: Da
     }
 }
 
-/** The newest visits first, at most MAX_RECENT_VISITS. */
-export function listRecentVisits(userId: string, db: DbClient = prisma): Promise<RecentVisit[]> {
-    return db.recentVisit.findMany({
+/** The newest visits first, at most MAX_RECENT_VISITS; docs in the trash or deleted are left out. */
+export async function listRecentVisits(userId: string, db: DbClient = prisma): Promise<RecentVisit[]> {
+    const rows = await db.recentVisit.findMany({
         where: { userId },
         orderBy: [{ visitedAt: 'desc' }, { id: 'desc' }],
-        take: MAX_RECENT_VISITS,
+        take: MAX_RECENT_VISITS + 10,
     });
+    const docIds = rows.filter((r) => r.itemType === 'doc').map((r) => r.itemId);
+    const live = docIds.length
+        ? new Set((await db.doc.findMany({ where: { id: { in: docIds }, trashedAt: null }, select: { id: true } })).map((d) => d.id))
+        : new Set<string>();
+    return rows.filter((r) => r.itemType !== 'doc' || live.has(r.itemId)).slice(0, MAX_RECENT_VISITS);
 }
 
 /** Remove the visit of one item (no error when there is none, as before). */

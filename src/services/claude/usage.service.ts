@@ -9,7 +9,8 @@ import { aiCapReached } from './errors';
 import { aiModel } from './client';
 import { costOfCall, roundUsd, type CallUsage, type UsageTotals } from './pricing';
 
-export const DEFAULT_MONTHLY_CAP_USD = 20;
+/** Ramin, 2026-11-14 night: $50 a month (Recall and the Ask AI manager). */
+export const DEFAULT_MONTHLY_CAP_USD = 50;
 export const MAX_MONTHLY_CAP_USD = 1000;
 
 export const AI_FEATURES: readonly AiFeature[] = ['recall_questions', 'recall_grade', 'practice_note', 'weekly_coach'];

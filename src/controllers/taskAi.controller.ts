@@ -1,98 +1,34 @@
+// POST /api/todos/ai/generate: the `@ai` task line (LOOP_COMPLETE_SPEC 4.1). The fields come from the
+// Claude client on Haiku 5.5 (services/tasks/taskAi.service.ts); when that fails the line is kept as a
+// plain task (provider "plain"), so the answer is always 200 for a valid line.
 import { Request, Response, NextFunction } from 'express';
-import { generateAIContent } from '../services/ai/aiOrchestrator';
-import { TASK_AI_SYSTEM_PROMPT } from '../services/ai/taskAiSystemPrompt';
-import { calendarDateIn, DEFAULT_TIME_ZONE } from '../utils/timezone';
+import { requireUser } from '../middlwares/auth';
+import { generateTaskLine } from '../services/tasks/taskAi.service';
 
-// ---------------------------------------------------------------------------
-// Controller: POST /api/todos/ai/generate
-// ---------------------------------------------------------------------------
+const people = (value: unknown): Array<{ name: string; email: string }> =>
+    Array.isArray(value)
+        ? value
+              .filter((m): m is { name?: unknown; email?: unknown } => !!m && typeof m === 'object')
+              .filter((m) => typeof m.email === 'string')
+              .map((m) => ({ name: typeof m.name === 'string' ? m.name : '', email: String(m.email) }))
+        : [];
+
 export const generateTaskContent = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const { prompt, workspaceMembers = [], availableTags = [], preSelectedAssignees = [] } = req.body;
-
-    if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
-      return res.status(400).json({ message: 'A prompt is required.' });
-    }
-
-    // Build context to inject into the prompt.
-    // "Today" is the user's date, not the UTC one (toISOString() was a day behind between 00:00 and
-    // 05:30 IST, so "tomorrow" came back as today). Per-user time zones are not stored yet.
-    const today = calendarDateIn(new Date(), DEFAULT_TIME_ZONE);
-    const membersContext = workspaceMembers.length > 0
-      ? `WORKSPACE_MEMBERS:\n${workspaceMembers.map((m: any) => `- ${m.name} (${m.email})`).join('\n')}`
-      : 'WORKSPACE_MEMBERS: none (personal task, no assignees available)';
-
-    const tagsContext = availableTags.length > 0
-      ? `AVAILABLE_TAGS: ${availableTags.join(', ')}`
-      : '';
-
-    const assigneeContext = preSelectedAssignees.length > 0
-      ? `PRE-SELECTED ASSIGNEES (user explicitly @-mentioned these people):\n${preSelectedAssignees.map((a: any) => `- ${a.name} (${a.email})`).join('\n')}`
-      : '';
-
-    const fullPrompt = `TODAY'S DATE: ${today}\n${membersContext}\n${tagsContext}\n${assigneeContext}\n\nUser request: ${prompt.trim()}`;
-
-    console.log(`🤖 Task AI Generation — Prompt: "${prompt.trim().slice(0, 120)}..."`);
-
-    const { raw, provider } = await generateAIContent(fullPrompt, TASK_AI_SYSTEM_PROMPT);
-
-    if (!raw) {
-      return res.status(502).json({ message: 'AI returned an empty response.' });
-    }
-
-    // Parse JSON response
-    let taskData;
     try {
-      // Strip markdown code fences if AI wraps them
-      const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
-      taskData = JSON.parse(cleaned);
-    } catch (parseErr) {
-      console.error('❌ Task AI returned invalid JSON:', raw.slice(0, 500));
-      return res.status(502).json({ message: 'AI returned invalid JSON. Try again.' });
+        const { prompt, workspaceMembers, availableTags, preSelectedAssignees } = req.body ?? {};
+        if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
+            return res.status(400).json({ message: 'A prompt is required.' });
+        }
+        const user = requireUser(req);
+        const out = await generateTaskLine(user.id, {
+            prompt,
+            workspaceMembers: people(workspaceMembers),
+            availableTags: Array.isArray(availableTags) ? availableTags.filter((t): t is string => typeof t === 'string') : [],
+            preSelectedAssignees: people(preSelectedAssignees),
+        });
+        const { provider, ...data } = out;
+        return res.status(200).json({ success: true, data, provider });
+    } catch (err) {
+        next(err);
     }
-
-    // Validate required fields
-    if (!taskData.title || typeof taskData.title !== 'string') {
-      taskData.title = prompt.trim().slice(0, 80);
-    }
-
-    // Normalize priority
-    const validPriorities = ['low', 'normal', 'high', 'urgent'];
-    if (!validPriorities.includes(taskData.priority)) {
-      taskData.priority = 'normal';
-    }
-
-    // Ensure arrays
-    if (!Array.isArray(taskData.tags)) taskData.tags = [];
-    if (!Array.isArray(taskData.assignees)) taskData.assignees = [];
-
-    // Validate assignee emails against workspace members
-    if (workspaceMembers.length > 0) {
-      const validEmails = new Set(workspaceMembers.map((m: any) => m.email.toLowerCase()));
-      taskData.assignees = taskData.assignees.filter((email: string) =>
-        validEmails.has(email.toLowerCase())
-      );
-    } else {
-      taskData.assignees = [];
-    }
-
-    console.log(`✅ Task AI generated via ${provider}: "${taskData.title}"`);
-
-    return res.status(200).json({
-      success: true,
-      data: taskData,
-      provider,
-    });
-  } catch (err: any) {
-    console.error('❌ Task AI Generation Error:', err.message);
-
-    if (err.status === 429 || (err.message && err.message.includes('rate limit'))) {
-      return res.status(429).json({ message: 'Rate limited. Please wait a moment and try again.' });
-    }
-    if (err.message && err.message.includes('All AI providers failed')) {
-      return res.status(503).json({ message: 'All AI providers are currently unavailable. Please try again later.' });
-    }
-
-    next(err);
-  }
 };

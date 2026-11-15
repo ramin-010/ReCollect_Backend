@@ -646,6 +646,18 @@ describe('POST /api/todos/:id/unassign', () => {
         expect(res.body).toEqual({ message: 'Task not found or you do not own it' });
     });
 
+    it('leaves a workspace task alone (its assignees are the workspace\'s): 404, nothing changed', async () => {
+        const me = await createTestUser();
+        const a = await createTestUser();
+        const todo = await todoRow(me.id, { visibility: 'workspace', assignedAt: new Date() });
+        await prisma.todoAssignee.create({ data: { todoId: todo.id, userId: a.id } });
+        const res = await request(app).post(`/api/todos/${todo.id}/unassign`).set('Cookie', authCookie(me)).send({});
+        expect(res.status).toBe(404);
+        const after = await prisma.todo.findUniqueOrThrow({ where: { id: todo.id }, include: { assignees: true } });
+        expect(after.visibility).toBe('workspace');
+        expect(after.assignees).toHaveLength(1);
+    });
+
     it('removes one assignee by email, then all; with none left the task is private again', async () => {
         const me = await createTestUser();
         const a = await createTestUser({ email: `una-${Date.now()}@example.test` });

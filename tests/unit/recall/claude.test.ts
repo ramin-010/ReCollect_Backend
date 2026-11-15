@@ -75,7 +75,7 @@ describe('aiErrorFrom (SDK errors → the app’s answer)', () => {
 
 describe('the monthly cap', () => {
     it('stops new calls once spend reaches the cap ($0 = no calls)', () => {
-        expect(DEFAULT_MONTHLY_CAP_USD).toBe(20);
+        expect(DEFAULT_MONTHLY_CAP_USD).toBe(50);
         expect(isOverCap(19.999999, 20)).toBe(false);
         expect(isOverCap(20, 20)).toBe(true);
         expect(isOverCap(25, 20)).toBe(true);

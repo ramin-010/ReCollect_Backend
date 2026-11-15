@@ -276,3 +276,28 @@ describe('GET /api/ai/coach', () => {
         expect(fake.calls).toHaveLength(0);
     });
 });
+
+describe('the coach on the record (LOOP_COMPLETE_SPEC 1.7)', () => {
+    it('numbers the evidence does not hold: a plain note by code instead (still billed); its focus lines wait under Suggested', async () => {
+        const { user } = await busyWeek();
+        fake.push(fakeMessage(sampleCoach({ strong: 'You finished 60% of your reviews and 9 recall answers.' })));
+        const res = await coach(user);
+        expect(res.status).toBe(201);
+        const stored = await prisma.coachNote.findFirstOrThrow({ where: { userId: user.id } });
+        expect(stored.model).toMatch(/^plain \(checked\): /);
+        expect(res.body.data.lines.strong).not.toContain('60%');
+        expect(res.body.data.lines.strong).toMatch(/This week: /);
+        const evidence = sentEvidence();
+        expect(evidence.record).toMatchObject({ sessions: 0, weakSpots: { open: 0, clearedInWeek: 0 } });
+        const suggestions = await prisma.suggestion.findMany({ where: { userId: user.id }, orderBy: { createdAt: 'asc' } });
+        expect(suggestions).toHaveLength(3);
+        expect(suggestions.every((s) => s.proposedBy === 'coach' && s.kind === 'focus_line' && s.batch === `coach:${stored.id}`.slice(0, 40))).toBe(true);
+    });
+
+    it('a note whose numbers are all in the evidence is kept as written', async () => {
+        const { user } = await busyWeek();
+        const res = await coach(user);
+        expect(res.body.data.lines.strong).toBe(sampleCoach().strong);
+        expect((await prisma.coachNote.findFirstOrThrow({ where: { userId: user.id } })).model).toBe('claude-opus-5-5');
+    });
+});

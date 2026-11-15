@@ -2,6 +2,7 @@ import { Server } from '@hocuspocus/server';
 import jwt from 'jsonwebtoken';
 import dotenv from 'dotenv';
 import * as Y from 'yjs';
+import { allowedOrigins } from '../config/origins';
 
 dotenv.config();
 
@@ -15,7 +16,8 @@ export interface CollabUser {
 
 export interface CollabDocument {
   id: string;
-  yjsState: string | undefined;
+  /** The stored Yjs state (bytes, D3). */
+  yjsState: Uint8Array | undefined;
   }
 
 /**
@@ -27,9 +29,9 @@ export type CollabAccess = 'edit' | 'view';
 
 export interface DocumentHandler {
   /** null = may not connect. */
-  authorize(userId: string | null, docId: string, shareToken?: string): Promise<CollabAccess | null>;
+  authorize(userId: string | null, docId: string): Promise<CollabAccess | null>;
   load(docId: string): Promise<CollabDocument | null>;
-  save(docId: string, yjsState: string): Promise<void>;
+  save(docId: string, yjsState: Uint8Array): Promise<void>;
   cleanup?(docId: string): Promise<void>;
   /**
    * Fix the loaded state before anyone sees it (blocks the editor no longer has). Returns how
@@ -59,6 +61,35 @@ function parseDocumentName(documentName: string): { prefix: string; id: string }
 
 
 const activeConnections = new Map<string, any>();
+
+/** Close code for "your rights on this doc changed": the editor reconnects at once, with the new rights. */
+export const CLOSE_CODE_ACCESS_CHANGED = 4005;
+
+/**
+ * D6 (MANAGER_AND_DOCS_PLAN §1): someone's role on a doc changed, so their live connections close
+ * (no message to the others) and their editor reconnects; Hocuspocus authorizes it again with the
+ * new role, so a demoted editor can't keep writing. Returns how many connections were closed.
+ */
+export function refreshUserAccess(docId: string, userId: string): number {
+  const documentName = `doc_${docId}`;
+  let closed = 0;
+  try {
+    const server = hocuspocusServer as any;
+    const documents = server.hocuspocus?.documents instanceof Map ? server.hocuspocus.documents : server.documents;
+    const doc = documents instanceof Map ? documents.get(documentName) : undefined;
+    if (doc?.connections instanceof Map) {
+      for (const [socket, value] of doc.connections) {
+        if (value?.connection?.context?.user?.id !== userId) continue;
+        if (typeof socket.close === 'function') socket.close(CLOSE_CODE_ACCESS_CHANGED, 'ACCESS_CHANGED');
+        else if (typeof socket.terminate === 'function') socket.terminate();
+        closed += 1;
+      }
+    }
+  } catch (err) {
+    console.error(`[Collab] Error refreshing ${userId}'s access to ${docId}:`, err);
+  }
+  return closed;
+}
 
 /**
  * Force disconnect a specific user from a document.
@@ -177,15 +208,8 @@ export const hocuspocusServer = new Server({
     // A missing Origin means a non-browser client (not vulnerable to CSWSH).
     if (request) {
       const origin = request.headers?.origin;
-      const allowedOrigins = [
-        'http://localhost:3005',
-        'http://localhost:5173',
-        'http://192.168.40.58:3005',
-        'https://re-collect.in',
-        'https://www.re-collect.in',
-      ];
-
-      if (origin && !allowedOrigins.includes(origin)) {
+      // The same list as the API's CORS (src/config/origins.ts: ALLOWED_ORIGINS, else the defaults).
+      if (origin && !allowedOrigins().includes(origin)) {
         throw new Error(`Origin not allowed: ${origin}`);
       }
     }
@@ -198,11 +222,6 @@ export const hocuspocusServer = new Server({
     const handler = documentHandlers.get(parsed.prefix);
     if (!handler) {
       throw new Error(`No handler registered for: ${parsed.prefix}`);
-    }
-    let shareToken: string | undefined;
-    if (request) {
-      const url = new URL(request.url || '', `http://${request.headers?.host || 'localhost'}`);
-      shareToken = url.searchParams.get('shareToken') || undefined;
     }
     let authToken = token;
     if (!authToken && request && (request as any).headers?.cookie) {
@@ -217,7 +236,7 @@ export const hocuspocusServer = new Server({
       user = await authenticateUser(authToken);
     }
     if (user) {
-      const access = await handler.authorize(user.id, parsed.id, shareToken);
+      const access = await handler.authorize(user.id, parsed.id);
       if (!access) {
         throw new Error('Not authorized to edit this document');
       }
@@ -248,13 +267,10 @@ export const hocuspocusServer = new Server({
 
       const doc = await handler.load(parsed.id);
       
-      if (doc?.yjsState) {
-        const state = Buffer.from(doc.yjsState, 'base64');
-        Y.applyUpdate(document, state);
-      }
+      if (doc?.yjsState) Y.applyUpdate(document, doc.yjsState);
       // Changes made while loading are not stored by Hocuspocus, so a repair is saved here.
       if (handler.repair && handler.repair(parsed.id, document) > 0) {
-        await handler.save(parsed.id, Buffer.from(Y.encodeStateAsUpdate(document)).toString('base64'));
+        await handler.save(parsed.id, Y.encodeStateAsUpdate(document));
       }
     } catch (error) {
       console.error(`[Hocuspocus] ❌ Error loading ${parsed.prefix}:${parsed.id}:`, error);
@@ -271,10 +287,7 @@ export const hocuspocusServer = new Server({
     if (!handler) return;
 
     try {
-      const state = Y.encodeStateAsUpdate(document);
-      const stateBase64 = Buffer.from(state).toString('base64');
-      
-      await handler.save(parsed.id, stateBase64);
+      await handler.save(parsed.id, Y.encodeStateAsUpdate(document));
     } catch (error) {
       console.error(`[Collab] Error saving ${parsed.prefix}:${parsed.id}:`, error);
     }

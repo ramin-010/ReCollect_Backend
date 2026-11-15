@@ -5,7 +5,8 @@
 // seen). Slots that the rollover would heal are SHOWN as resolved here (excluded from triage), not
 // written. All queries run in parallel on the root client (never in a transaction).
 //
-// Daily loop v2 adds `plan` (the budgeted Today), `focus`, `goals` and `stats.rhythm`. With the
+// Daily loop v2 adds `plan` (the budgeted Today), `focus`, `goals` and `stats.rhythm`; the sync
+// spine adds `next` (up to 3 paths' next topics, goal-linked first: path.service nextUpOf). With the
 // routine off (User.routineEnabled, the default) `schedule`, `triage` and `todayDebrief` are null
 // and no slot is loaded.
 import { prisma } from '../../db/prisma';
@@ -52,6 +53,8 @@ import { goalInclude, todayGoalsJson } from './goals.service';
 import { computePlan, hasRevisionHistory, needsHistoryCheck, planRevisionWhere, serializePlanItem, toPlanRow, type PlanRow } from './plan.service';
 import { itemSource, revisionItemInclude, type RevisionWithItem } from './revisions.service';
 import { needsEnsure } from './rollover.service';
+import { loadNextUpRows, nextUpOf } from './path.service';
+import { sessionDays } from './sessions.service';
 
 export const INBOX_LIMIT = 10;
 
@@ -90,6 +93,8 @@ export async function getToday(userId: string, now: Date = new Date()) {
         goalRows,
         rhythmRows,
         hasHistory,
+        nextRows,
+        workDays,
     ] = await Promise.all([
         // Pending revisions due by today + revisions completed today.
         prisma.revision.findMany({
@@ -127,14 +132,15 @@ export async function getToday(userId: string, now: Date = new Date()) {
             include: todoInclude,
             orderBy: [{ dueDate: { sort: 'asc', nulls: 'last' } }, { createdAt: 'asc' }],
         }),
-        // Inbox: no subject, no topic, no pending revision. Pinned first, then newest.
+        // Inbox: every capture not on a revision schedule (filed ones carry their subject), so nothing
+        // saved with Ctrl K is out of sight. Pinned first, then newest.
         prisma.capture.findMany({
-            where: { userId, subjectId: null, topicId: null, revisions: { none: { status: 'pending' } } },
+            where: { userId, revisions: { none: { status: 'pending' } } },
             include: { subject: { select: subjectRefSelect } },
             orderBy: [{ isPinned: 'desc' }, { createdAt: 'desc' }],
             take: INBOX_LIMIT,
         }),
-        prisma.capture.count({ where: { userId, subjectId: null, topicId: null, revisions: { none: { status: 'pending' } } } }),
+        prisma.capture.count({ where: { userId, revisions: { none: { status: 'pending' } } } }),
         prisma.quickNote.findMany({ where: { userId }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }] }),
         reviewDay
             ? prisma.todo.findMany({
@@ -154,6 +160,10 @@ export async function getToday(userId: string, now: Date = new Date()) {
         }),
         // Comeback mode for a user never seen before today: did they ever revise before?
         needsHistoryCheck(user, today) ? hasRevisionHistory(userId, today, tz) : Promise.resolve(false),
+        // Next up: the paths with something planned or in progress (SYNC_SPINE_SPEC 1.1).
+        loadNextUpRows(userId),
+        // Rhythm: a day with a logged session is an active day (SYNC_SPINE_SPEC 1.2).
+        sessionDays(userId, rhythmFrom, today),
     ]);
 
     // ── Revisions (back-compat buckets) ──
@@ -193,6 +203,7 @@ export async function getToday(userId: string, now: Date = new Date()) {
         tz,
         completions: rhythmRows.map((r) => r.completedAt).filter((d): d is Date => d !== null),
         focusDoneDays: focusRows.filter((f) => f.done).map((f) => fromDbDay(f.day)),
+        sessionDays: workDays,
     });
 
     // ── Schedule + triage (routine only; healed slots shown as resolved, nothing written) ──
@@ -257,6 +268,7 @@ export async function getToday(userId: string, now: Date = new Date()) {
         plan,
         focus: focusForToday(focusRows, today),
         goals: todayGoalsJson(goalRows, ctx),
+        next: nextUpOf(nextRows, goalSubjectIds),
         schedule,
         triage,
         todayDebrief,

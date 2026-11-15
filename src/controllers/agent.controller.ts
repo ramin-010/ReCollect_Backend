@@ -4,6 +4,8 @@
 import { z } from 'zod';
 import { markdownToDocJson } from '../services/docs/markdown/docMarkdown';
 import { resolveDiagrams } from '../services/docs/diagram/resolve';
+import { markdownToBlocks as markdownToEditorBlocks } from '../services/docs/blocks/markdown';
+import { renameCanvases } from '../services/agent/agentBlocks.service';
 import { requireUser } from '../middlwares/auth';
 import { agentActor } from '../services/agent/agentEditLog';
 import {
@@ -13,7 +15,10 @@ import {
     createDocForAgent,
     readDocForAgent,
     replaceSectionForAgent,
+    restoreDocForAgent,
     searchDocsForAgent,
+    trashDocForAgent,
+    updateDocForAgent,
 } from '../services/agent/agentDocs.service';
 import { EDITS_LIMIT_MAX, listAgentEdits, markAgentEditsSeen, undoAgentEdit } from '../services/agent/agentEdits.service';
 import { previewCanvasForAgent, updateCanvasForAgent } from '../services/agent/agentCanvas.service';
@@ -37,6 +42,16 @@ export const searchDocs = handler(async (req, res) => {
     ok(res, await searchDocsForAgent(requireUser(req).id, { query, limit }));
 });
 
+/** POST /api/agent/docs/:id/trash → { id, title, trashedAt, editId } (editId null when it was already there) */
+export const trashDoc = handler(async (req, res) => {
+    ok(res, await trashDocForAgent(agentActor(req), param(req, 'id')));
+});
+
+/** POST /api/agent/docs/:id/restore → { id, title, trashedAt: null, editId } */
+export const restoreDoc = handler(async (req, res) => {
+    ok(res, await restoreDocForAgent(agentActor(req), param(req, 'id')));
+});
+
 /** GET /api/agent/docs/:id → { id, title, markdown, subject, topicId, updatedAt, canEdit } */
 export const readDoc = handler(async (req, res) => {
     ok(res, await readDocForAgent(requireUser(req).id, param(req, 'id')));
@@ -46,13 +61,29 @@ const createSchema = z.object({
     title: z.string().trim().min(1, 'A doc needs a title').max(AGENT_TITLE_MAX),
     markdown: markdown.default(''),
     subjectId: zId.optional(),
+    topicId: zId.optional(),
     revise: z.boolean().optional(),
 });
 
-/** POST /api/agent/docs {title, markdown, subjectId?, revise?} → 201 { id, title, subject, topicId, nextRevision, editId, canvases? } */
+/** POST /api/agent/docs {title, markdown, subjectId?, topicId?, revise?} → 201 { id, title, subject, topicId, nextRevision, topicStatus?, editId, canvases? } */
 export const createDoc = handler(async (req, res) => {
     const input = parse(createSchema, req.body);
     ok(res, await createDocForAgent(agentActor(req), input), 201);
+});
+
+const updateDocSchema = z
+    .object({
+        title: z.string().trim().min(1, 'title cannot be empty').max(AGENT_TITLE_MAX).optional(),
+        subjectId: zId.optional(),
+        topicId: zId.optional(),
+    })
+    .strict()
+    .refine((v) => v.title !== undefined || v.subjectId !== undefined || v.topicId !== undefined, { message: 'Send title, subjectId or topicId' });
+
+/** PATCH /api/agent/docs/:id {title?, subjectId?, topicId?} → { id, title, subject, topicId, changes, editId } (editId null: nothing changed) */
+export const updateDoc = handler(async (req, res) => {
+    const input = parse(updateDocSchema, req.body);
+    ok(res, await updateDocForAgent(agentActor(req), param(req, 'id'), input));
 });
 
 const appendSchema = z.object({ markdown: markdown.min(1, 'markdown is empty') });
@@ -144,10 +175,20 @@ export const undoEdit = handler(async (req, res) => {
  * using the same dialect agents write (callouts, toggles, fenced code, mermaid, canvases: their
  * diagrams laid out, each board in its block's data for the browser to absorb). Cookie only.
  */
-const markdownBody = z.object({ markdown: z.string().max(200_000) });
+const markdownBody = z.object({ markdown: z.string().max(200_000), as: z.enum(['tiptap', 'blocks']).optional() });
+/**
+ * POST /api/agent/markdown { markdown, as? } (cookie only): pasted Markdown in the server's dialect.
+ * as "blocks" (the new editor): { blocks, boards } (canvases with fresh ids, their boards by id);
+ * else the old editor's JSON: { content }.
+ */
 export const markdownToBlocksHandler = handler(async (req, res) => {
     requireUser(req);
-    const { markdown } = parse(markdownBody, req.body);
+    const { markdown, as } = parse(markdownBody, req.body);
+    if (as === 'blocks') {
+        const parsed = await markdownToEditorBlocks(markdown, {}, { checkMermaid: false });
+        const { blocks, boards } = renameCanvases(parsed.blocks, parsed.boards, new Set());
+        return ok(res, { blocks, boards: Object.fromEntries(boards) });
+    }
     const json = markdownToDocJson(markdown);
     await resolveDiagrams(json, { checkMermaid: false });
     ok(res, { content: json.content ?? [] });

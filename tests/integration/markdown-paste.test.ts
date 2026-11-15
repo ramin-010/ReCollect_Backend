@@ -75,6 +75,18 @@ describe('POST /api/agent/markdown', () => {
         expect(res.body.data.content[1]).toMatchObject({ type: 'codeBlock', attrs: { language: 'mermaid' } });
     });
 
+    it('as blocks (the new editor): our blocks, a canvas with a fresh id and its board beside it', async () => {
+        const user = await createLearner();
+        const markdown = ['## Idea', '', '> [!TIP]', '> Keep it in Redis.', '', '```mermaid', 'flowchart LR', '  A --> B', '```', '', '```canvas', 'flowchart LR', '  a[Client] --> b[Gateway]', '```'].join('\n');
+        const res = await api(user).post('/api/agent/markdown', { markdown, as: 'blocks' });
+        expect(res.status).toBe(200);
+        expect(res.body.data.blocks.map((b: { type: string }) => b.type)).toEqual(['heading', 'callout', 'diagram', 'canvas']);
+        const canvasId = res.body.data.blocks[3].props.canvasId as string;
+        expect(canvasId).toMatch(/^cv_/);
+        expect(Object.keys(res.body.data.boards)).toEqual([canvasId]);
+        expect(res.body.data.boards[canvasId].nodes.map((n: { text: string }) => n.text).sort()).toEqual(['Client', 'Gateway']);
+    });
+
     it('refuses access tokens and oversize input', async () => {
         const user = await createLearner();
         const { token } = await createTestToken(user);

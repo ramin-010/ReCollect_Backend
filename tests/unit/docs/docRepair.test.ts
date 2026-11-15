@@ -168,7 +168,7 @@ describe('read paths and writes', () => {
         expect(() => docJsonToYjsState(bad)).toThrow(ErrorResponse);
         expect(() => docJsonToYjsState(bad)).toThrow(/Invalid doc content/);
         const good = { type: 'doc', content: [{ type: 'bulletList', content: [{ type: 'listItem', content: [{ type: 'paragraph' }] }] }] };
-        expect(typeof docJsonToYjsState(good)).toBe('string');
+        expect(docJsonToYjsState(good)).toBeInstanceOf(Uint8Array);
     });
 
     it('an agent Undo that brings back a stored columns row brings it back flattened', () => {

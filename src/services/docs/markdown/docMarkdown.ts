@@ -2,13 +2,13 @@
 //
 //   markdownToDocJson(md)      Markdown → TipTap JSON that validates against the doc schema (400 if not)
 //   docJsonToMarkdown(json)    TipTap JSON (editor or Yjs) → Markdown
-//   yjsStateToMarkdown(b64)    Doc.yjsState (Base64) → Markdown
+//   yjsStateToMarkdown(state)  Doc.yjsState (bytes) → Markdown
 //   docJsonToYjsState(json)    TipTap JSON → Doc.yjsState (re-exported from ../docContent)
 //   docJsonToYElements(json)   TipTap JSON → loose Y.XmlElements to insert into a live doc
 //
 // Parsing and printing are @tiptap/markdown's MarkdownManager over the doc schema's extensions
 // (../docSchema.ts), with its own `marked` instance. The dialect:
-//   # / ## / ###          headings (#### and deeper become ###)
+//   # / ## / ###          headings (#### and deeper become ###; for the new editor's blocks, up to ######)
 //   **b** *i* ~~s~~ `c`   bold, italic, strike, code;  <u>u</u> underline;  ==h== highlight
 //   [text](url)           link (only http(s), mailto, tel, relative and #anchor links are kept)
 //   ![alt](src)           image (a resizableImage block)
@@ -34,12 +34,19 @@ import { prosemirrorToYDoc } from 'y-prosemirror';
 import ErrorResponse from '../../../utils/errorResponse';
 import { DOC_EDITOR_EXTENSIONS, DOC_YJS_FRAGMENT, EMBED_LINK_TEXT, getDocSchema } from '../docSchema';
 import { docJsonToYjsState, yjsStateToDocJson } from '../docContent';
+import type { DocState } from '../docState';
 import { CANVAS_DEFAULT_HEIGHT, PENDING_DIAGRAM, isCanvasFenceLanguage, isJsonCanvasText, parseCanvasFence } from '../canvas';
 import { parseDiagram } from '../diagram/parse';
 
 export { docJsonToYjsState };
 
 const MAX_HEADING_LEVEL = 3;
+/**
+ * The deepest heading this parse keeps: the old editor's 3, or 6 when the JSON becomes the new
+ * editor's blocks (`markdownToDocJson(md, { maxHeading: 6 })`). Parsing is synchronous, so a
+ * module variable set around one parse is safe.
+ */
+let headingCap = MAX_HEADING_LEVEL;
 
 /** A GFM table has no node in the editor: keep its Markdown, verbatim, in a code block. */
 const TableAsCode = Extension.create({
@@ -58,7 +65,7 @@ const DeepHeadings = Extension.create({
     priority: 1000, // before Heading
     markdownTokenName: 'heading',
     parseMarkdown: (token, h) =>
-        h.createNode('heading', { level: Math.min(Math.max(Number(token['depth']) || 1, 1), MAX_HEADING_LEVEL) }, h.parseInline(token.tokens ?? [])),
+        h.createNode('heading', { level: Math.min(Math.max(Number(token['depth']) || 1, 1), headingCap) }, h.parseInline(token.tokens ?? [])),
     renderMarkdown: (node, h) => {
         const level = Math.min(Math.max(Number(node.attrs?.['level']) || 1, 1), 6);
         return node.content ? `${'#'.repeat(level)} ${h.renderChildren(node.content)}` : '';
@@ -157,7 +164,7 @@ function asEmbed(node: JSONContent): JSONContent | null {
 
 /**
  * Make parsed content fit the schema: block nodes (images) are lifted out of paragraphs, heading
- * levels are capped at 3, soft line breaks become spaces, empty text goes, list items start with a
+ * levels are capped (`headingCap`), soft line breaks become spaces, empty text goes, list items start with a
  * paragraph and containers get at least one block.
  */
 function normalizeContent(nodes: readonly JSONContent[] | undefined, parentType: string, n: Normalizer): JSONContent[] {
@@ -191,7 +198,7 @@ function normalizeContent(nodes: readonly JSONContent[] | undefined, parentType:
         const copy: JSONContent = { ...node };
         if (node.type === 'heading') {
             const level = Number(node.attrs?.['level']) || 1;
-            copy.attrs = { ...node.attrs, level: Math.min(Math.max(level, 1), MAX_HEADING_LEVEL) };
+            copy.attrs = { ...node.attrs, level: Math.min(Math.max(level, 1), headingCap) };
         }
         if (node.type === 'detailsSummary') {
             // text* only: a summary keeps its words, not inline nodes.
@@ -244,7 +251,17 @@ function normalizeContent(nodes: readonly JSONContent[] | undefined, parentType:
  * block carries its board in attrs.data (absorb it before it reaches a Y.Doc), or, from the text
  * form, a diagram that `await resolveDiagrams(json)` (../diagram/resolve.ts) must lay out first.
  */
-export function markdownToDocJson(markdown: string): JSONContent {
+export function markdownToDocJson(markdown: string, options: { maxHeading?: number } = {}): JSONContent {
+    const before = headingCap;
+    headingCap = Math.min(Math.max(options.maxHeading ?? MAX_HEADING_LEVEL, 1), 6);
+    try {
+        return parseToDocJson(markdown);
+    } finally {
+        headingCap = before;
+    }
+}
+
+function parseToDocJson(markdown: string): JSONContent {
     let parsed: JSONContent;
     try {
         if (typeof markdown !== 'string') throw new Error('Markdown must be a string');
@@ -304,9 +321,9 @@ export function docJsonToMarkdown(json: unknown): string {
     return markdownManager().serialize({ type: 'doc', content: printable(doc.content) }).replace(/\s+$/, '');
 }
 
-/** Doc.yjsState (Base64) → Markdown. */
-export function yjsStateToMarkdown(yjsStateBase64: string): string {
-    return docJsonToMarkdown(yjsStateToDocJson(yjsStateBase64));
+/** Doc.yjsState (bytes, or Base64) → Markdown. */
+export function yjsStateToMarkdown(state: DocState): string {
+    return docJsonToMarkdown(yjsStateToDocJson(state));
 }
 
 // ─── JSON → Yjs elements ───────────────────────────────────────────────

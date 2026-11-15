@@ -10,18 +10,22 @@ Needs Node 22+. No MongoDB or Redis.
 ```bash
 npm install                # also runs `prisma generate`
 npm run db:start           # local Postgres 17 on 127.0.0.1:5433 (data in .devdb/); keep it running
-npm run db:migrate         # apply prisma/migrations to recollect_dev
-npm run db:seed            # dev login: dev@recollect.local / devpass123 (local databases only)
+npm run db:deploy          # apply prisma/migrations (new migrations: docs/MIGRATION_CONVENTIONS.md, never `migrate dev`)
+npm run db:seed            # the QA login qa@recollect.local / qapass123 with a sample (local databases only)
 npm run dev                # API on $PORT, live collaboration on $COLLAB_PORT (default 1234)
 ```
 
 `backend/.env` needs at least `DATABASE_URL` (e.g. `postgresql://postgres:postgres@127.0.0.1:5433/recollect_dev`),
 `TEST_DATABASE_URL` (`…/recollect_test`), `PORT`, `JWT_SECRET`, `JWT_EXPIRE`, `JWT_COOKIE_EXPIRE` and `FRONTEND_URL`.
-Email (`EMAIL_*`), Cloudinary (`CLOUDINARY_*`), Google login (`GOOGLE_*`) and the AI keys (`GROQ_API_KEY`,
-`GEMINI_API_KEY`, `COHERE_API_KEY`) are only needed for those features.
-Recall mode (the Claude API) needs `CLAUDE_API_KEY` (without it `/api/recall` and `/api/ai` answer 503
-`AI_NOT_CONFIGURED`); optional: `RECALL_MODEL` (default `claude-opus-5-5`) and `RECALL_NIGHTLY_BATCH=off` to stop the
-02:30 question batch.
+Email (`EMAIL_*`), Cloudinary (`CLOUDINARY_*`) and Google login (`GOOGLE_*`) are only needed for those features.
+The app's AI (Recall, the practice note, the coach, the `@ai` task line) is the Claude API: `CLAUDE_API_KEY` (without
+it `/api/recall` and `/api/ai` answer 503 `AI_NOT_CONFIGURED`, and the task line keeps the text as a plain task);
+optional: `RECALL_MODEL` (default `claude-opus-5-5`), `TASK_AI_MODEL` (default `claude-haiku-5-5`) and
+`RECALL_NIGHTLY_BATCH=off` to stop the 02:30 question batch.
+
+**Doc search** runs on Postgres full-text (`src/services/docs/docSearch.service.ts`). A doc's words (`Doc.searchText`)
+are written by the search itself and at the server's start; `npm run search:reindex` writes any missing ones now, and
+`npm run search:reindex -- --all` writes every doc's again (after a change to how words are read from a doc).
 
 On a server: `npm run build`, `npm run db:deploy` (migrate without prompts), then `pm2 reload ecosystem.config.js --env production`.
 

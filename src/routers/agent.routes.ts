@@ -7,6 +7,9 @@
 import express from 'express';
 import { authOnce, cookieOnly, requireScope } from '../middlwares/scopes';
 import { idempotency } from '../middlwares/idempotency';
+import { requireUser } from '../middlwares/auth';
+import { docSharingForAgent } from '../services/docs/docSharing.service';
+import { handler, ok, param } from '../controllers/learning/common';
 import {
     appendToDoc,
     createDoc,
@@ -16,10 +19,14 @@ import {
     previewCanvas,
     readDoc,
     replaceSection,
+    restoreDoc,
     searchDocs,
+    trashDoc,
     undoEdit,
     updateCanvas,
+    updateDoc,
 } from '../controllers/agent.controller';
+import { deleteBlocks, getOutline, insertBlocks, moveBlocks, readBlocks, updateBlock } from '../controllers/agentBlocks.controller';
 
 const router = express.Router();
 
@@ -28,11 +35,24 @@ router.use(authOnce);
 router.get('/docs', requireScope('read'), searchDocs);
 router.get('/docs/:id', requireScope('read'), readDoc);
 router.post('/docs', requireScope('docs:write'), idempotency, createDoc);
+// Rename a doc, file it under a subject, or make it a planned topic's note (update_doc).
+router.patch('/docs/:id', requireScope('docs:write'), idempotency, updateDoc);
 router.post('/docs/:id/append', requireScope('docs:write'), idempotency, appendToDoc);
 router.post('/docs/:id/replace-section', requireScope('docs:write'), idempotency, replaceSection);
+router.post('/docs/:id/trash', requireScope('docs:write'), idempotency, trashDoc);
+router.post('/docs/:id/restore', requireScope('docs:write'), idempotency, restoreDoc);
 // A canvas board by id: change it in place (keeps what Ramin arranged), or see it as a PNG.
 router.post('/docs/:id/canvas/:canvasId', requireScope('docs:write'), idempotency, updateCanvas);
 router.get('/docs/:id/preview', requireScope('read'), previewCanvas);
+// The new editor's blocks by id (DocOps, phase 3): outline, read, insert, update, move, delete.
+router.get('/docs/:id/outline', requireScope('read'), getOutline);
+router.get('/docs/:id/blocks', requireScope('read'), readBlocks);
+router.post('/docs/:id/blocks', requireScope('docs:write'), idempotency, insertBlocks);
+router.post('/docs/:id/blocks/move', requireScope('docs:write'), idempotency, moveBlocks);
+router.post('/docs/:id/blocks/delete', requireScope('docs:write'), idempotency, deleteBlocks);
+router.patch('/docs/:id/blocks/:blockId', requireScope('docs:write'), idempotency, updateBlock);
+// Who can see a doc of his (get_sharing, read only): published or not, the people, the requests.
+router.get('/docs/:id/sharing', requireScope('read'), handler(async (req, res) => ok(res, await docSharingForAgent(requireUser(req).id, param(req, 'id')))));
 
 router.get('/edits', requireScope('read'), listEdits);
 // Home only: an agent must not be able to hide ("seen") or revert its own work.

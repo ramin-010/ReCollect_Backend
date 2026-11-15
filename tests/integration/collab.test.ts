@@ -1,6 +1,7 @@
 // Hocuspocus doc handler (authorize, load, save, cleanup) and POST /api/collab/upload, on
 // Postgres: the handler is called directly. The last block also starts the real WebSocket server.
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { stateBytes } from '../../src/services/docs/docState';
 import request from 'supertest';
 import * as Y from 'yjs';
 import { HocuspocusProvider } from '@hocuspocus/provider';
@@ -32,7 +33,7 @@ const liveDocuments = () => (hocuspocusServer as any).hocuspocus.documents as Ma
 /** A Base64 Yjs state with a `metadata` map, like the live editor writes. */
 function stateWithMetadata(title: string, coverImage: string | null): string {
     const ydoc = new Y.Doc();
-    Y.applyUpdate(ydoc, Buffer.from(docJsonToYjsState({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'live text' }] }] }), 'base64'));
+    Y.applyUpdate(ydoc, docJsonToYjsState({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'live text' }] }] }));
     ydoc.getMap('metadata').set('title', title);
     ydoc.getMap('metadata').set('coverImage', coverImage);
     const state = Buffer.from(Y.encodeStateAsUpdate(ydoc)).toString('base64');
@@ -41,7 +42,7 @@ function stateWithMetadata(title: string, coverImage: string | null): string {
 }
 
 async function docFixture() {
-    const [owner, editor, viewer, banned, stranger] = await Promise.all([
+    const [owner, editor, viewer, removed, stranger] = await Promise.all([
         createTestUser(),
         createTestUser(),
         createTestUser(),
@@ -55,8 +56,7 @@ async function docFixture() {
             { docId: doc.id, userId: viewer.id, role: 'viewer' },
         ],
     });
-    await prisma.docBannedUser.create({ data: { docId: doc.id, userId: banned.id } });
-    return { owner, editor, viewer, banned, stranger, doc };
+    return { owner, editor, viewer, removed, stranger, doc };
 }
 
 beforeEach(() => vi.mocked(batchDeleteFromCloud).mockClear());
@@ -66,36 +66,36 @@ afterEach(() => {
 });
 
 describe('docHandler', () => {
-    it('authorize: owner and editors edit, viewers connect read-only; banned, strangers, guests may not connect', async () => {
-        const { owner, editor, viewer, banned, stranger, doc } = await docFixture();
+    it('authorize: owner and editors edit, viewers connect read-only; removed, strangers, guests may not connect', async () => {
+        const { owner, editor, viewer, removed, stranger, doc } = await docFixture();
         expect(await docHandler.authorize(owner.id, doc.id)).toBe('edit');
         expect(await docHandler.authorize(editor.id, doc.id)).toBe('edit');
         expect(await docHandler.authorize(viewer.id, doc.id)).toBe('view');
-        expect(await docHandler.authorize(banned.id, doc.id)).toBeNull();
+        expect(await docHandler.authorize(removed.id, doc.id)).toBeNull();
         expect(await docHandler.authorize(stranger.id, doc.id)).toBeNull();
-        expect(await docHandler.authorize(null, doc.id, 'any-token')).toBeNull();
+        expect(await docHandler.authorize(null, doc.id)).toBeNull();
         expect(await docHandler.authorize(owner.id, 'no-such-doc')).toBeNull();
     });
 
     it('load returns the stored Base64 state; unknown docs load as null', async () => {
         const { owner } = await docFixture();
-        const doc = await prisma.doc.create({ data: { userId: owner.id, title: 'x', yjsState: 'AQID' } });
-        expect(await docHandler.load(doc.id)).toEqual({ id: doc.id, yjsState: 'AQID' });
+        const doc = await prisma.doc.create({ data: { userId: owner.id, title: 'x', yjsState: stateBytes('AQID') } });
+        expect(await docHandler.load(doc.id)).toEqual({ id: doc.id, yjsState: stateBytes('AQID') });
         expect(await docHandler.load('no-such-doc')).toBeNull();
     });
 
     it('save stores the state, the preview and the title/cover from the metadata map', async () => {
         const { doc } = await docFixture();
         const state = stateWithMetadata('  Live title ', 'https://img/cover.png');
-        await docHandler.save(doc.id, state);
+        await docHandler.save(doc.id, stateBytes(state));
 
         const stored = await prisma.doc.findUniqueOrThrow({ where: { id: doc.id } });
-        expect(stored.yjsState).toBe(state);
+        expect(stored.yjsState).toEqual(stateBytes(state));
         expect(stored.previewState).toContain('live text');
         expect(stored.title).toBe('Live title');
         expect(stored.coverImage).toBe('https://img/cover.png');
 
-        await expect(docHandler.save('no-such-doc', state)).resolves.toBeUndefined();
+        await expect(docHandler.save('no-such-doc', stateBytes(state))).resolves.toBeUndefined();
     });
 
     it('cleanup deletes images the doc no longer uses and keeps the rest', async () => {
@@ -127,7 +127,7 @@ describe('docHandler', () => {
             },
         });
         const live = new Y.Doc();
-        Y.applyUpdate(live, Buffer.from(docJsonToYjsState({ type: 'doc', content: [imageNode('just-pasted')] }), 'base64'));
+        Y.applyUpdate(live, docJsonToYjsState({ type: 'doc', content: [imageNode('just-pasted')] }));
         liveDocuments().set(`doc_${doc.id}`, live);
         try {
             await docHandler.cleanup!(doc.id);
@@ -143,7 +143,7 @@ describe('docHandler', () => {
         vi.spyOn(console, 'error').mockImplementation(() => {});
         const { owner } = await docFixture();
         const doc = await prisma.doc.create({
-            data: { userId: owner.id, title: 'Corrupt', yjsState: Buffer.from([0xff, 0xff, 0xff, 0x01]).toString('base64'), cloudImages: [image('a')] },
+            data: { userId: owner.id, title: 'Corrupt', yjsState: new Uint8Array([0xff, 0xff, 0xff, 0x01]), cloudImages: [image('a')] },
         });
         await docHandler.cleanup!(doc.id);
         expect(vi.mocked(batchDeleteFromCloud)).not.toHaveBeenCalled();
@@ -202,11 +202,11 @@ describe('POST /api/collab/upload', () => {
         });
     });
 
-    it('viewers, banned users and strangers still get the URL, but nothing is recorded on the doc', async () => {
+    it('viewers, removed people and strangers still get the URL, but nothing is recorded on the doc', async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const { viewer, banned, stranger, doc } = await docFixture();
+        const { viewer, removed, stranger, doc } = await docFixture();
         setUploadedFiles({ image: [fakeCloudFile('image', 'nope')] });
-        for (const user of [viewer, banned, stranger]) {
+        for (const user of [viewer, removed, stranger]) {
             const res = await request(app).post('/api/collab/upload').set('Cookie', authCookie(user)).send({ docId: doc.id, imageId: `img_${user.id}` });
             expect(res.status).toBe(200);
         }
@@ -293,7 +293,7 @@ describe('live collaboration over WebSocket (read-only viewers)', () => {
         const row = await prisma.doc.findUniqueOrThrow({ where: { id: docId } });
         if (!row.yjsState) return null;
         const ydoc = new Y.Doc();
-        Y.applyUpdate(ydoc, Buffer.from(row.yjsState, 'base64'));
+        Y.applyUpdate(ydoc, row.yjsState);
         const text = ydoc.getText('t').toString();
         ydoc.destroy();
         return text;
@@ -328,8 +328,29 @@ describe('live collaboration over WebSocket (read-only viewers)', () => {
         expect(await storedText(doc.id)).toBe('editor text');
     });
 
-    it('a viewer writing alone stores nothing; banned users, strangers and anonymous share-link holders cannot connect', async () => {
-        const { viewer, banned, stranger, doc } = await docFixture();
+    it('D6: an editor made a viewer while connected reconnects read-only at once and can no longer write', async () => {
+        const { owner, editor, doc } = await docFixture();
+        const room = `doc_${doc.id}`;
+        const ownerClient = await connect(room, { token: signAuthToken(owner.id) });
+        const editorClient = await connect(room, { token: signAuthToken(editor.id) });
+        expect(editorClient.authenticated.scope).toBe('read-write');
+        editorClient.document.getText('t').insert(0, 'before ');
+        await vi.waitFor(() => expect(ownerClient.text()).toBe('before '), { timeout: 10_000, interval: 20 });
+
+        // The owner demotes the editor (the app's route), and their live connection follows.
+        const res = await request(app).patch(`/api/docs/${doc.id}/people/${editor.id}`).set('Cookie', authCookie(owner)).send({ role: 'viewer' });
+        expect(res.status).toBe(200);
+        await vi.waitFor(() => expect(editorClient.authenticated.scope).toBe('readonly'), { timeout: 10_000, interval: 20 });
+        await vi.waitFor(() => expect(editorClient.provider.synced).toBe(true), { timeout: 10_000, interval: 20 });
+
+        editorClient.document.getText('t').insert(0, 'after-demotion ');
+        await flush(editorClient.provider, ownerClient.provider);
+        expect(ownerClient.text()).toBe('before ');
+        expect(liveText(room)).toBe('before ');
+    });
+
+    it('a viewer writing alone stores nothing; removed people, strangers and anonymous share-link holders cannot connect', async () => {
+        const { viewer, removed, stranger, doc } = await docFixture();
         const room = `doc_${doc.id}`;
 
         const viewerClient = await connect(room, { token: signAuthToken(viewer.id) });
@@ -344,7 +365,7 @@ describe('live collaboration over WebSocket (read-only viewers)', () => {
         await roomUnloaded(room);
         expect(await storedText(doc.id)).not.toBe('nope');
 
-        for (const user of [banned, stranger]) {
+        for (const user of [removed, stranger]) {
             const denied = await connect(room, { token: signAuthToken(user.id) });
             expect(denied.authenticated.failed).toBeTruthy();
             expect(denied.provider.synced).toBe(false);

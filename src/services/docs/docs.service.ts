@@ -1,26 +1,23 @@
-// Docs: every Prisma query on Doc, DocCollaborator and DocBannedUser goes through here (the REST
-// endpoints, the /api/collab/upload route and the Hocuspocus doc handler).
+// Docs: the Prisma queries on Doc and DocCollaborator (the REST endpoints, the /api/collab/upload
+// route and the Hocuspocus doc handler). Sharing (publish, people, requests): ./docSharing.service.ts.
 //
 // Replaces what the Mongoose model/handlers did implicitly:
 //   - trim + required on title          → normalizeDocTitle (old messages)
-//   - docType enum                       → assertDocType (old message; Postgres can't store a bad value)
-//   - collaborators[] / bannedUsers[]    → DocCollaborator / DocBannedUser rows (unique per doc+user)
+//   - collaborators[]                    → DocCollaborator rows (unique per doc+user)
 //   - $push / $pull on cloudImages       → atomic SQL on the Json column (appendDocCloudImage, removeDocCloudImages)
 // Permission rules live in ./docPermissions.ts.
-import type { CollaboratorRole, DocType, Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
+import type { StateBytes } from './docState';
 import { prisma, type DbClient } from '../../db/prisma';
 import { isUniqueViolation } from '../../db/errors';
 import {
-    docBannedUserOrder,
     docCollaboratorOrder,
     docListSelect,
     docRowInclude,
     docWithUsersInclude,
-    sharedByMeDocSelect,
     type DocListRow,
     type DocRow,
     type DocWithUsers,
-    type SharedByMeDocRow,
 } from '../../db/serializers/doc';
 import ErrorResponse from '../../utils/errorResponse';
 import { batchDeleteFromCloud } from '../../utils/cloudinary';
@@ -34,22 +31,13 @@ import {
 } from '../uploads/cloudImages';
 import { accessibleDocWhere, canEditDoc, getDocRole, isDocOwner, type DocRole } from './docPermissions';
 import { docJsonToYjsState, replaceImageSrcs } from './docContent';
-
-export const DOC_TYPES: readonly DocType[] = ['notes', 'meeting', 'project', 'personal'];
+import { templateDocState } from './blocks/newDocState';
 
 /** Trim a title; an empty one is rejected with the Mongoose `required` message. */
 export function normalizeDocTitle(title: string): string {
     const trimmed = title.trim();
     if (!trimmed) throw new ErrorResponse(400, 'Path `title` is required.');
     return trimmed;
-}
-
-/** Validate a docType with the Mongoose enum message. */
-export function assertDocType(docType: unknown): DocType {
-    if (typeof docType !== 'string' || !(DOC_TYPES as readonly string[]).includes(docType)) {
-        throw new ErrorResponse(400, `\`${String(docType)}\` is not a valid enum value for path \`docType\`.`);
-    }
-    return docType as DocType;
 }
 
 /**
@@ -63,7 +51,7 @@ export function isAcceptableNewDocId(id: string): boolean {
 
 // ─── Reads ─────────────────────────────────────────────────────────────
 
-/** A doc the user can see (owner or non-banned collaborator), or null. */
+/** A doc the user can see (owner or collaborator), or null. */
 export function findAccessibleDoc(docId: string, userId: string, db: DbClient = prisma): Promise<DocRow | null> {
     return db.doc.findFirst({ where: { id: docId, ...accessibleDocWhere(userId) }, include: docRowInclude });
 }
@@ -77,8 +65,7 @@ export function findAccessibleDoc(docId: string, userId: string, db: DbClient = 
 async function loadDocRow(docId: string, db: DbClient): Promise<DocRow> {
     const doc = await db.doc.findUniqueOrThrow({ where: { id: docId } });
     const collaborators = await db.docCollaborator.findMany({ where: { docId }, orderBy: docCollaboratorOrder });
-    const bannedUsers = await db.docBannedUser.findMany({ where: { docId }, orderBy: docBannedUserOrder });
-    return { ...doc, collaborators, bannedUsers };
+    return { ...doc, collaborators };
 }
 
 /** GET /api/docs/:id: the doc with owner/collaborators populated and the caller's role, or null. */
@@ -107,39 +94,43 @@ export async function listAccessibleDocs(
     return docs.map((doc) => ({ doc, role: getDocRole(doc, userId) ?? 'viewer' }));
 }
 
-/** GET /api/docs/shared-by-me: the user's docs that have at least one collaborator. */
-export function listDocsSharedBy(ownerId: string, db: DbClient = prisma): Promise<SharedByMeDocRow[]> {
-    return db.doc.findMany({
-        where: { userId: ownerId, collaborators: { some: {} } },
-        select: sharedByMeDocSelect,
-        orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
-    });
-}
-
 // ─── Create / update / delete ─────────────────────────────────────────
 
 export interface CreateDocInput {
     title?: string | null | undefined;
-    docType?: string | null | undefined;
+    /** A template's content (the app's TipTap JSON): the doc starts with it, as blocks (the new editor). */
+    content?: unknown;
 }
 
-/** POST /api/docs. Title defaults to 'Untitled', docType to 'notes'. */
+/**
+ * POST /api/docs. Title defaults to 'Untitled'. With `content` (a template) the doc
+ * starts with it as blocks; without, it is empty (the editor makes its first block).
+ */
 export async function createDoc(userId: string, input: CreateDocInput, db: DbClient = prisma): Promise<DocRow> {
+    const title = normalizeDocTitle(input.title || 'Untitled');
+    let yjsState: StateBytes | null = null;
+    if (input.content !== undefined && input.content !== null) {
+        if (typeof input.content !== 'object') throw new ErrorResponse(400, 'content is the template\'s JSON');
+        try {
+            yjsState = templateDocState(input.content, title);
+        } catch (err) {
+            throw new ErrorResponse(400, `Invalid doc content: ${err instanceof Error ? err.message : String(err)}`);
+        }
+    }
     const created = await db.doc.create({
         data: {
             userId,
-            title: normalizeDocTitle(input.title || 'Untitled'),
-            docType: assertDocType(input.docType || 'notes'),
+            title,
             cloudImages: [],
+            ...(yjsState ? { yjsState, previewState: generatePreviewState(yjsState) } : {}),
         },
     });
-    // A new doc has no collaborators or bans yet.
-    return { ...created, collaborators: [], bannedUsers: [] };
+    // A new doc has no collaborators yet.
+    return { ...created, collaborators: [] };
 }
 
 export interface UpdateDocMetaInput {
     title?: string | null | undefined;
-    docType?: string | null | undefined;
     isPinned?: boolean | undefined;
     isArchived?: boolean | undefined;
     coverImage?: string | null | undefined;
@@ -160,13 +151,8 @@ export async function updateDocMeta(
 
     const role = getDocRole(doc, userId);
     if (role !== 'owner') {
-        if (
-            input.title !== undefined ||
-            input.docType !== undefined ||
-            input.isPinned !== undefined ||
-            input.isArchived !== undefined
-        ) {
-            throw new ErrorResponse(403, 'Only the owner can rename, change type, or pin this document');
+        if (input.title !== undefined || input.isPinned !== undefined || input.isArchived !== undefined) {
+            throw new ErrorResponse(403, 'Only the owner can rename or pin this document');
         }
         if (role !== 'editor' && input.coverImage !== undefined) {
             throw new ErrorResponse(403, 'Viewers cannot edit this document');
@@ -174,7 +160,6 @@ export async function updateDocMeta(
     }
 
     const data: Prisma.DocUpdateInput = { updatedAt: new Date() };
-    if (input.docType !== undefined) data.docType = assertDocType(input.docType);
     if (input.isPinned !== undefined) data.isPinned = input.isPinned;
     if (input.isArchived !== undefined) data.isArchived = input.isArchived;
     if (input.title !== undefined) data.title = normalizeDocTitle(input.title ?? '');
@@ -184,99 +169,9 @@ export async function updateDocMeta(
     return loadDocRow(docId, db);
 }
 
-export interface SaveDocInput {
-    title?: string | null | undefined;
-    coverImage?: string | null | undefined;
-    docType?: string | null | undefined;
-    /** Parsed TipTap JSON (editor.getJSON()), or null to keep the stored content. */
-    content: unknown;
-    /** Ids of the images uploaded with this request (form fields `image_<id>`). */
-    imageNodeIds: string[];
-    /** Every imageId the doc still uses; stored images not in this list are deleted from Cloudinary. */
-    allImageIds: string[];
-    files?: UploadedFiles | undefined;
-}
-
 /**
- * POST /api/docs/:id (personal-doc cloud save). Converts the editor JSON to a Yjs state, points
- * uploaded images at Cloudinary, deletes orphaned images, then updates the doc, or creates it
- * with the client's id when it doesn't exist (as before). Canvas boards are not in the JSON (they
- * live in the Y.Doc): those of canvases still in the content carry over from the stored state.
- */
-export async function saveDocFromEditor(
-    docId: string,
-    userId: string,
-    input: SaveDocInput,
-    db: DbClient = prisma
-): Promise<{ doc: DocRow; created: boolean }> {
-    const doc = await findAccessibleDoc(docId, userId, db);
-    if (doc && getDocRole(doc, userId) === 'viewer') {
-        throw new ErrorResponse(403, 'Viewers cannot edit this document');
-    }
-    const docType = doc && isDocOwner(doc, userId) && input.docType !== undefined ? assertDocType(input.docType) : undefined;
-
-    const { content } = input;
-    const { imageUrlMap, uploaded } =
-        content && input.imageNodeIds.length > 0
-            ? collectUploadedImages(input.files, input.imageNodeIds)
-            : { imageUrlMap: {}, uploaded: [] as CloudImage[] };
-    if (content) replaceImageSrcs(content, imageUrlMap);
-
-    const yjsState = content ? docJsonToYjsState(content, undefined, { canvasesFrom: doc?.yjsState }) : null;
-
-    const { retain, orphaned } = partitionCloudImages(readCloudImages(doc?.cloudImages), input.allImageIds);
-    if (orphaned.length > 0) {
-        await batchDeleteFromCloud(orphaned.map((img) => img.cloudPublicId));
-    }
-    const cloudImages: CloudImage[] = [...retain, ...uploaded];
-    const previewState = yjsState ? generatePreviewState(yjsState) : null;
-
-    if (doc) {
-        const isOwner = isDocOwner(doc, userId);
-        await db.doc.update({
-            where: { id: docId },
-            data: {
-                yjsState: yjsState || doc.yjsState,
-                previewState: previewState || doc.previewState,
-                // Mongoose trimmed here but did not validate (no runValidators on this update).
-                title: isOwner ? (input.title || doc.title).trim() : doc.title,
-                docType: docType ?? doc.docType,
-                coverImage: input.coverImage !== undefined ? input.coverImage : doc.coverImage,
-                cloudImages,
-                updatedAt: new Date(),
-            },
-            select: { id: true },
-        });
-        return { doc: await loadDocRow(docId, db), created: false };
-    }
-
-    if (!isAcceptableNewDocId(docId)) {
-        // What Mongo's CastError handler answered for a non-ObjectId id.
-        throw new ErrorResponse(404, `Resource not found with id of ${docId}`);
-    }
-    try {
-        const created = await db.doc.create({
-            data: {
-                id: docId,
-                userId,
-                title: normalizeDocTitle(input.title || 'Untitled'),
-                yjsState,
-                previewState,
-                coverImage: input.coverImage || null,
-                cloudImages,
-            },
-        });
-        return { doc: { ...created, collaborators: [], bannedUsers: [] }, created: true };
-    } catch (err) {
-        // The id belongs to a doc this user can't access (Mongo: duplicate key on _id).
-        if (isUniqueViolation(err)) throw new ErrorResponse(400, 'Duplicate field value entered: _id');
-        throw err;
-    }
-}
-
-/**
- * DELETE /api/docs/:id. The owner deletes the doc (its Cloudinary images first; collaborators,
- * bans, share links and access requests cascade). A collaborator only leaves it.
+ * DELETE /api/docs/:id. The owner deletes the doc (its Cloudinary images first; collaborators and
+ * access requests cascade). A collaborator only leaves it.
  */
 export async function deleteOrLeaveDoc(docId: string, userId: string, db: DbClient = prisma): Promise<'deleted' | 'left'> {
     const doc = await findAccessibleDoc(docId, userId, db);
@@ -285,61 +180,14 @@ export async function deleteOrLeaveDoc(docId: string, userId: string, db: DbClie
     if (isDocOwner(doc, userId)) {
         const images = readCloudImages(doc.cloudImages);
         if (images.length > 0) await batchDeleteFromCloud(images.map((img) => img.cloudPublicId));
+        // Its path topics survive (SET NULL, with their revision history); they keep the doc's last
+        // title instead of the one they were made with ("Untitled" for a doc named later).
+        await db.topic.updateMany({ where: { docId }, data: { title: doc.title.trim() || 'Untitled' } });
         await db.doc.deleteMany({ where: { id: docId } });
         return 'deleted';
     }
     await db.docCollaborator.deleteMany({ where: { docId, userId } });
     return 'left';
-}
-
-// ─── Collaborators ─────────────────────────────────────────────────────
-
-/** PATCH /api/docs/:id/collaborators/:collaboratorId (owner only). */
-export async function setDocCollaboratorRole(
-    docId: string,
-    ownerId: string,
-    collaboratorId: string,
-    role: CollaboratorRole,
-    db: DbClient = prisma
-): Promise<void> {
-    const owned = await db.doc.findFirst({ where: { id: docId, userId: ownerId }, select: { id: true } });
-    if (!owned) throw new ErrorResponse(404, 'Doc not found or you are not the owner');
-
-    const { count } = await db.docCollaborator.updateMany({ where: { docId, userId: collaboratorId }, data: { role } });
-    if (count === 0) throw new ErrorResponse(404, 'Collaborator not found');
-}
-
-/**
- * DELETE /api/docs/:id/collaborators/:collaboratorId. The owner removes (and bans) someone, or a
- * collaborator leaves (no ban). Opens its own transaction, so it takes no `db`.
- * `remainingCount` is computed like before: collaborators before the removal, minus one.
- */
-export async function removeDocCollaborator(
-    docId: string,
-    actorId: string,
-    collaboratorId: string
-): Promise<{ remainingCount: number; isLeavingVoluntarily: boolean }> {
-    const doc = await findAccessibleDoc(docId, actorId);
-    if (!doc) throw new ErrorResponse(404, 'Doc not found');
-
-    const isLeavingVoluntarily = collaboratorId === actorId;
-    if (!isDocOwner(doc, actorId) && !isLeavingVoluntarily) {
-        throw new ErrorResponse(403, 'Only the owner can remove other collaborators');
-    }
-
-    await prisma.$transaction(async (tx) => {
-        const { count } = await tx.docCollaborator.deleteMany({ where: { docId, userId: collaboratorId } });
-        if (count === 0) throw new ErrorResponse(404, 'Collaborator not found');
-        if (!isLeavingVoluntarily) {
-            await tx.docBannedUser.upsert({
-                where: { docId_userId: { docId, userId: collaboratorId } },
-                create: { docId, userId: collaboratorId },
-                update: { bannedAt: new Date() },
-            });
-        }
-    });
-
-    return { remainingCount: (doc.collaborators.length || 1) - 1, isLeavingVoluntarily };
 }
 
 // ─── Cloud images ──────────────────────────────────────────────────────
@@ -392,7 +240,7 @@ export async function removeDocCloudImages(docId: string, imageIds: readonly str
 
 /**
  * The user's role for a live (Hocuspocus) connection, or null when they may not open the doc.
- * Owner and any non-banned collaborator may connect; 'viewer' connections are made read-only.
+ * Owner and any collaborator may connect; 'viewer' connections are made read-only.
  * Sequential queries: this may run on a transaction client (see loadDocRow).
  */
 export async function getDocLiveRole(docId: string, userId: string, db: DbClient = prisma): Promise<DocRole | null> {
@@ -400,16 +248,16 @@ export async function getDocLiveRole(docId: string, userId: string, db: DbClient
     if (!doc) return null;
     if (isDocOwner(doc, userId)) return 'owner';
     const collaborators = await db.docCollaborator.findMany({ where: { docId, userId }, select: { userId: true, role: true } });
-    const bannedUsers = await db.docBannedUser.findMany({ where: { docId, userId }, select: { userId: true } });
-    return getDocRole({ userId: doc.userId, collaborators, bannedUsers }, userId);
+    return getDocRole({ userId: doc.userId, collaborators }, userId);
 }
 
-export function loadDocYjsState(docId: string, db: DbClient = prisma): Promise<{ id: string; yjsState: string | null } | null> {
+export function loadDocYjsState(docId: string, db: DbClient = prisma): Promise<{ id: string; yjsState: StateBytes | null } | null> {
     return db.doc.findUnique({ where: { id: docId }, select: { id: true, yjsState: true } });
 }
 
 export interface StoreDocStateInput {
-    yjsState: string;
+    /** The Yjs state as bytes (D3). */
+    yjsState: StateBytes;
     previewState: string | null;
     /** From the Y.Doc's `metadata` map; undefined = leave unchanged. */
     title?: string | undefined;
@@ -431,7 +279,7 @@ export async function storeDocYjsState(docId: string, input: StoreDocStateInput,
 export function findDocImageState(
     docId: string,
     db: DbClient = prisma
-): Promise<{ yjsState: string | null; cloudImages: Prisma.JsonValue } | null> {
+): Promise<{ yjsState: StateBytes | null; cloudImages: Prisma.JsonValue } | null> {
     return db.doc.findUnique({ where: { id: docId }, select: { yjsState: true, cloudImages: true } });
 }
 
@@ -442,7 +290,7 @@ export const UNDO_IMAGE_GRACE_MS = 30 * 24 * 60 * 60 * 1000;
  * Yjs states saved before agent edits that can still be undone (not undone, newer than the grace
  * period): the images in them must not be deleted as orphans yet.
  */
-export async function undoableSnapshotStates(docId: string, now: Date = new Date(), db: DbClient = prisma): Promise<string[]> {
+export async function undoableSnapshotStates(docId: string, now: Date = new Date(), db: DbClient = prisma): Promise<StateBytes[]> {
     const rows = await db.docSnapshot.findMany({
         where: { docId, createdAt: { gte: new Date(now.getTime() - UNDO_IMAGE_GRACE_MS) }, edits: { some: { undoneAt: null } } },
         select: { yjsState: true },

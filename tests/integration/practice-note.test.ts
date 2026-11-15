@@ -86,10 +86,10 @@ describe('POST /api/ai/practice-note', () => {
         expect(res.body).toEqual({ success: true, data: { docId: expect.any(String), title: 'Two Sum', topicId: null, nextRevision: null } });
 
         const { row, json } = await storedDoc(res.body.data.docId);
-        expect(row).toMatchObject({ userId: user.id, title: 'Two Sum', docType: 'notes', isArchived: false });
+        expect(row).toMatchObject({ userId: user.id, title: 'Two Sum', isArchived: false });
         expect(row.previewState).toContain('Given an array of integers');
         const ydoc = new Y.Doc();
-        Y.applyUpdate(ydoc, Buffer.from(row.yjsState!, 'base64'));
+        Y.applyUpdate(ydoc, row.yjsState!);
         expect(ydoc.getMap('metadata').get('title')).toBe('Two Sum');
         ydoc.destroy();
 

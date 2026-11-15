@@ -26,6 +26,8 @@ export interface RhythmInput {
   completions?: readonly Date[];
   /** The `day` of focus items that are done. */
   focusDoneDays?: readonly DayString[];
+  /** Days with a logged work session (SYNC_SPINE_SPEC 1.2). */
+  sessionDays?: readonly DayString[];
 }
 
 /** The first day of the rhythm window (today − 6). */
@@ -40,6 +42,7 @@ export function rhythmLast7(input: RhythmInput): Rhythm {
   const active = new Set<DayString>();
   for (const at of input.completions ?? []) active.add(dayOf(at, tz));
   for (const day of input.focusDoneDays ?? []) active.add(day);
+  for (const day of input.sessionDays ?? []) active.add(day);
 
   const last7: RhythmDay[] = [];
   for (let i = RHYTHM_DAYS - 1; i >= 0; i--) {

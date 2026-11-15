@@ -412,7 +412,7 @@ describe('the monthly cap', () => {
 });
 
 describe('GET /api/ai/usage and PATCH /api/ai/settings', () => {
-    it("this month's spend by feature, the call count, the cap (default $20) and the model", async () => {
+    it("this month's spend by feature, the call count, the cap (default $50) and the model", async () => {
         const { user, rev } = await dueTopic();
         const set = (await start(user, rev.id)).body.data;
         await api(user).post(`/api/recall/sets/${set.id}/answer`, { questionId: 'q1', answer: 'decreasing' });
@@ -425,7 +425,7 @@ describe('GET /api/ai/usage and PATCH /api/ai/settings', () => {
         expect(res.body.data).toEqual({
             month: todayIn(IST).slice(0, 7),
             spentUsd: 0.06,
-            capUsd: 20,
+            capUsd: 50,
             calls: 3,
             byFeature: { recall_questions: 0.036, recall_grade: 0.024, practice_note: 0, weekly_coach: 0 },
             model: 'claude-opus-5-5',

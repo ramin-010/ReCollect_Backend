@@ -1,18 +1,10 @@
 import express, { RequestHandler } from 'express';
-import { upflyUpload } from 'upfly';
 import authMiddleware from '../middlwares/auth';
 import { scopeByMethod } from '../middlwares/scopes';
-import { 
-  saveDoc, getDoc, deleteDoc, getAllDocs, createDoc, updateDoc,
-  getSharedByMe, updateCollaboratorRole, removeCollaborator 
-} from '../controllers/doc.controller';
-import {
-  createAccessRequest,
-  listAccessRequests,
-  approveAccessRequest,
-  rejectAccessRequest,
-  getAllPendingRequests
-} from '../controllers/accessRequest.controller';
+import { getDoc, deleteDoc, getAllDocs, createDoc, updateDoc } from '../controllers/doc.controller';
+import { searchLibraryDocs } from '../controllers/docSearch.controller';
+import { emptyTrashHandler, restoreDocHandler, trashDocHandler } from '../controllers/docTrash.controller';
+import { addPerson, answerRequest, changePerson, listPeople, publishDoc, removePerson } from '../controllers/docSharing.controller';
 
 const router = express.Router();
 // Access tokens: GETs need `read`, writes `docs:write` (a cookie session has every scope). Which doc
@@ -20,36 +12,26 @@ const router = express.Router();
 // through /api/agent/docs).
 const auth: RequestHandler[] = [authMiddleware as RequestHandler, scopeByMethod('docs:write')];
 
-const cloud_name = process.env.CLOUDINARY_CLOUD_NAME || '';
-const cloud_key = process.env.CLOUDINARY_API_KEY || '';
-const cloud_secret = process.env.CLOUDINARY_API_SECRET || '';
+// Before '/:id'. Not on the token list: agents search through /api/agent/docs?query=.
+router.get('/search', auth, searchLibraryDocs);
+// The trash (cookie only: agents use /api/agent/docs/:id/trash and ask for emptying via /api/actions).
+router.post('/trash/empty', auth, emptyTrashHandler);
+router.post('/:id/trash', auth, trashDocHandler);
+router.post('/:id/restore', auth, restoreDocHandler);
+router.get('/', auth, getAllDocs as RequestHandler);
+router.post('/', auth, createDoc as RequestHandler);
+router.get('/:id', auth, getDoc as RequestHandler);
+router.patch('/:id', auth, updateDoc as RequestHandler);
+router.delete('/:id', auth, deleteDoc as RequestHandler);
 
-const upload = upflyUpload({
-  fields: {
-    "image_*": {
-      output: 'memory',
-      format: 'webp',
-      quality: 60,
-      cloudStorage: true,
-      cloudProvider: "cloudinary",
-      cloudConfig: {
-        cloud_name: cloud_name,
-        api_key: cloud_key,
-        api_secret: cloud_secret,
-        folder: 'recollect-docs'
-      }
-    },
-  },
-});
-
-
-router.get('/', auth, getAllDocs as RequestHandler);           router.get('/shared-by-me', auth, getSharedByMe as RequestHandler); router.get('/pending-requests', auth, getAllPendingRequests as RequestHandler); router.post('/', auth, createDoc as RequestHandler);            router.get('/:id', auth, getDoc as RequestHandler);             router.patch('/:id', auth, updateDoc as RequestHandler);        router.post('/:id', auth, upload as RequestHandler, saveDoc as RequestHandler);  router.delete('/:id', auth, deleteDoc as RequestHandler);       
-router.patch('/:id/collaborators/:collaboratorId', auth, updateCollaboratorRole as RequestHandler);
-router.delete('/:id/collaborators/:collaboratorId', auth, removeCollaborator as RequestHandler);
-
-router.post('/:id/request-access', auth, createAccessRequest as RequestHandler);
-router.get('/:id/requests', auth, listAccessRequests as RequestHandler);
-router.post('/:id/requests/:reqId/approve', auth, approveAccessRequest as RequestHandler);
-router.post('/:id/requests/:reqId/reject', auth, rejectAccessRequest as RequestHandler);
+// Sharing (MANAGER_AND_DOCS_PLAN §2: publish + people; src/services/docs/docSharing.service.ts).
+// Cookie only: not on the token list (agents read /api/agent/docs/:id/sharing and ask through /api/actions).
+router.put('/:id/publish', auth, publishDoc);
+router.get('/:id/people', auth, listPeople);
+router.post('/:id/people', auth, addPerson);
+router.patch('/:id/people/:userId', auth, changePerson);
+router.delete('/:id/people/:userId', auth, removePerson);
+router.post('/:id/requests/:reqId/approve', auth, answerRequest('approve'));
+router.post('/:id/requests/:reqId/decline', auth, answerRequest('decline'));
 
 export default router;

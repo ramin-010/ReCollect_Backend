@@ -17,6 +17,7 @@ import { hocuspocusServer } from '../../src/collaboration/hocuspocus';
 import { initializeCollaboration } from '../../src/collaboration';
 import { signAuthToken } from '../../src/services/auth/token';
 import { readBoard } from '../../src/services/docs/canvas';
+import { readBlocks } from '../../src/services/docs/blocks/serverEditor';
 import { docJsonToYjsState, yjsStateToDocJson } from '../../src/services/docs/docContent';
 import { docJsonToMarkdown, docJsonToYElements, markdownToBlocks, markdownToDocJson } from '../../src/services/docs/markdown/docMarkdown';
 import { createTestUser } from '../helpers/auth';
@@ -56,10 +57,10 @@ describe('POST /api/agent/docs', () => {
         expect(res.body.data).toEqual({ id: expect.any(String), title: 'Postgres locks', subject: null, topicId: null, nextRevision: null, editId: expect.any(String) });
 
         const row = await prisma.doc.findUniqueOrThrow({ where: { id: res.body.data.id } });
-        expect(row).toMatchObject({ userId: user.id, title: 'Postgres locks', docType: 'notes', isArchived: false });
+        expect(row).toMatchObject({ userId: user.id, title: 'Postgres locks', isArchived: false });
         expect(row.previewState).toContain('Row locks are taken by');
         const ydoc = new Y.Doc();
-        Y.applyUpdate(ydoc, Buffer.from(row.yjsState!, 'base64'));
+        Y.applyUpdate(ydoc, row.yjsState!);
         expect(ydoc.getMap('metadata').get('title')).toBe('Postgres locks');
         ydoc.destroy();
         expect(await storedMarkdown(row.id)).toBe(md);
@@ -96,7 +97,7 @@ describe('POST /api/agent/docs', () => {
         expect((await agent.post('/api/agent/docs', { title: '  ', markdown: 'x' })).status).toBe(400);
         const revise = await agent.post('/api/agent/docs', { title: 'x', markdown: 'x', revise: true });
         expect(revise.status).toBe(400);
-        expect(revise.body.message).toBe('revise needs a subjectId (the subject to revise it under)');
+        expect(revise.body.message).toBe('revise needs a subjectId (the subject to revise it under) or a topicId');
         const foreign = await agent.post('/api/agent/docs', { title: 'x', markdown: 'x', subjectId: othersSubject.id });
         expect(foreign.status).toBe(404);
         expect(await prisma.doc.count({ where: { userId: user.id } })).toBe(0);
@@ -141,7 +142,7 @@ describe('GET /api/agent/docs and /:id', () => {
         expect((await (await agentFor(stranger)).get(`/api/agent/docs/${doc.id}`)).status).toBe(404);
     });
 
-    it('searches titles and text (all words, any case): own + shared docs, not archived; small results with snippets', async () => {
+    it('searches titles and text (all words, any case, full-text): own + shared docs, not archived; small results with snippets', async () => {
         const [user, friend, stranger] = await Promise.all([createTestUser(), createTestUser(), createTestUser()]);
         const subject = await createSubjectRow(user.id, 'Databases');
         const locks = await docFromMarkdown(user.id, 'Postgres locks', 'Row locks block **writers**, not readers.');
@@ -156,9 +157,9 @@ describe('GET /api/agent/docs and /:id', () => {
         const res = await agent.get('/api/agent/docs?query=LOCKS');
         expect(res.status).toBe(200);
         const ids = res.body.data.map((d: { id: string }) => d.id);
-        // Title matches first (newest first among them), then text matches.
-        expect(ids).toEqual([shared.id, locks.id, mvcc.id]);
-        expect(res.body.data[1]).toEqual({ id: locks.id, title: 'Postgres locks', subject: 'Databases', updatedAt: expect.any(String), snippet: 'Row locks block writers, not readers.' });
+        // Best match first: in the title and the text, then in the title alone, then in the text.
+        expect(ids).toEqual([locks.id, shared.id, mvcc.id]);
+        expect(res.body.data[0]).toEqual({ id: locks.id, title: 'Postgres locks', subject: 'Databases', updatedAt: expect.any(String), snippet: 'Row locks block writers, not readers' });
         expect(res.body.data[2].snippet).toContain('block on row locks');
 
         expect((await agent.get('/api/agent/docs?query=row%20readers')).body.data.map((d: { id: string }) => d.id).sort()).toEqual([locks.id, mvcc.id].sort());
@@ -190,8 +191,8 @@ describe('append and replace-section', () => {
 
         const edit = await prisma.agentEdit.findUniqueOrThrow({ where: { id: res.body.data.editId }, include: { snapshot: true } });
         expect(edit).toMatchObject({ kind: 'doc_append', docId: doc.id, summary: 'Appended 2 paragraphs to "Notes"' });
-        expect(edit.snapshot!.yjsState).toBe(before.yjsState);
-        expect(edit.snapshot!.agentUpdate).toEqual(expect.any(String));
+        expect(edit.snapshot!.yjsState).toEqual(before.yjsState);
+        expect(edit.snapshot!.agentUpdate).toEqual(expect.any(Uint8Array));
         // The doc was unloaded from the collaboration server afterwards (nobody else had it open).
         expect(hocuspocusServer.hocuspocus.documents.has(`doc_${doc.id}`)).toBe(false);
     });
@@ -326,7 +327,7 @@ const CANVAS_FENCE = [
 async function storedYDoc(docId: string): Promise<Y.Doc> {
     const row = await prisma.doc.findUniqueOrThrow({ where: { id: docId } });
     const ydoc = new Y.Doc();
-    Y.applyUpdate(ydoc, Buffer.from(row.yjsState!, 'base64'));
+    Y.applyUpdate(ydoc, row.yjsState!);
     return ydoc;
 }
 
@@ -334,17 +335,19 @@ async function storedYDoc(docId: string): Promise<Y.Doc> {
 const fenceIds = (md: string) => [...md.matchAll(/%% id: (cv_[A-Za-z0-9_-]{12})/g)].map((m) => m[1]!);
 
 describe('canvas blocks', () => {
-    it('create_doc with a canvas: the board goes into the canvas maps; read_doc prints the fence with its id; search finds its words', async () => {
+    it('create_doc with a canvas: made on the new editor (blocks only); the board goes into the canvas maps; read_doc prints the fence with its id; search finds its words', async () => {
         const user = await createTestUser();
         const agent = await agentFor(user);
         const res = await agent.post('/api/agent/docs', { title: 'Checkout design', markdown: `## Overview\n\n${CANVAS_FENCE}\n\nThe gateway fans out.` });
         expect(res.status).toBe(201);
 
         const ydoc = await storedYDoc(res.body.data.id);
-        const element = ydoc.getXmlFragment('default').get(1) as Y.XmlElement;
-        expect(element.nodeName).toBe('canvas');
-        expect(element.getAttribute('data')).toBeUndefined();
-        const canvasId = element.getAttribute('canvasId') as string;
+        expect(ydoc.share.has('default')).toBe(false);
+        expect(ydoc.getMap('metadata').get('title')).toBe('Checkout design');
+        const blocks = readBlocks(ydoc);
+        expect(blocks.map((b) => b.type)).toEqual(['heading', 'canvas', 'paragraph']);
+        expect(blocks[1]!.props['data']).toBeUndefined();
+        const canvasId = blocks[1]!.props['canvasId'] as string;
         expect(readBoard(ydoc, canvasId).nodes.map((n) => n.text)).toEqual(['Browser', 'API gateway', 'Postgres']);
         ydoc.destroy();
         // A JSON fence is reported too.

@@ -14,7 +14,7 @@ import errorHandler from './middlwares/errorHandler';
 
 import workspaceRoutes, { publicWorkspaceRouter } from './routers/workspace.routes';
 import authRouter from './routers/auth.routes'
-import shareLinkRouter from './routers/shareLink.routes';
+import publicRouter from './routers/public.routes';
 import tagQueryRouter from './routers/tagQuery.routes'
 import otpRoutes from './routers/otp.routes'
 import todoRoutes from './routers/todo.routes';
@@ -31,18 +31,15 @@ import agentRoutes from './routers/agent.routes';
 import apiTokenRoutes from './routers/apiToken.routes';
 import canvasRoutes from './routers/canvas.routes';
 import recallRoutes, { aiRouter } from './routers/recall.routes';
+import assistantRoutes from './routers/assistant.routes';
+import alwaysOnRoutes from './routers/alwaysOn.routes';
+import mcpRoutes from './routers/mcp.routes';
+import { consentRouter, publicOAuthRouter } from './routers/oauth.routes';
+import { allowedOrigins } from './config/origins';
 
 // Cut on the pg-migration branch (files in backend/_archive): content, dashboards (dash),
 // expenses, slides + slide AI, livekit, email (Gmail). Whiteboard (drawings + drawing AI): backend/_archive/drawing.
 
-const allowOrigin = [
-    'http://localhost:3005',
-    'http://localhost:5173',
-    'http://192.168.40.58:3005',
-    'https://re-collect.in',
-    'https://api.re-collect.in',
-    'https://www.re-collect.in'
-].filter(Boolean)
 
 export function createApp(): Application {
     const app: Application = express();
@@ -62,9 +59,12 @@ export function createApp(): Application {
         next();
     });
 
+    // Sign-in for MCP clients: other apps' servers call these, so they sit before the CORS check.
+    app.use(publicOAuthRouter);
+
     app.use(cors({
         origin: (origin, cb) => {
-            if (!origin || allowOrigin.includes(origin)) {
+            if (!origin || allowedOrigins().includes(origin)) {
                 cb(null, true)
             } else {
                 cb(new Error('Not allowed by Cors'))
@@ -80,7 +80,8 @@ export function createApp(): Application {
     app.use('/api/workspaces', workspaceRoutes);
 
     app.use('/api', authRouter);
-    app.use('/api', shareLinkRouter);
+    // Published docs, for anyone with the link (MANAGER_AND_DOCS_PLAN §2).
+    app.use('/api/public', publicRouter);
     app.use('/api', tagQueryRouter)
     app.use('/api', otpRoutes);
 
@@ -103,6 +104,12 @@ export function createApp(): Application {
     // 503 AI_NOT_CONFIGURED without CLAUDE_API_KEY.
     app.use('/api/recall', recallRoutes);
     app.use('/api/ai', aiRouter);
+    app.use('/api/assistant', assistantRoutes);
+    // Stage 6 (ALWAYS_ON_SPEC): the phone's wallpaper + widget, and the morning notification.
+    app.use('/api', alwaysOnRoutes);
+    // Remote MCP over HTTP (ALWAYS_ON_SPEC 6.5): /mcp and its protected-resource metadata.
+    app.use(mcpRoutes);
+    app.use('/api/oauth', consentRouter);
 
     app.use('/api/docs', docRoutes);
     app.use('/api/docs/ai', docAiRoutes);

@@ -41,7 +41,7 @@ describe('the JSON schemas sent as output_config.format', () => {
         expect((QUESTIONS_SCHEMA as any).additionalProperties).toBe(false);
         expect((QUESTIONS_SCHEMA as any).required).toEqual(['questions']);
         expect(items.additionalProperties).toBe(false);
-        expect(items.required).toEqual(['kind', 'prompt', 'answerKey', 'sourceQuote']);
+        expect(items.required).toEqual(['kind', 'prompt', 'answerKey', 'sourceQuote', 'weakSpotId']);
         expect(items.properties.kind.enum).toEqual([...RECALL_KINDS]);
     });
 

@@ -38,6 +38,7 @@ async function authenticateApiToken(req: Request, token: string): Promise<void> 
     const row = await findApiToken(token);
     if (!row) throw new ErrorResponse(401, 'Invalid access token');
     if (row.revokedAt) throw new ErrorResponse(401, 'This access token was revoked');
+    if (row.expiresAt && row.expiresAt.getTime() <= Date.now()) throw new ErrorResponse(401, 'This access token has expired');
 
     const needed = tokenRouteScope(req.method, req.originalUrl);
     if (!needed) throw new ErrorResponse(403, 'Access tokens cannot be used for this endpoint');

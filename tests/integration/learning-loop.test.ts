@@ -78,6 +78,7 @@ describe('GET / PATCH /api/learning/settings', () => {
             lastSeenDay: null,
             timezone: 'Asia/Kolkata',
             routineMode: 'MASTER',
+            agentProfile: null,
         });
     });
 

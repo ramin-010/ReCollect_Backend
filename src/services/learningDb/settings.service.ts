@@ -19,6 +19,7 @@ const settingsSelect = {
     nudgeTime: true,
     lastNudgeDay: true,
     lastSeenDay: true,
+    agentProfile: true,
 } as const;
 
 export async function getLearningSettings(userId: string): Promise<LearningSettingsJson> {
@@ -36,6 +37,8 @@ export interface LearningSettingsInput {
     nudgeEmailEnabled?: boolean | undefined;
     /** 'H:mm' or 'HH:mm'; stored as 'HH:mm'. */
     nudgeTime?: string | undefined;
+    /** "About me, for my agents"; null or empty clears it. */
+    agentProfile?: string | null | undefined;
 }
 
 /**
@@ -58,6 +61,7 @@ export async function updateLearningSettings(userId: string, input: LearningSett
                 ...(input.busyUntil !== undefined ? { busyUntil: input.busyUntil === null ? null : toDbDay(input.busyUntil) } : {}),
                 ...(input.nudgeEmailEnabled !== undefined ? { nudgeEmailEnabled: input.nudgeEmailEnabled } : {}),
                 ...(input.nudgeTime !== undefined ? { nudgeTime: minutesToTime(timeToMinutes(input.nudgeTime)) } : {}),
+                ...(input.agentProfile !== undefined ? { agentProfile: input.agentProfile?.trim() ? input.agentProfile.trim().slice(0, 600) : null } : {}),
             },
             select: settingsSelect,
         });

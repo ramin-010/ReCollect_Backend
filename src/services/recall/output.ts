@@ -27,6 +27,8 @@ export interface RecallQuestion {
     prompt: string;
     answerKey: string;
     sourceQuote: string;
+    /** The open weak spot this question asks about (SYNC_SPINE_SPEC 1.2): a strong answer clears it. */
+    weakSpotId?: string;
 }
 
 // ─── JSON schemas for the API (structured outputs) ─────────────────────
@@ -47,8 +49,12 @@ export const QUESTIONS_SCHEMA: Record<string, unknown> = {
                         type: 'string',
                         description: 'The passage that supports the answer, copied word for word from the doc, at most 300 characters.',
                     },
+                    weakSpotId: {
+                        type: 'string',
+                        description: 'The id of the listed weak spot this question asks about, or an empty string.',
+                    },
                 },
-                required: ['kind', 'prompt', 'answerKey', 'sourceQuote'],
+                required: ['kind', 'prompt', 'answerKey', 'sourceQuote', 'weakSpotId'],
                 additionalProperties: false,
             },
         },
@@ -101,6 +107,7 @@ const zQuestionsOutput = z.object({
             prompt: z.string(),
             answerKey: z.string(),
             sourceQuote: z.string(),
+            weakSpotId: z.string().optional(),
         })
     ),
 });
@@ -166,7 +173,8 @@ export function parseQuestionsOutput(text: string): RecallQuestion[] {
         const key = prompt.toLowerCase();
         if (seen.has(key)) continue;
         seen.add(key);
-        out.push({ id: `q${out.length + 1}`, kind: q.kind, prompt, answerKey, sourceQuote: clip(q.sourceQuote.trim(), MAX_QUOTE_CHARS) });
+        const weakSpotId = q.weakSpotId?.trim();
+        out.push({ id: `q${out.length + 1}`, kind: q.kind, prompt, answerKey, sourceQuote: clip(q.sourceQuote.trim(), MAX_QUOTE_CHARS), ...(weakSpotId ? { weakSpotId } : {}) });
         if (out.length === MAX_QUESTIONS) break;
     }
     if (out.length === 0) throw new ModelOutputError('No usable questions');
@@ -196,6 +204,7 @@ const zStoredQuestion = z.object({
     prompt: z.string(),
     answerKey: z.string().catch(''),
     sourceQuote: z.string().catch(''),
+    weakSpotId: z.string().optional().catch(undefined),
 });
 
 /** RecallSet.questions as written by this module; malformed entries are skipped. */
@@ -204,7 +213,9 @@ export function parseStoredQuestions(value: unknown): RecallQuestion[] {
     const out: RecallQuestion[] = [];
     for (const item of value) {
         const q = zStoredQuestion.safeParse(item);
-        if (q.success && q.data.prompt) out.push(q.data);
+        if (!q.success || !q.data.prompt) continue;
+        const { weakSpotId, ...rest } = q.data;
+        out.push(weakSpotId ? { ...rest, weakSpotId } : rest);
     }
     return out;
 }

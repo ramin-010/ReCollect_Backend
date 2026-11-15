@@ -9,7 +9,7 @@ import type { User } from '@prisma/client';
 export type AuthUser = Omit<User, 'password'> & { _id: string };
 
 /** Personal access token scopes. A cookie session has all of them. */
-export const API_SCOPES = ['read', 'docs:write', 'learning:write'] as const;
+export const API_SCOPES = ['read', 'docs:write', 'learning:write', 'sessions:write', 'tasks:write'] as const;
 export type ApiScope = (typeof API_SCOPES)[number];
 
 /**

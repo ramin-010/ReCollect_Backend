@@ -17,6 +17,14 @@ import * as rev from '../controllers/learning/revisions.controller';
 import * as items from '../controllers/learning/items.controller';
 import * as sched from '../controllers/learning/schedule.controller';
 import * as loop from '../controllers/learning/loop.controller';
+import * as sessions from '../controllers/learning/sessions.controller';
+import * as brief from '../controllers/learning/brief.controller';
+import * as week from '../controllers/learning/week.controller';
+import * as mirror from '../controllers/learning/mirror.controller';
+import * as tasks from '../controllers/learning/tasks.controller';
+import * as decisions from '../controllers/learning/decisions.controller';
+import * as actions from '../controllers/actions.controller';
+import * as managerTools from '../controllers/learning/managerTools.controller';
 import { learningUploadMiddleware } from '../services/learningDb/uploads.service';
 
 const router = express.Router();
@@ -25,19 +33,26 @@ const router = express.Router();
 const authenticate: RequestHandler = (req, res, next) => (req.user ? next() : authMiddleware(req, res, next));
 // Access tokens: GETs need `read`, writes `learning:write` (a cookie session has every scope).
 const auth: RequestHandler[] = [authenticate, scopeByMethod('learning:write')];
+/** The record: a token writes sessions with sessions:write (a Claude Code hook has only that and read). */
+const sessionAuth: RequestHandler[] = [authenticate, scopeByMethod('sessions:write')];
+/** Personal tasks for agents (LOOP_COMPLETE_SPEC 4.1): reads need `read`, writes `tasks:write`. */
+const taskAuth: RequestHandler[] = [authenticate, scopeByMethod('tasks:write')];
 
 // #1–3 Home payload, rollover, settings
 router.get('/today', auth, rev.today);
 router.post('/learning/ensure-today', auth, rev.ensureToday);
 router.get('/learning/settings', auth, loop.getSettingsHandler);
-router.patch('/learning/settings', auth, loop.patchSettingsHandler);
+router.patch('/learning/settings', auth, idempotency, agentLog.logSettingsUpdate, loop.patchSettingsHandler);
 
 // #4–7 Revisions
 router.post('/revisions/start', auth, idempotency, agentLog.logRevisionStart, rev.start);
-router.post('/revisions/:id/complete', auth, rev.complete);
+router.post('/revisions/:id/complete', auth, idempotency, agentLog.logRevisionComplete, rev.complete);
 router.post('/revisions/:id/uncomplete', auth, rev.uncomplete);
-router.post('/revisions/:id/reschedule', auth, rev.reschedule);
+router.post('/revisions/:id/reschedule', auth, idempotency, agentLog.logRevisionReschedule, rev.reschedule);
+router.get('/revisions/calendar', auth, managerTools.revisionCalendarHandler); // each day's load (the reschedule calendar)
 router.post('/revisions/fresh-start', auth, loop.freshStartHandler);
+// An agent spreads the overdue reviews (undoable); more than 20 only asks (his tap).
+router.post('/revisions/spread', auth, idempotency, agentLog.logRevisionsSpread, managerTools.spreadBacklogHandler);
 
 // #8–11 Subjects
 router.get('/subjects', auth, items.listSubjectsHandler);
@@ -52,6 +67,7 @@ router.patch('/topics/:id/path', auth, idempotency, agentLog.logTopicUpdate, pat
 // #12–16 Topics
 router.get('/topics/statuses', auth, items.topicStatusesHandler);
 router.get('/topics/by-doc/:docId', auth, items.topicByDocHandler);
+router.get('/topics/:id/recall', auth, managerTools.recallResultsHandler); // results and weak answers (get_recall)
 router.post('/topics', auth, idempotency, agentLog.logTopicCreate, items.createTopicHandler);
 router.patch('/topics/:id', auth, items.updateTopicHandler);
 router.delete('/topics/:id', auth, items.deleteTopicHandler);
@@ -87,6 +103,42 @@ router.patch('/schedule/blocks/:id', auth, sched.updateBlockHandler);
 router.delete('/schedule/blocks/:id', auth, sched.deleteBlockHandler);
 
 // Daily loop v2: focus lines (LOOP_V2_SPEC §3)
+// The record (SYNC_SPINE_SPEC 1.2): sessions written by agents, hooks or by hand; projects.
+router.put('/sessions/by-key/:key', sessionAuth, sessions.putSessionByKeyHandler);
+router.post('/sessions', sessionAuth, sessions.createSessionHandler);
+router.get('/sessions', sessionAuth, sessions.listSessionsHandler);
+router.patch('/sessions/:id', sessionAuth, sessions.updateSessionHandler);
+router.delete('/sessions/:id', sessionAuth, sessions.deleteSessionHandler);
+router.get('/projects', sessionAuth, sessions.listProjectsHandler);
+// The brief (SYNC_SPINE_SPEC 1.3): where Ramin stands, in one call.
+router.get('/brief', auth, brief.getBriefHandler);
+
+// The week and suggestions (LOOP_COMPLETE_SPEC 1.6). Accepting a suggestion is the app's only (tokens
+// may not call those routes at all: tokenRoutes.ts).
+router.get('/week', auth, week.getWeekHandler);
+router.get('/mirror', auth, mirror.getMirrorHandler); // LOOP_COMPLETE_SPEC 1.7
+router.get('/tasks', taskAuth, tasks.listTasksHandler);
+router.post('/tasks', taskAuth, idempotency, agentLog.logTaskCreate, tasks.createTaskHandler);
+router.patch('/tasks/:id', taskAuth, idempotency, agentLog.logTaskUpdate, tasks.updateTaskHandler);
+// Reminders: a personal task with a time (MANAGER_AND_DOCS_PLAN §3.3).
+router.get('/reminders', taskAuth, managerTools.listRemindersHandler);
+router.post('/reminders', taskAuth, idempotency, agentLog.logReminderSet, managerTools.setReminderHandler);
+router.post('/reminders/:id/cancel', taskAuth, idempotency, agentLog.logReminderCancel, managerTools.cancelReminderHandler);
+// The decision journal (LOOP_COMPLETE_SPEC 4.2).
+router.get('/decisions', auth, decisions.listDecisionsHandler);
+router.post('/decisions', auth, idempotency, agentLog.logDecisionCreate, decisions.createDecisionHandler);
+router.patch('/decisions/:id', auth, idempotency, agentLog.logDecisionUpdate, decisions.updateDecisionHandler);
+router.post('/week/targets', auth, idempotency, agentLog.logWeekTargetCreate, week.addWeekTargetHandler);
+router.patch('/week/targets/:id', auth, idempotency, agentLog.logWeekTargetUpdate, week.updateWeekTargetHandler);
+router.get('/suggestions', auth, week.listSuggestionsHandler);
+router.post('/suggestions', auth, idempotency, week.proposeSuggestionHandler);
+// Level 3 (MANAGER_AND_DOCS_PLAN §3.2): an action kept for Ramin's tap; only accepting it runs it.
+router.post('/actions', auth, idempotency, actions.requestActionHandler);
+router.post('/suggestions/decide', auth, week.decideSuggestionsHandler);
+router.post('/suggestions/:id/accept', auth, week.acceptSuggestionHandler);
+router.post('/suggestions/:id/dismiss', auth, week.dismissSuggestionHandler);
+router.patch('/projects/:id', sessionAuth, idempotency, agentLog.logProjectUpdate, sessions.updateProjectHandler);
+
 router.post('/focus', auth, idempotency, agentLog.logFocusAdd, loop.createFocusHandler);
 router.post('/focus/carry-over', auth, loop.carryOverFocusHandler);
 router.patch('/focus/:id', auth, idempotency, agentLog.logFocusUpdate, loop.updateFocusHandler);

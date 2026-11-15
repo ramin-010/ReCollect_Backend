@@ -219,4 +219,12 @@ PowerShell: `$env:TEST_DB_NAME='recollect_test_<you>'; npm run test:int`. The te
 | `RecentVisit.user` | `RecentVisit.userId` (`itemId` stays a plain string) |
 | `Reminder.user/todoId` (note/content/dashboard cut) | `Reminder.userId/todoId`; status gains `processing` |
 
-`Doc.yjsState` stays Base64 text, exactly as in Mongo.
+`Doc.yjsState` (and `DocSnapshot.yjsState` / `agentUpdate`) are bytes since D3 (2026-11-15, migration `20261115130000_doc_state_bytes`): `services/docs/docState.ts` converts where Base64 is still met. The doc JSON does not send the state.
+
+## Making a new migration (2026-11-14)
+
+The migration folders of 14 Nov carry hand-picked names (`20261114180000_…` to `20261114220000_…`) that sort **after** today's UTC time, so `prisma migrate dev` names a new one with an earlier timestamp: it sorts before the tables it needs, and the shadow database fails ("relation … does not exist"). It also applied the migration while doing so. Instead:
+
+1. Change `schema.prisma`, then `npx prisma format`.
+2. `mkdir prisma/migrations/<the last name + 1>_<what>` and write the SQL with `npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script > …/migration.sql`.
+3. Read the SQL (only your change in it), then `npm run db:deploy` and `npx prisma generate`.

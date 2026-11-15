@@ -186,45 +186,77 @@ export const sendWelcomeEmail = async (user: any): Promise<boolean> => {
   }
 };
 
-// ─── 3. Access Request ────────────────────────────────────────────────
-// NOTE: sendTodoReminderEmail has been moved to:
-//   - controllers/workspace/workspaceEmails.ts (sendWorkspaceTaskReminderEmail)
-//   - controllers/personalTasks/personalEmails.ts (sendPersonalTaskReminderEmail)
-export const sendAccessRequestEmail = async (
+// ─── 3. Sharing (MANAGER_AND_DOCS_PLAN §2) ─────────────────────────────
+// The task reminder emails moved to controllers/workspace/workspaceEmails.ts and
+// controllers/personalTasks/personalEmails.ts. Callers skip undeliverable addresses (isDeliverableEmail).
+
+const RECOLLECT_FROM = () => `"Recollect" <${process.env.EMAIL_FROM || 'noreply@recollect.com'}>`;
+
+/** To the owner: someone reading his published doc asks to edit it; he answers in the Share menu. */
+export const sendDocRequestEmail = async (
   owner: { name: string; email: string },
   requester: { name: string; email: string },
   docTitle: string,
-  docId: string,
-  requestId: string
+  docId: string
 ): Promise<boolean> => {
   try {
     const transporter = createTransporter();
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-
     const emailContent = `
-      ${uiHeading(`${requester.name} requested access`)}
-      ${uiBody(`<strong>${requester.email}</strong> requested access to <strong>${docTitle}</strong>. Open ReCollect to review their request.`)}
-      
+      ${uiHeading(`${escapeHtml(requester.name)} asks to edit ${escapeHtml(docTitle)}`)}
+      ${uiBody(`<strong>${escapeHtml(requester.email)}</strong> read your published doc and asks to edit it. Say yes or no in the doc's Share menu.`)}
       <div style="margin: 0 0 8px;">
-        ${uiButton(`${frontendUrl}/?view=docs&tab=requests`, 'Review request')}
+        ${uiButton(`${frontendUrl}/docs/${docId}?share=1`, 'Open the Share menu')}
       </div>
     `;
-
     await transporter.sendMail({
-      from: `"ReCollect" <${process.env.EMAIL_FROM || 'noreply@recollect.com'}>`,
+      from: RECOLLECT_FROM(),
       to: owner.email,
-      subject: `${requester.name} requested access to "${docTitle}"`,
-      html: wrapEmail(emailContent, frontendUrl)
+      subject: `${requester.name} asks to edit "${docTitle}"`,
+      html: wrapEmail(emailContent, frontendUrl),
+      text: `${requester.name} (${requester.email}) asks to edit "${docTitle}". Answer in the doc's Share menu: ${frontendUrl}/docs/${docId}?share=1`,
     });
     return true;
   } catch (error) {
-    console.error('Failed to send access request email:', error);
+    console.error('Failed to send the request email:', error);
     return false;
   }
 };
 
-// ─── 5. Access Approved ───────────────────────────────────────────────
-export const sendAccessApprovedEmail = async (
+/** To someone he added by email. */
+export const sendDocSharedEmail = async (
+  person: { name: string; email: string },
+  ownerName: string,
+  docTitle: string,
+  docId: string,
+  roleWords: string
+): Promise<boolean> => {
+  try {
+    const transporter = createTransporter();
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const emailContent = `
+      ${uiHeading(`${escapeHtml(ownerName)} shared ${escapeHtml(docTitle)} with you`)}
+      ${uiBody(`You ${escapeHtml(roleWords)}. It is in your Docs, under Shared.`)}
+      <div style="margin: 0 0 8px;">
+        ${uiButton(`${frontendUrl}/docs/${docId}`, 'Open the doc')}
+      </div>
+    `;
+    await transporter.sendMail({
+      from: RECOLLECT_FROM(),
+      to: person.email,
+      subject: `${ownerName} shared "${docTitle}" with you`,
+      html: wrapEmail(emailContent, frontendUrl),
+      text: `${ownerName} shared "${docTitle}" with you: you ${roleWords}. ${frontendUrl}/docs/${docId}`,
+    });
+    return true;
+  } catch (error) {
+    console.error('Failed to send the shared-doc email:', error);
+    return false;
+  }
+};
+
+/** To someone whose request to edit he said yes to. */
+export const sendRequestApprovedEmail = async (
   requester: { name: string; email: string },
   ownerName: string,
   docTitle: string,
@@ -233,29 +265,26 @@ export const sendAccessApprovedEmail = async (
   try {
     const transporter = createTransporter();
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-
     const emailContent = `
-      ${uiHeading(`You have access to ${docTitle}`)}
-      ${uiBody(`<strong>${ownerName}</strong> has granted you access to this document. You can now view and edit its contents.`)}
-      
+      ${uiHeading(`You can edit ${escapeHtml(docTitle)}`)}
+      ${uiBody(`<strong>${escapeHtml(ownerName)}</strong> said yes. It is in your Docs, under Shared.`)}
       <div style="margin: 0 0 8px;">
-        ${uiButton(`${frontendUrl}/?view=docs`, 'Open document')}
+        ${uiButton(`${frontendUrl}/docs/${docId}`, 'Open the doc')}
       </div>
     `;
-
     await transporter.sendMail({
-      from: `"ReCollect" <${process.env.EMAIL_FROM || 'noreply@recollect.com'}>`,
+      from: RECOLLECT_FROM(),
       to: requester.email,
-      subject: `Access Granted: ${docTitle}`,
-      html: wrapEmail(emailContent, frontendUrl)
+      subject: `You can edit "${docTitle}"`,
+      html: wrapEmail(emailContent, frontendUrl),
+      text: `${ownerName} said yes: you can edit "${docTitle}". ${frontendUrl}/docs/${docId}`,
     });
     return true;
   } catch (error) {
-    console.error('Failed to send access approved email:', error);
+    console.error('Failed to send the approval email:', error);
     return false;
   }
 };
-
 
 // NOTE: sendTaskAssignmentEmail has been moved to:
 //   - controllers/workspace/workspaceEmails.ts (sendWorkspaceTaskAssignmentEmail + sendWorkspaceInviteEmail)

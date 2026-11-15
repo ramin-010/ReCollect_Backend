@@ -1,4 +1,7 @@
 import * as Y from 'yjs';
+import { hasBlocks, readBlocks } from '../services/docs/blocks/serverEditor';
+import { blocksToOldJson } from '../services/docs/blocks/toOldJson';
+import { stateUpdate, type DocState } from '../services/docs/docState';
 
 const MAX_NODES = 6;
 const MAX_TEXT_LENGTH = 300;
@@ -71,10 +74,9 @@ interface ParsedYjsState {
   };
 }
 
-function parseYjsState(yjsStateBase64: string): ParsedYjsState {
+function parseYjsState(yjsState: DocState): ParsedYjsState {
   const ydoc = new Y.Doc();
-  const state = Buffer.from(yjsStateBase64, 'base64');
-  Y.applyUpdate(ydoc, state);
+  Y.applyUpdate(ydoc, stateUpdate(yjsState));
   
   const fragment = ydoc.getXmlFragment('default');
   const nodes: any[] = [];
@@ -156,7 +158,10 @@ function parseYjsState(yjsStateBase64: string): ParsedYjsState {
     };
   }
   
-  if (fragment.toArray) {
+  if (hasBlocks(ydoc)) {
+    // A doc on the new editor previews from its blocks, as old JSON (DOCS_EDITOR_V2_PLAN phase 4).
+    nodes.push(...(blocksToOldJson(readBlocks(ydoc)).content ?? []));
+  } else if (fragment.toArray) {
     for (const child of fragment.toArray()) {
       const json = xmlToJson(child);
       if (json) nodes.push(json);
@@ -188,12 +193,12 @@ function parseYjsState(yjsStateBase64: string): ParsedYjsState {
 }
 
 // Legacy function - still used by other code
-function yjsStateToJson(yjsStateBase64: string): any {
-  return parseYjsState(yjsStateBase64).content;
+function yjsStateToJson(yjsState: DocState): any {
+  return parseYjsState(yjsState).content;
 }
 
 
-export function generatePreviewState(yjsState: string): string | null {
+export function generatePreviewState(yjsState: DocState): string | null {
   if (!yjsState) return null;
   
   try {
@@ -229,7 +234,7 @@ export interface PreviewAndMetadata {
  * Generate preview state AND extract metadata from Yjs state in a single parse.
  * This is efficient because we only parse the Y.Doc once to get both values.
  */
-export function generatePreviewAndMetadata(yjsState: string): PreviewAndMetadata {
+export function generatePreviewAndMetadata(yjsState: DocState): PreviewAndMetadata {
   if (!yjsState) {
     return { previewState: null, metadata: {} };
   }

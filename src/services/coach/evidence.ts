@@ -75,6 +75,17 @@ export interface CoachRows {
     focus: ReadonlyArray<{ day: DayString; text: string; done: boolean }>;
     /** The user's docs created or updated in the window (not archived). */
     docs: ReadonlyArray<{ title: string; createdAt: Date; updatedAt: Date }>;
+    /**
+     * The record (LOOP_COMPLETE_SPEC 1.7): sessions of the window (and around it), weak spots open now
+     * and cleared in the window, the targets of the week the window ends in. Optional: older callers
+     * and tests leave it out.
+     */
+    record?: {
+        sessions: ReadonlyArray<{ day: DayString; kind: 'study' | 'practice' | 'build' | 'review'; minutes: number | null; outcome: string | null }>;
+        weakSpotsOpen: number;
+        weakSpotsCleared: number;
+        weekTargets: { done: number; total: number } | null;
+    };
     /** Active goals, milestones in their order. */
     goals: ReadonlyArray<{
         title: string;
@@ -123,6 +134,14 @@ export interface CoachEvidence {
         nextMilestone: { title: string; due: DayString | null } | null;
     }>;
     rhythm: { activeDays: number; days: Array<{ day: DayString; weekday: string; active: boolean }> };
+    /** The record of the window: minutes per kind, sessions, practice outcomes, weak spots, the week's targets. */
+    record: {
+        minutes: Record<'study' | 'practice' | 'build' | 'review', number>;
+        sessions: number;
+        practice: { alone: number; hints: number; after_answer: number };
+        weakSpots: { open: number; clearedInWeek: number };
+        weekTargets: { done: number; total: number } | null;
+    };
 }
 
 const zeroCounts = (): Counts => ({ strong: 0, partial: 0, weak: 0 });
@@ -239,11 +258,26 @@ export function buildCoachEvidence(rows: CoachRows, ctx: CoachWindow & { today: 
         tz,
         completions: doneInWeek.map((r) => r.completedAt!),
         focusDoneDays: focus.filter((f) => f.done).map((f) => f.day),
+        sessionDays: (rows.record?.sessions ?? []).map((x) => x.day),
     });
+
+    // ── The record ──
+    const sessions = (rows.record?.sessions ?? []).filter((x) => dayInWeek(x.day));
+    const record = {
+        minutes: { study: 0, practice: 0, build: 0, review: 0 },
+        sessions: sessions.length,
+        practice: { alone: 0, hints: 0, after_answer: 0 },
+        weakSpots: { open: rows.record?.weakSpotsOpen ?? 0, clearedInWeek: rows.record?.weakSpotsCleared ?? 0 },
+        weekTargets: rows.record?.weekTargets ?? null,
+    };
+    for (const x of sessions) {
+        record.minutes[x.kind] += x.minutes ?? 0;
+        if (x.kind === 'practice' && (x.outcome === 'alone' || x.outcome === 'hints' || x.outcome === 'after_answer')) record.practice[x.outcome] += 1;
+    }
 
     // ── How much is there to go on ──
     const catchUp = doneInWeek.filter((r) => !dayInWeek(r.scheduledFor)).length;
-    const points = due.length + catchUp + answers.strong + answers.partial + answers.weak + focus.length + created.length + edited.length + milestonesDone;
+    const points = due.length + catchUp + answers.strong + answers.partial + answers.weak + focus.length + created.length + edited.length + milestonesDone + sessions.length + record.weakSpots.clearedInWeek;
     const level: EvidenceLevel =
         points === 0 && rows.backlog === 0 && goals.length === 0 ? 'none' : points <= LITTLE_EVIDENCE_POINTS ? 'little' : 'enough';
 
@@ -275,5 +309,6 @@ export function buildCoachEvidence(rows: CoachRows, ctx: CoachWindow & { today: 
         },
         goals,
         rhythm: { activeDays: rhythm.activeDays, days: rhythm.last7.map((d) => ({ day: d.day, weekday: weekdayName(d.day), active: d.active })) },
+        record,
     };
 }

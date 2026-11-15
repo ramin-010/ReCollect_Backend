@@ -14,7 +14,7 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '../../db/prisma';
 import { captureTitle } from '../../db/serializers/learning';
 import { serializeCoachNote, type CoachNoteJson } from '../../db/serializers/coach';
-import { dayOf, startOfDay, type DayString } from '../learning';
+import { addDays, dayOf, startOfDay, type DayString } from '../learning';
 import { dayRange, fromDbDay, fromDbDayOrNull, loadLearningContext, toDbDay } from '../learningDb/common';
 import { aiModel, callClaude, isAiConfigured } from '../claude/client';
 import { aiFailed, aiNotConfigured } from '../claude/errors';
@@ -22,6 +22,8 @@ import { assertUnderCap, recordAiUsage } from '../claude/usage.service';
 import { ModelOutputError, parseStoredQuestions, responseText } from '../recall/output';
 import { withRefusalFallbacks } from '../recall/prompts';
 import { buildCoachEvidence, coachWindow, type CoachRows, type CoachWindow } from './evidence';
+import { plainCoachNote, unsupportedNumbers } from './check';
+import { weekStartOf, weekSummary } from '../learningDb/week.service';
 import { parseCoachOutput, type CoachOutput } from './output';
 import { coachRequest } from './prompts';
 
@@ -61,7 +63,7 @@ export async function loadCoachRows(userId: string, ctx: { today: DayString; tz:
     const to = startOfDay(ctx.today, ctx.tz);
     const weekDays = { gte: toDbDay(w.weekStart), lte: toDbDay(w.weekEnd) };
     const instants = { gte: from, lt: to };
-    const [revisions, backlog, recallSets, focus, docs, goals] = await Promise.all([
+    const [revisions, backlog, recallSets, focus, docs, goals, sessions, weakSpotsOpen, weakSpotsCleared, week] = await Promise.all([
         prisma.revision.findMany({
             where: { userId, OR: [{ scheduledFor: weekDays }, { status: 'done', completedAt: instants }] },
             select: {
@@ -98,6 +100,11 @@ export async function loadCoachRows(userId: string, ctx: { today: DayString; tz:
             where: { userId, status: 'active' },
             select: { title: true, deadline: true, createdAt: true, milestones: { orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }] } },
         }),
+        // The record (LOOP_COMPLETE_SPEC 1.7): sessions, weak spots, the week's targets.
+        prisma.workSession.findMany({ where: { userId, day: weekDays }, select: { day: true, kind: true, minutes: true, outcome: true } }),
+        prisma.weakSpot.count({ where: { userId, status: 'open' } }),
+        prisma.weakSpot.count({ where: { userId, status: 'cleared', clearedAt: instants } }),
+        weekSummary(userId, weekStartOf(w.weekEnd), ctx.tz),
     ]);
 
     const itemTitle = (item: { topic: { title: string; doc: { title: string } | null } | null; capture: { title: string | null; content: string | null } | null }) =>
@@ -127,6 +134,12 @@ export async function loadCoachRows(userId: string, ctx: { today: DayString; tz:
             createdDay: dayOf(g.createdAt, ctx.tz),
             milestones: g.milestones.map((m) => ({ title: m.title, done: m.done, doneAt: m.doneAt, dueDay: fromDbDayOrNull(m.dueDay) })),
         })),
+        record: {
+            sessions: sessions.map((x) => ({ day: fromDbDay(x.day), kind: x.kind, minutes: x.minutes, outcome: x.outcome })),
+            weakSpotsOpen,
+            weakSpotsCleared,
+            weekTargets: week.targets.total ? week.targets : null,
+        },
     };
 }
 
@@ -164,6 +177,13 @@ export async function generateCoachNote(userId: string, opts: { fresh?: boolean 
             throw outputFailure(err);
         }
         model = message.model;
+        // Every number must be one the evidence holds; otherwise a plain note from the same facts.
+        const unsupported = unsupportedNumbers(output, evidence);
+        if (unsupported.length) {
+            console.warn(`[coach] numbers not in the evidence (${unsupported.join(', ')}): a plain note instead`);
+            output = plainCoachNote(evidence);
+            model = `plain (checked): ${message.model}`;
+        }
     }
 
     const row = await prisma.coachNote.create({
@@ -177,6 +197,21 @@ export async function generateCoachNote(userId: string, opts: { fresh?: boolean 
             createdAt: now,
         },
     });
+    // Its focus lines wait on Home under Suggested (one tap adds one to today), for a week.
+    if (model !== QUIET_WEEK_MODEL) {
+        await prisma.suggestion.createMany({
+            data: output.focus.map((text) => ({
+                userId,
+                kind: 'focus_line' as const,
+                text: text.slice(0, 200),
+                reason: 'From the weekly coach',
+                payload: { text: text.slice(0, 140) },
+                proposedBy: 'coach' as const,
+                batch: `coach:${row.id}`.slice(0, 40),
+                expiresDay: toDbDay(addDays(ctx.today, 6)),
+            })),
+        });
+    }
     return { note: serializeCoachNote(row), created: true };
 }
 

@@ -8,9 +8,12 @@ import type { NextFunction, Request, RequestHandler, Response } from 'express';
 import type { AgentEditKind, GoalStatus, Prisma } from '@prisma/client';
 import { prisma } from '../../db/prisma';
 import { isTokenRequest } from '../../middlwares/auth';
-import { conflict } from '../learning/http';
+import { conflict, LearningHttpError } from '../learning/http';
 import { fromDbDay, fromDbDayOrNull } from '../learningDb/common';
 import { pathPlaces } from '../learningDb/path.service';
+import { weekTargetBefore } from '../learningDb/week.service';
+import { taskBefore } from '../tasks/tasks.service';
+import { decisionBefore } from '../learningDb/decisions.service';
 import { agentActor, plural, quoted, recordAgentEdit, type AgentActor } from './agentEditLog';
 
 /** The `data` of a `{ success: true, data }` response (route-specific shape). */
@@ -355,5 +358,190 @@ export const logPocketAdd = agentEdit<{ pin: boolean }>('pocket_add', {
         }
         const firstLine = String(data.content ?? '').split('\n').find((l) => l.trim()) ?? '';
         return { summary: `Added a pocket note${before.pin ? ' (pinned)' : ''}: ${quoted(firstLine, 80)}`, entityId: data._id };
+    },
+});
+
+// ─── The week (LOOP_COMPLETE_SPEC 1.6) ─────────────────────────────────
+
+/** POST /api/week/targets by an agent: marked as the agent's; Undo removes it. */
+export const logWeekTargetCreate = agentEdit('week_target_create', {
+    after: async ({ actor, data }) => {
+        await prisma.weekTarget.updateMany({ where: { id: data._id, userId: actor.userId }, data: byAgent(actor) });
+        return { summary: `Added the week target ${quoted(String(data.text))}`, entityId: data._id };
+    },
+});
+
+/** PATCH /api/week/targets/:id by an agent: Undo puts the old text, state and place back. */
+export const logWeekTargetUpdate = agentEdit<Awaited<ReturnType<typeof weekTargetBefore>>>('week_target_update', {
+    before: (req, actor) => weekTargetBefore(actor.userId, routeId(req)),
+    after: ({ req, before, data }) => {
+        if (!before) return null;
+        const text = quoted(String(data?.text ?? before.text));
+        const status = req.body?.status;
+        const summary =
+            status === 'done' && before.status !== 'done'
+                ? `Ticked the week target ${text}`
+                : status === 'dropped' && before.status !== 'dropped'
+                  ? `Dropped the week target ${text}`
+                  : status === 'open' && before.status !== 'open'
+                    ? `Reopened the week target ${text}`
+                    : `Changed the week target ${quoted(before.text)}${req.body?.text !== undefined ? ` to ${text}` : ''}`;
+        return { summary, entityId: before.id, undoData: { before: { text: before.text, status: before.status, sortOrder: before.sortOrder, doneAt: before.doneAt?.toISOString() ?? null } } };
+    },
+});
+
+// ─── Personal tasks (LOOP_COMPLETE_SPEC 4.1) ───────────────────────────
+
+/** POST /api/tasks by an agent: Undo deletes the task. */
+export const logTaskCreate = agentEdit('task_create', {
+    after: ({ data }) => ({ summary: `Added the task ${quoted(String(data.title))}`, entityId: data._id }),
+});
+
+/** PATCH /api/tasks/:id by an agent: Undo puts the old title, due, priority and status back. */
+export const logTaskUpdate = agentEdit<Awaited<ReturnType<typeof taskBefore>>>('task_update', {
+    before: (req, actor) => taskBefore(actor.userId, routeId(req)),
+    after: ({ req, before, data }) => {
+        if (!before) return null;
+        const title = quoted(String(data?.title ?? before.title));
+        const summary =
+            req.body?.status === 'complete' && before.status !== 'complete'
+                ? `Ticked the task ${title}`
+                : req.body?.status && req.body.status !== before.status
+                  ? `Moved the task ${title} to ${String(req.body.status).replace('_', ' ')}`
+                  : `Changed the task ${quoted(before.title)}${req.body?.title !== undefined ? ` to ${title}` : ''}`;
+        return {
+            summary,
+            entityId: before.id,
+            undoData: { before: { title: before.title, status: before.status, priority: before.priority, dueDate: before.dueDate?.toISOString() ?? null, completedAt: before.completedAt?.toISOString() ?? null } },
+        };
+    },
+});
+
+// ─── The decision journal (LOOP_COMPLETE_SPEC 4.2) ─────────────────────
+
+/** POST /api/decisions by an agent: marked as the agent's; Undo deletes it. */
+export const logDecisionCreate = agentEdit('decision_create', {
+    after: async ({ actor, data }) => {
+        await prisma.decision.updateMany({ where: { id: data._id, userId: actor.userId }, data: byAgent(actor) });
+        return { summary: `Logged the decision ${quoted(String(data.title))} (look again ${data.lookAgainDay})`, entityId: data._id };
+    },
+});
+
+/** PATCH /api/decisions/:id by an agent: Undo puts every field back. */
+export const logDecisionUpdate = agentEdit<Awaited<ReturnType<typeof decisionBefore>>>('decision_update', {
+    before: (req, actor) => decisionBefore(actor.userId, routeId(req)),
+    after: ({ before, data }) =>
+        before
+            ? {
+                  summary: `Changed the decision ${quoted(String(data?.title ?? before.title))}`,
+                  entityId: before.id,
+                  undoData: {
+                      before: {
+                          title: before.title,
+                          why: before.why,
+                          expect: before.expect,
+                          lookAgainDay: fromDbDay(before.lookAgainDay),
+                          status: before.status,
+                          verdict: before.verdict,
+                          verdictNote: before.verdictNote,
+                          reviewedAt: before.reviewedAt?.toISOString() ?? null,
+                      },
+                  },
+              }
+            : null,
+});
+
+// ─── The manager's tools (MANAGER_AND_DOCS_PLAN §3.3): revisions, settings, projects ──────
+
+/** The item a revision belongs to, in words. */
+async function revisionItem(userId: string, revisionId: string) {
+    const rev = await prisma.revision.findFirst({
+        where: { id: revisionId, userId },
+        select: { id: true, status: true, scheduledFor: true, cycleNumber: true, topic: { select: { title: true } }, capture: { select: { title: true, content: true } } },
+    });
+    if (!rev) return null;
+    const title = rev.topic?.title ?? (rev.capture?.title || rev.capture?.content?.slice(0, 50) || 'a note');
+    return { id: rev.id, status: rev.status, day: fromDbDay(rev.scheduledFor), cycle: rev.cycleNumber, title };
+}
+
+/** POST /api/revisions/:id/complete by an agent: Undo marks it not done again. */
+export const logRevisionComplete = agentEdit<Awaited<ReturnType<typeof revisionItem>>>('revision_complete', {
+    before: (req, actor) => revisionItem(actor.userId, routeId(req)),
+    after: ({ before }) => (before && before.status !== 'done' ? { summary: `Marked the review of ${quoted(before.title)} done (review ${before.cycle})`, entityId: before.id } : null),
+});
+
+/** POST /api/revisions/:id/reschedule {day} by an agent: Undo moves it back to its day. */
+export const logRevisionReschedule = agentEdit<Awaited<ReturnType<typeof revisionItem>>>('revision_reschedule', {
+    before: (req, actor) => revisionItem(actor.userId, routeId(req)),
+    after: ({ req, before }) => {
+        const to = String(req.body?.day ?? '');
+        if (!before || before.day === to) return null;
+        return { summary: `Moved the review of ${quoted(before.title)} from ${before.day} to ${to}`, entityId: before.id, undoData: { from: before.day, to } };
+    },
+});
+
+/** What an agent may change in the learning settings (not the time zone or the old routine). */
+export const AGENT_SETTINGS = ['dailyBudgetMin', 'busyUntil', 'nudgeEmailEnabled', 'nudgeTime', 'agentProfile'] as const;
+type AgentSetting = (typeof AGENT_SETTINGS)[number];
+
+/** PATCH /api/learning/settings by an agent: only AGENT_SETTINGS; Undo puts the old values back. */
+export const logSettingsUpdate = agentEdit<Partial<Record<AgentSetting, unknown>>>('settings_update', {
+    before: async (req, actor) => {
+        const keys = Object.keys(req.body ?? {});
+        const refused = keys.filter((k) => !(AGENT_SETTINGS as readonly string[]).includes(k));
+        if (refused.length > 0) throw new LearningHttpError(403, 'SETTING_NOT_ALLOWED', `Agents may change ${AGENT_SETTINGS.join(', ')}; not ${refused.join(', ')}`);
+        const row = await prisma.user.findUniqueOrThrow({ where: { id: actor.userId }, select: { dailyBudgetMin: true, busyUntil: true, nudgeEmailEnabled: true, nudgeTime: true, agentProfile: true } });
+        const all: Record<AgentSetting, unknown> = { ...row, busyUntil: fromDbDayOrNull(row.busyUntil) };
+        return Object.fromEntries(keys.map((k) => [k, all[k as AgentSetting]])) as Partial<Record<AgentSetting, unknown>>;
+    },
+    after: ({ req, before }) => {
+        const changed = Object.keys(before).filter((k) => JSON.stringify(before[k as AgentSetting] ?? null) !== JSON.stringify(req.body?.[k] ?? null));
+        if (changed.length === 0) return null;
+        const words: Record<string, string> = { dailyBudgetMin: 'daily budget', busyUntil: 'busy until', nudgeEmailEnabled: 'morning email', nudgeTime: 'morning email time', agentProfile: 'profile' };
+        return {
+            summary: `Changed the settings: ${changed.map((k) => (k === 'agentProfile' ? 'profile' : `${words[k]} ${String(before[k as AgentSetting] ?? 'none')} → ${String(req.body?.[k] ?? 'none')}`)).join(', ')}`,
+            undoData: { before } as Prisma.InputJsonValue,
+        };
+    },
+});
+
+/** PATCH /api/projects/:id by an agent: Undo puts the old fields back. */
+export const logProjectUpdate = agentEdit<{ id: string; name: string; goalId: string | null; isArchived: boolean; nextStep: string | null } | null>('project_update', {
+    before: (req, actor) => prisma.project.findFirst({ where: { id: routeId(req), userId: actor.userId }, select: { id: true, name: true, goalId: true, isArchived: true, nextStep: true } }),
+    after: ({ req, before }) => {
+        if (!before) return null;
+        const parts = [
+            req.body?.name !== undefined && req.body.name !== before.name ? `renamed it ${quoted(String(req.body.name))}` : null,
+            req.body?.nextStep !== undefined && req.body.nextStep !== before.nextStep ? 'set its next step' : null,
+            req.body?.goalId !== undefined && req.body.goalId !== before.goalId ? (req.body.goalId ? 'linked a goal' : 'unlinked its goal') : null,
+            req.body?.isArchived !== undefined && req.body.isArchived !== before.isArchived ? (req.body.isArchived ? 'archived it' : 'took it out of the archive') : null,
+        ].filter(Boolean);
+        if (parts.length === 0) return null;
+        return { summary: `Changed the project ${quoted(before.name)}: ${parts.join(', ')}`, entityId: before.id, undoData: { before: { name: before.name, goalId: before.goalId, isArchived: before.isArchived, nextStep: before.nextStep } } };
+    },
+});
+
+// ─── The manager's last tools (stage 4 part 2) ─────────────────────────
+
+/** POST /api/reminders: on a task, or with the task it made (Undo cancels it, and deletes that task). */
+export const logReminderSet = agentEdit('reminder_set', {
+    after: ({ data }) => ({
+        summary: `Set a reminder for ${quoted(String(data.task))}${data.createdTask ? ' (a new task)' : ''}`,
+        entityId: data._id,
+        undoData: { createdTaskId: data.createdTask ? String(data.taskId) : null },
+    }),
+});
+
+/** POST /api/reminders/:id/cancel (Undo sets it again while its time is ahead). */
+export const logReminderCancel = agentEdit('reminder_cancel', {
+    after: ({ data }) => ({ summary: `Cancelled the reminder for ${quoted(String(data.task))}`, entityId: data._id }),
+});
+
+/** POST /api/revisions/spread: logged only when it moved reviews (asking is its own card). */
+export const logRevisionsSpread = agentEdit('revisions_spread', {
+    after: ({ data }) => {
+        const changes: Array<{ id: string; from: string; to: string }> = Array.isArray(data.changes) ? data.changes : [];
+        if (data.asked || changes.length === 0) return null;
+        return { summary: `Spread ${plural(Number(data.moved), 'overdue review')} over ${plural(Number(data.spreadDays), 'day')}`, undoData: { changes } };
     },
 });

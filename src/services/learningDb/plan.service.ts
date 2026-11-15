@@ -103,7 +103,14 @@ export async function activeGoalSubjectIds(userId: string, db: DbClient = prisma
  * cycles keep their gaps. One transaction, the user row locked (complete / reschedule lock it
  * too). `dryRun` computes the same answer without writing (for the confirmation text).
  */
-export async function freshStart(userId: string, opts: { dryRun?: boolean | undefined } = {}, now: Date = new Date()): Promise<{ moved: number; spreadDays: number }> {
+export interface FreshStartResult {
+    moved: number;
+    spreadDays: number;
+    /** Each review moved, from its old day to its new one (for an agent's Undo). */
+    changes: Array<{ id: string; from: DayString; to: DayString }>;
+}
+
+export async function freshStart(userId: string, opts: { dryRun?: boolean | undefined } = {}, now: Date = new Date()): Promise<FreshStartResult> {
     return prisma.$transaction(
         async (tx) => {
             const ctx = await lockLearningContext(tx, userId, now);
@@ -112,7 +119,8 @@ export async function freshStart(userId: string, opts: { dryRun?: boolean | unde
                 where: { userId, status: 'pending' },
                 select: { id: true, topicId: true, captureId: true, cycleNumber: true, intervalDays: true, scheduledFor: true, completedAt: true, status: true },
             });
-            if (!pending.some((r) => fromDbDay(r.scheduledFor) < today)) return { moved: 0, spreadDays: 0 };
+            if (!pending.some((r) => fromDbDay(r.scheduledFor) < today)) return { moved: 0, spreadDays: 0, changes: [] };
+            const dayOf = new Map(pending.map((r) => [r.id, fromDbDay(r.scheduledFor)]));
             const doneToday = await tx.revision.findMany({ where: { userId, status: 'done', completedAt: dayRange(today, tz) }, select: { cycleNumber: true } });
             const subjectOf = await itemSubjects(tx, userId, pending);
             const goalSubjectIds = await activeGoalSubjectIds(userId, tx);
@@ -124,13 +132,14 @@ export async function freshStart(userId: string, opts: { dryRun?: boolean | unde
                 goalSubjectIds,
                 doneToday,
             });
-            if (!opts.dryRun) {
-                for (const p of plan.patches) {
-                    if (p.scheduledFor === undefined) continue;
-                    await tx.revision.update({ where: { id: p.id }, data: { scheduledFor: toDbDay(p.scheduledFor) }, select: { id: true } });
-                }
+            const changes: FreshStartResult['changes'] = [];
+            for (const p of plan.patches) {
+                const from = dayOf.get(p.id);
+                if (p.scheduledFor === undefined || !from || from === p.scheduledFor) continue;
+                changes.push({ id: p.id, from, to: p.scheduledFor });
+                if (!opts.dryRun) await tx.revision.update({ where: { id: p.id }, data: { scheduledFor: toDbDay(p.scheduledFor) }, select: { id: true } });
             }
-            return { moved: plan.moved, spreadDays: plan.spreadDays };
+            return { moved: plan.moved, spreadDays: plan.spreadDays, changes };
         },
         { timeout: 60_000 }
     );

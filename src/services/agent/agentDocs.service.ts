@@ -1,5 +1,6 @@
-// Docs for agents (GET/POST /api/agent/docs…): search, read as Markdown, create, append, replace a
-// section, and the doc side of Undo. Small answers on purpose (agents pay per token).
+// Docs for agents (GET/POST /api/agent/docs…): search (on ../docs/docSearch.service.ts), read as
+// Markdown, create, append, replace a section, and the doc side of Undo. Small answers on purpose
+// (agents pay per token).
 //
 // Reads use the live doc when an editor has it open (it is ahead of Doc.yjsState by up to 10 s),
 // else the stored state. Writes to existing docs go through ./liveDoc.ts (Hocuspocus): only the
@@ -11,94 +12,35 @@
 // the ```canvas fence), writes lay out the diagrams of the text form first (../docs/diagram), then
 // absorb each board into the doc's canvas maps in the same transaction as the blocks, so Undo
 // takes both back. A write that makes canvases answers with a report per canvas (`canvases`).
-import type { AgentEdit } from '@prisma/client';
+import type { AgentEdit, Prisma } from '@prisma/client';
 import type { JSONContent } from '@tiptap/core';
 import { yXmlFragmentToProsemirrorJSON } from 'y-prosemirror';
 import { prisma } from '../../db/prisma';
 import ErrorResponse from '../../utils/errorResponse';
 import { generatePreviewState } from '../../utils/previewUtils';
-import { canvasIdsIn, canvasTexts, giveCanvasIds, liveCanvasTarget, readBoard, takeCanvasData, withCanvasData, writeBoardDiff, writeBoards } from '../docs/canvas';
+import { canvasIdsIn, giveCanvasIds, liveCanvasTarget, readBoard, takeCanvasData, withCanvasData, writeBoardDiff, writeBoards } from '../docs/canvas';
 import { resolveDiagrams, withCanvasIds, type CanvasReport } from '../docs/diagram/resolve';
 import { updateInPlace } from '../docs/diagram/update';
-import { accessibleDocWhere, canEditDoc, getDocRole } from '../docs/docPermissions';
+import { canEditDoc, getDocRole } from '../docs/docPermissions';
 import { findAccessibleDoc, normalizeDocTitle } from '../docs/docs.service';
+import { searchDocs } from '../docs/docSearch.service';
+import { restoreDoc, trashDoc } from '../docs/trash.service';
 import { yjsStateToDocJson } from '../docs/docContent';
 import { DOC_YJS_FRAGMENT } from '../docs/docSchema';
 import { docJsonToMarkdown, docJsonToYElements, docJsonToYjsState, markdownToBlocks, markdownToDocJson, nodePlainText } from '../docs/markdown/docMarkdown';
 import { createTopic } from '../learningDb/items.service';
+import { attachDocToTopic, detachDocFromTopic, type TopicBeforeAttach } from '../learningDb/path.service';
 import { plural, quoted, recordAgentEdit, type AgentActor } from './agentEditLog';
-import { fromBase64, liveDocument, toBase64, undoChange, withLiveDoc, type LiveChange, type LiveDoc } from './liveDoc';
+import { hasBlocks, readBlocks } from '../docs/blocks/serverEditor';
+import { blocksToOldJson } from '../docs/blocks/toOldJson';
+import { appendBlocksForAgent, canvasIdsOf, docUsesBlocks, renameCanvases, replaceSectionInBlocks } from './agentBlocks.service';
+import { markdownToBlocks as markdownToEditorBlocks } from '../docs/blocks/markdown';
+import { blocksDocState } from '../docs/blocks/newDocState';
+import { liveDocument, undoChange, withLiveDoc, type LiveChange, type LiveDoc } from './liveDoc';
+import { stateBytes, type DocState } from '../docs/docState';
 
-export const SEARCH_LIMIT_DEFAULT = 10;
-export const SEARCH_LIMIT_MAX = 50;
-/** Docs looked at per search (newest first). */
-const SEARCH_SCAN = 1000;
-const SNIPPET_LENGTH = 160;
+export { SEARCH_LIMIT_DEFAULT, SEARCH_LIMIT_MAX } from '../docs/docSearch.service';
 export const AGENT_TITLE_MAX = 200;
-
-// ─── Plain text (search, snippets) ─────────────────────────────────────
-
-/** Each textblock of a doc on its own line (and the words on a canvas board, when injected). */
-export function docPlainText(doc: JSONContent): string {
-    const lines: string[] = [];
-    const walk = (node: JSONContent | undefined) => {
-        if (!node || typeof node !== 'object') return;
-        const content = Array.isArray(node.content) ? node.content : [];
-        if (content.some((child) => child.type === 'text' || child.type === 'hardBreak')) {
-            lines.push(nodePlainText(node));
-            return;
-        }
-        if (node.type === 'embed' && node.attrs?.['url']) lines.push(String(node.attrs['url']));
-        if (node.type === 'canvas') lines.push(...canvasTexts(node.attrs?.['data']));
-        content.forEach(walk);
-    };
-    walk(doc);
-    return lines.filter((line) => line.trim()).join('\n');
-}
-
-function storedText(yjsState: string | null): string {
-    if (!yjsState) return '';
-    try {
-        return docPlainText(yjsStateToDocJson(yjsState) as JSONContent);
-    } catch {
-        return '';
-    }
-}
-
-/** docId → plain text, valid while Doc.updatedAt is unchanged (decoding Yjs states is the cost). */
-const textCache = new Map<string, { updatedAt: number; text: string }>();
-const TEXT_CACHE_MAX = 1000;
-
-async function docTexts(rows: ReadonlyArray<{ id: string; updatedAt: Date }>): Promise<Map<string, string>> {
-    const texts = new Map<string, string>();
-    const missing: string[] = [];
-    for (const row of rows) {
-        const hit = textCache.get(row.id);
-        if (hit && hit.updatedAt === row.updatedAt.getTime()) texts.set(row.id, hit.text);
-        else missing.push(row.id);
-    }
-    for (let i = 0; i < missing.length; i += 50) {
-        const batch = await prisma.doc.findMany({ where: { id: { in: missing.slice(i, i + 50) } }, select: { id: true, yjsState: true, updatedAt: true } });
-        for (const doc of batch) {
-            const text = storedText(doc.yjsState);
-            textCache.delete(doc.id);
-            textCache.set(doc.id, { updatedAt: doc.updatedAt.getTime(), text });
-            if (textCache.size > TEXT_CACHE_MAX) textCache.delete(textCache.keys().next().value!);
-            texts.set(doc.id, text);
-        }
-    }
-    return texts;
-}
-
-function snippetOf(text: string, terms: readonly string[]): string {
-    const flat = text.replace(/\s+/g, ' ').trim();
-    if (!flat) return '';
-    const lower = flat.toLowerCase();
-    const first = terms.map((t) => lower.indexOf(t)).filter((i) => i >= 0).sort((a, b) => a - b)[0];
-    const start = first === undefined ? 0 : Math.max(0, first - 50);
-    const end = Math.min(flat.length, start + SNIPPET_LENGTH);
-    return `${start > 0 ? '…' : ''}${flat.slice(start, end).trim()}${end < flat.length ? '…' : ''}`;
-}
 
 /** The subject of each doc the user filed as a topic. */
 async function subjectsOf(userId: string, docIds: readonly string[]): Promise<Map<string, { id: string; name: string }>> {
@@ -121,39 +63,19 @@ export interface AgentDocListItem {
 }
 
 /**
- * GET /api/agent/docs?query=&limit=: the user's own and shared-with-them docs (not archived) whose
- * title or text contains every word of the query (case-insensitive). Title matches first, then
- * newest. No query: the most recently updated docs.
+ * GET /api/agent/docs?query=&limit=: the user's own and shared-with-them docs (not archived) that
+ * match the query on Postgres full-text, best first (../docs/docSearch.service.ts). No query: the
+ * most recently updated docs.
  */
 export async function searchDocsForAgent(userId: string, options: { query?: string | undefined; limit?: number | undefined }): Promise<AgentDocListItem[]> {
-    const limit = Math.min(Math.max(Math.trunc(options.limit ?? SEARCH_LIMIT_DEFAULT), 1), SEARCH_LIMIT_MAX);
-    const terms = [...new Set((options.query ?? '').toLowerCase().split(/\s+/).filter(Boolean))].slice(0, 8);
-    const rows = await prisma.doc.findMany({
-        where: { ...accessibleDocWhere(userId), isArchived: false },
-        select: { id: true, title: true, updatedAt: true },
-        orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
-        take: SEARCH_SCAN,
-    });
-    const candidates = terms.length === 0 ? rows.slice(0, limit) : rows;
-    const texts = await docTexts(candidates);
-
-    const matches: Array<{ row: (typeof rows)[number]; text: string; score: number }> = [];
-    for (const row of candidates) {
-        const text = texts.get(row.id) ?? '';
-        const title = row.title.toLowerCase();
-        const haystack = `${title}\n${text.toLowerCase()}`;
-        if (!terms.every((t) => haystack.includes(t))) continue;
-        matches.push({ row, text, score: terms.filter((t) => title.includes(t)).length });
-    }
-    matches.sort((a, b) => b.score - a.score || b.row.updatedAt.getTime() - a.row.updatedAt.getTime() || (a.row.id < b.row.id ? 1 : -1));
-    const top = matches.slice(0, limit);
-    const subjects = await subjectsOf(userId, top.map((m) => m.row.id));
-    return top.map(({ row, text }) => ({
-        id: row.id,
-        title: row.title,
-        subject: subjects.get(row.id)?.name ?? null,
-        updatedAt: row.updatedAt,
-        snippet: snippetOf(text, terms),
+    const hits = await searchDocs(userId, options);
+    const subjects = await subjectsOf(userId, hits.map((h) => h.id));
+    return hits.map((hit) => ({
+        id: hit.id,
+        title: hit.title,
+        subject: subjects.get(hit.id)?.name ?? null,
+        updatedAt: hit.updatedAt,
+        snippet: hit.snippet,
     }));
 }
 
@@ -161,12 +83,14 @@ export async function searchDocsForAgent(userId: string, options: { query?: stri
  * The doc's current content (the live doc when it is open) and title, canvas boards injected.
  * Recall mode reads docs this way too.
  */
-export function currentContent(doc: { id: string; title: string; yjsState: string | null }): { json: JSONContent; title: string } {
+export function currentContent(doc: { id: string; title: string; yjsState: DocState | null }): { json: JSONContent; title: string } {
     const live = liveDocument(doc.id);
     if (live) {
         const metaTitle = live.getMap('metadata').get('title');
+        // A doc on the new editor reads from its blocks (as old JSON, for every reader written for it).
+        const content = hasBlocks(live) ? blocksToOldJson(readBlocks(live)) : (yXmlFragmentToProsemirrorJSON(live.getXmlFragment(DOC_YJS_FRAGMENT)) as JSONContent);
         return {
-            json: withCanvasData(yXmlFragmentToProsemirrorJSON(live.getXmlFragment(DOC_YJS_FRAGMENT)) as JSONContent, live),
+            json: withCanvasData(content, live),
             title: typeof metaTitle === 'string' && metaTitle.trim() ? metaTitle.trim() : doc.title,
         };
     }
@@ -198,7 +122,9 @@ export interface CreateAgentDocInput {
     title: string;
     markdown: string;
     subjectId?: string | undefined;
-    /** Start the revision schedule (1, 3, 7, 21 days); needs subjectId. */
+    /** A topic planned on a path: the doc becomes its note instead of a new topic (its subject is the topic's). */
+    topicId?: string | undefined;
+    /** Start the revision schedule (1, 3, 7, 21 days); needs subjectId or topicId. */
     revise?: boolean | undefined;
     /** false: don't refuse a ```mermaid block Mermaid can't parse (AI practice notes; agents always check). */
     checkMermaid?: boolean | undefined;
@@ -214,7 +140,12 @@ export interface CreatedDoc {
     nextRevision: string | null;
     /** A report per canvas in the Markdown (only when it has canvases). */
     canvases?: CanvasReport[];
+    /** With topicId: the topic's status now ('in_progress', or 'done' with revise). */
+    topicStatus?: string;
 }
+
+/** createDocFromMarkdown's result, with what Undo needs (never sent to a client). */
+type MadeDoc = CreatedDoc & { attached?: TopicBeforeAttach };
 
 /** `{ canvases }` for an answer, or nothing when the Markdown made no canvas. */
 const canvasesField = (reports: readonly CanvasReport[], ids: readonly string[]): { canvases?: CanvasReport[] } =>
@@ -223,46 +154,77 @@ const canvasesField = (reports: readonly CanvasReport[], ids: readonly string[])
 /**
  * A new doc from Markdown, made as the app makes docs (a plain row: nobody can have it open yet).
  * With subjectId it is filed under that subject (a Topic, created by the learning service exactly
- * as the app does); with revise it also enters the revision schedule. `then` runs last (the agent
- * API logs its edit there). All or nothing: if anything fails, the doc and its topic go again.
- * Errors: 400 (empty or long title, revise without a subject, Markdown a doc can't hold), 404 subject.
+ * as the app does); with topicId it becomes the note of that planned topic instead (path.service
+ * attachDocToTopic); with revise it also enters the revision schedule. `then` runs last (the agent
+ * API logs its edit there). All or nothing: if anything fails, the doc goes again and its topic is
+ * deleted (a new one) or put back as it was (an attached one).
+ * Errors: 400 (empty or long title, revise without a subject or topic, Markdown a doc can't hold,
+ * a topic with a doc or in another subject), 404 subject or topic.
  * Used by POST /api/agent/docs and by practice notes (src/services/practice).
  */
-export async function createDocFromMarkdown(userId: string, input: CreateAgentDocInput, then?: (doc: CreatedDoc) => Promise<void>): Promise<CreatedDoc> {
+export async function createDocFromMarkdown(userId: string, input: CreateAgentDocInput, then?: (doc: MadeDoc) => Promise<void>): Promise<MadeDoc> {
     const title = normalizeDocTitle(input.title);
     if (title.length > AGENT_TITLE_MAX) throw new ErrorResponse(400, `A title is at most ${AGENT_TITLE_MAX} characters`);
-    if (input.revise && !input.subjectId) throw new ErrorResponse(400, 'revise needs a subjectId (the subject to revise it under)');
-    const json = markdownToDocJson(input.markdown);
+    if (input.revise && !input.subjectId && !input.topicId) throw new ErrorResponse(400, 'revise needs a subjectId (the subject to revise it under) or a topicId');
     const subject = input.subjectId
         ? await prisma.subject.findFirst({ where: { id: input.subjectId, userId }, select: { id: true, name: true } })
         : null;
     if (input.subjectId && !subject) throw new ErrorResponse(404, 'Subject not found');
-    const reports = await resolveDiagrams(json, { checkMermaid: input.checkMermaid !== false });
-    // Ids now (a new doc keeps them), so the reports can name their canvases.
-    const canvasIds = giveCanvasIds(json);
-
-    // The title also goes into the doc's metadata map, as the editor keeps it.
-    const yjsState = docJsonToYjsState(json, { title, coverImage: null });
+    if (input.topicId) {
+        // Refuse a wrong topic before anything is made (attachDocToTopic checks again under a lock).
+        const topic = await prisma.topic.findFirst({ where: { id: input.topicId, userId, isArchived: false }, select: { docId: true, subjectId: true } });
+        if (!topic) throw new ErrorResponse(404, `No topic with id ${input.topicId} (get_path shows them)`);
+        if (topic.docId) throw new ErrorResponse(400, `Topic ${input.topicId} already has a doc (${topic.docId}): write into that doc, or plan a new topic`);
+        if (subject && topic.subjectId !== subject.id) throw new ErrorResponse(400, `Topic ${input.topicId} is not on the path of "${subject.name}"`);
+    }
+    // Since the switch (DOCS_EDITOR_V2_PLAN phase 4) a new doc is made on the new editor: its blocks,
+    // their boards and the title in the metadata map. A bad diagram or Markdown is a 400 here, before
+    // anything is made. Canvas ids now (a new doc keeps them), so the reports can name their canvases.
+    const parsed = await markdownToEditorBlocks(input.markdown, {}, { checkMermaid: input.checkMermaid !== false });
+    const { blocks, boards } = renameCanvases(parsed.blocks, parsed.boards, new Set());
+    const reports = parsed.canvases;
+    const canvasIds = canvasIdsOf(blocks);
+    const yjsState = blocksDocState(blocks, boards, { title, coverImage: null });
     const doc = await prisma.doc.create({
-        data: { userId, title, docType: 'notes', yjsState, previewState: generatePreviewState(yjsState), cloudImages: [] },
+        data: { userId, title, yjsState, previewState: generatePreviewState(yjsState), cloudImages: [] },
         select: { id: true, title: true },
     });
 
     let topicId: string | null = null;
+    let attached: TopicBeforeAttach | undefined;
     try {
         let nextRevision: string | null = null;
-        if (subject) {
+        let filedUnder = subject;
+        let topicStatus: string | undefined;
+        if (input.topicId) {
+            const result = await attachDocToTopic(userId, { topicId: input.topicId, docId: doc.id, title: doc.title, revise: input.revise === true, subjectId: subject?.id });
+            attached = result.before;
+            topicId = input.topicId;
+            filedUnder = result.subject;
+            nextRevision = result.nextRevision;
+            topicStatus = result.status;
+        } else if (subject) {
             const created = await createTopic(userId, { docId: doc.id, subjectId: subject.id, startRevisions: input.revise === true });
             topicId = created.topic._id;
             nextRevision = created.chain.find((r) => r.status === 'pending')?.scheduledFor ?? null;
         }
-        const made: CreatedDoc = { id: doc.id, title: doc.title, subject, topicId, nextRevision, ...canvasesField(reports, canvasIds) };
+        const made: MadeDoc = {
+            id: doc.id,
+            title: doc.title,
+            subject: filedUnder,
+            topicId,
+            nextRevision,
+            ...(topicStatus ? { topicStatus } : {}),
+            ...canvasesField(reports, canvasIds),
+            ...(attached ? { attached } : {}),
+        };
         if (then) await then(made);
         return made;
     } catch (err) {
         // No half-made doc without its topic (or its log line). The topic goes first (deleting a
-        // doc only unlinks its topic: Topic.docId is SET NULL).
-        if (topicId) await prisma.topic.deleteMany({ where: { id: topicId, userId } });
+        // doc only unlinks its topic: Topic.docId is SET NULL); an attached one is put back.
+        if (attached) await detachDocFromTopic(userId, attached).catch(() => {});
+        else if (topicId) await prisma.topic.deleteMany({ where: { id: topicId, userId } });
         await prisma.doc.deleteMany({ where: { id: doc.id } });
         throw err;
     }
@@ -272,11 +234,148 @@ export async function createDocFromMarkdown(userId: string, input: CreateAgentDo
 export async function createDocForAgent(actor: AgentActor, input: CreateAgentDocInput) {
     let editId = '';
     // Agents always get the Mermaid check, whatever the request carried.
-    const doc = await createDocFromMarkdown(actor.userId, { ...input, checkMermaid: true }, async (made) => {
-        const summary = `Created ${quoted(made.title)}${made.subject ? ` in ${made.subject.name}` : ''}${input.revise ? ' and scheduled it for revision' : ''}`;
-        editId = await recordAgentEdit(actor, { kind: 'doc_create', summary, docId: made.id, entityId: made.id, undoData: { topicId: made.topicId } });
+    const { attached: _undoOnly, ...doc } = await createDocFromMarkdown(actor.userId, { ...input, checkMermaid: true }, async (made) => {
+        const onPath = made.attached ? ' as a topic of its path' : '';
+        const summary = `Created ${quoted(made.title)}${made.subject ? ` in ${made.subject.name}` : ''}${onPath}${input.revise ? ' and scheduled it for revision' : ''}`;
+        const undoData = made.attached ? { topicId: made.topicId, attached: { ...made.attached } } : { topicId: made.topicId };
+        editId = await recordAgentEdit(actor, { kind: 'doc_create', summary, docId: made.id, entityId: made.id, undoData });
     });
     return { ...doc, editId };
+}
+
+// ─── Update: title, subject, topic (update_doc) ───────────────────────
+
+export interface UpdateAgentDocInput {
+    title?: string | undefined;
+    /** File it under this subject (a topic made, or its topic moved there). */
+    subjectId?: string | undefined;
+    /** Make it the note of this planned topic (see attachDocToTopic). */
+    topicId?: string | undefined;
+}
+
+/** What Undo of a doc_update puts back. */
+interface DocUpdateUndo {
+    /** The title before and after: Undo restores `from` only while the doc still has `to`. */
+    title?: { from: string; to: string };
+    /** A topic made to file the doc (Undo deletes it while it has no revisions). */
+    createdTopic?: string;
+    /** A topic moved to another subject (Undo moves it back to its old place). */
+    moved?: { topicId: string; subjectId: string; sortOrder: number | null };
+    /** A planned topic the doc became the note of. */
+    attached?: TopicBeforeAttach;
+}
+
+/** The doc's title, live: an open editor shows it at once; the store copies it to the row. */
+async function setDocTitle(docId: string, actor: string, title: string): Promise<void> {
+    await withLiveDoc(docId, actor, (live) => live.apply(() => live.doc.getMap('metadata').set('title', title)));
+    await prisma.doc.updateMany({ where: { id: docId }, data: { title } });
+}
+
+/**
+ * PATCH /api/agent/docs/:id {title?, subjectId?, topicId?}: rename a doc (live), file it under a
+ * subject, or make it the note of a planned topic. Everything is checked before anything changes.
+ * Nothing to change answers editId null. 400 / 404 / 409 as attachDocToTopic and createTopic.
+ */
+export async function updateDocForAgent(actor: AgentActor, docId: string, input: UpdateAgentDocInput) {
+    const userId = actor.userId;
+    const doc = await requireEditableDoc(docId, userId);
+    const current = currentContent(doc).title;
+    const title = input.title !== undefined ? normalizeDocTitle(input.title) : undefined;
+    if (title !== undefined && !title) throw new ErrorResponse(400, 'title cannot be empty');
+    if (title !== undefined && title.length > AGENT_TITLE_MAX) throw new ErrorResponse(400, `A title is at most ${AGENT_TITLE_MAX} characters`);
+
+    const existing = await prisma.topic.findUnique({
+        where: { userId_docId: { userId, docId } },
+        select: { id: true, subjectId: true, sortOrder: true, subject: { select: { name: true } } },
+    });
+    const subject = input.subjectId ? await prisma.subject.findFirst({ where: { id: input.subjectId, userId }, select: { id: true, name: true } }) : null;
+    if (input.subjectId && !subject) throw new ErrorResponse(404, 'Subject not found');
+    if (input.topicId && existing && existing.id !== input.topicId) {
+        throw new ErrorResponse(409, `This doc is already topic ${existing.id} in "${existing.subject.name}" (a doc is on one path once)`);
+    }
+
+    const undo: DocUpdateUndo = {};
+    const parts: string[] = [];
+    const finalTitle = title ?? current;
+    if (input.topicId && !existing) {
+        const attached = await attachDocToTopic(userId, { topicId: input.topicId, docId, title: finalTitle, revise: false, subjectId: subject?.id });
+        undo.attached = attached.before;
+        parts.push(`made it a topic of the ${attached.subject.name} path`);
+    } else if (subject && !input.topicId) {
+        if (!existing) {
+            const created = await createTopic(userId, { docId, subjectId: subject.id, startRevisions: false });
+            undo.createdTopic = created.topic._id;
+            parts.push(`filed it under ${subject.name}`);
+        } else if (existing.subjectId !== subject.id) {
+            await prisma.topic.update({ where: { id: existing.id }, data: { subjectId: subject.id, sortOrder: null }, select: { id: true } });
+            undo.moved = { topicId: existing.id, subjectId: existing.subjectId, sortOrder: existing.sortOrder };
+            parts.push(`moved it from ${existing.subject.name} to ${subject.name}`);
+        }
+    }
+    if (title !== undefined && title !== current) {
+        await setDocTitle(docId, actor.agentName, title);
+        undo.title = { from: current, to: title };
+        parts.unshift(`renamed it ${quoted(title)}`);
+    }
+
+    const after = (await subjectsOf(userId, [docId])).get(docId) ?? null;
+    const topic = await prisma.topic.findUnique({ where: { userId_docId: { userId, docId } }, select: { id: true } });
+    const result = { id: docId, title: finalTitle, subject: after, topicId: topic?.id ?? null, changes: parts };
+    if (parts.length === 0) return { ...result, editId: null };
+    const editId = await recordAgentEdit(actor, {
+        kind: 'doc_update',
+        summary: `Changed ${quoted(current)}: ${parts.join(', ')}`,
+        docId,
+        entityId: docId,
+        undoData: undo as Prisma.InputJsonValue,
+    });
+    return { ...result, editId };
+}
+
+/** Undo of update_doc: the topic change first (it may refuse: 409), then the title. */
+export async function undoDocUpdate(userId: string, edit: Pick<AgentEdit, 'docId' | 'undoData'>): Promise<void> {
+    if (!edit.docId) return;
+    const data = (edit.undoData ?? {}) as Record<string, unknown>;
+    const attached = topicBeforeOf(data['attached']);
+    if (attached) await detachDocFromTopic(userId, attached);
+    if (typeof data['createdTopic'] === 'string') {
+        const id = data['createdTopic'];
+        const revised = await prisma.revision.count({ where: { topicId: id } });
+        if (revised > 0) throw new ErrorResponse(409, "Can't undo: the doc's topic has revisions now");
+        await prisma.topic.deleteMany({ where: { id, userId } });
+    }
+    const moved = data['moved'] as { topicId?: unknown; subjectId?: unknown; sortOrder?: unknown } | undefined;
+    if (moved && typeof moved.topicId === 'string' && typeof moved.subjectId === 'string') {
+        const subject = await prisma.subject.findFirst({ where: { id: moved.subjectId, userId }, select: { id: true } });
+        if (subject) {
+            await prisma.topic.updateMany({
+                where: { id: moved.topicId, userId },
+                data: { subjectId: subject.id, sortOrder: typeof moved.sortOrder === 'number' ? moved.sortOrder : null },
+            });
+        }
+    }
+    const title = data['title'] as { from?: unknown; to?: unknown } | undefined;
+    if (title && typeof title.from === 'string' && typeof title.to === 'string') {
+        const doc = await findAccessibleDoc(edit.docId, userId);
+        // Renamed again since (by Ramin): his title stays.
+        if (doc && currentContent(doc).title === title.to) await setDocTitle(edit.docId, 'undo', title.from);
+    }
+}
+
+// ─── Trash (MANAGER_AND_DOCS_PLAN §3.2) ────────────────────────────────
+
+/** POST /api/agent/docs/:id/trash: the doc goes to the trash for 30 days (Undo takes it out). */
+export async function trashDocForAgent(actor: AgentActor, docId: string) {
+    const state = await trashDoc(actor.userId, docId);
+    const editId = state.changed ? await recordAgentEdit(actor, { kind: 'doc_trash', summary: `Moved ${quoted(state.title)} to the trash`, docId, entityId: docId }) : null;
+    return { id: docId, title: state.title, trashedAt: state.trashedAt, editId };
+}
+
+/** POST /api/agent/docs/:id/restore: the doc comes out of the trash (Undo puts it back). */
+export async function restoreDocForAgent(actor: AgentActor, docId: string) {
+    const state = await restoreDoc(actor.userId, docId);
+    const editId = state.changed ? await recordAgentEdit(actor, { kind: 'doc_restore', summary: `Took ${quoted(state.title)} out of the trash`, docId, entityId: docId }) : null;
+    return { id: docId, title: state.title, trashedAt: state.trashedAt, editId };
 }
 
 // ─── Append / replace a section ───────────────────────────────────────
@@ -303,13 +402,13 @@ export async function logDocChange(
     actor: AgentActor,
     docId: string,
     change: LiveChange,
-    kind: 'doc_append' | 'doc_replace_section' | 'doc_canvas_update',
+    kind: 'doc_append' | 'doc_replace_section' | 'doc_canvas_update' | 'doc_blocks',
     summary: string
 ): Promise<string> {
     try {
         return await prisma.$transaction(async (tx) => {
             const snapshot = await tx.docSnapshot.create({
-                data: { docId, yjsState: toBase64(change.before), agentUpdate: change.update ? toBase64(change.update) : null },
+                data: { docId, yjsState: stateBytes(change.before), agentUpdate: change.update ? stateBytes(change.update) : null },
                 select: { id: true },
             });
             return recordAgentEdit(actor, { kind, summary, docId, entityId: docId, snapshotId: snapshot.id }, tx);
@@ -344,6 +443,8 @@ function liveBlocks(live: LiveDoc, current: readonly JSONContent[], blocks: JSON
  * paragraph, if any), live.
  */
 export async function appendToDocForAgent(actor: AgentActor, docId: string, markdown: string) {
+    // A doc on the new editor: the same Markdown becomes blocks at its end (DOCS_EDITOR_V2_PLAN phase 4).
+    if (await docUsesBlocks(docId)) return appendBlocksForAgent(actor, docId, markdown);
     const doc = await requireEditableDoc(docId, actor.userId);
     const blocks = blocksOrThrow(markdown);
     const reports = await resolveDiagrams({ type: 'doc', content: blocks });
@@ -448,6 +549,7 @@ function headingNotFound(heading: string, blocks: readonly JSONContent[]): Error
  */
 export async function replaceSectionForAgent(actor: AgentActor, docId: string, heading: string, markdown: string) {
     if (!normalizeHeading(heading)) throw new ErrorResponse(400, 'heading is required');
+    if (await docUsesBlocks(docId)) return replaceSectionInBlocks(actor, docId, heading, markdown);
     const doc = await requireEditableDoc(docId, actor.userId);
     const blocks = blocksOrThrow(markdown);
     // Checked on the current content first, so a wrong heading never opens (or stores) the doc.
@@ -494,17 +596,44 @@ export async function undoDocChange(userId: string, edit: Pick<AgentEdit, 'docId
     const snapshot = await prisma.docSnapshot.findFirst({ where: { id: edit.snapshotId, docId: edit.docId } });
     if (!snapshot) throw new ErrorResponse(409, 'This edit cannot be undone (no snapshot)');
     await withLiveDoc(edit.docId, 'undo', (live) =>
-        undoChange(live, fromBase64(snapshot.yjsState), snapshot.agentUpdate ? fromBase64(snapshot.agentUpdate) : null)
+        undoChange(live, snapshot.yjsState, snapshot.agentUpdate ?? null)
     );
 }
 
-/** Undo a doc the agent created: archive it, and drop its topic unless it was already revised. */
+/**
+ * Undo a doc the agent created: archive it, and drop its topic unless it was already revised. A
+ * planned topic the doc was attached to (create_doc with topicId) stays on its path as it was.
+ */
 export async function undoDocCreate(userId: string, edit: Pick<AgentEdit, 'docId' | 'undoData'>, now: Date = new Date()): Promise<void> {
     if (!edit.docId) return;
+    const data = (edit.undoData ?? {}) as { topicId?: unknown; attached?: unknown };
+    const attached = topicBeforeOf(data.attached);
+    if (attached) {
+        // A revision done since: the topic was learned, so it keeps the (archived) doc, like a made one.
+        await detachDocFromTopic(userId, attached).catch((err) => {
+            if (!(err instanceof ErrorResponse && err.statusCode === 409)) throw err;
+        });
+    }
     await prisma.doc.updateMany({ where: { id: edit.docId, userId }, data: { isArchived: true, updatedAt: now } });
-    const topicId = (edit.undoData as { topicId?: unknown } | null)?.topicId;
-    if (typeof topicId === 'string') {
+    const topicId = data.topicId;
+    if (!attached && typeof topicId === 'string') {
         const revised = await prisma.revision.count({ where: { topicId, status: 'done' } });
         if (revised === 0) await prisma.topic.deleteMany({ where: { id: topicId, userId } });
     }
+}
+
+/** A TopicBeforeAttach read back from an edit's undoData, or null. */
+export function topicBeforeOf(value: unknown): TopicBeforeAttach | null {
+    if (!value || typeof value !== 'object') return null;
+    const v = value as Record<string, unknown>;
+    const STATUSES = ['planned', 'in_progress', 'done', 'skipped'];
+    if (typeof v['topicId'] !== 'string' || typeof v['title'] !== 'string' || !STATUSES.includes(String(v['status']))) return null;
+    return {
+        topicId: v['topicId'],
+        title: v['title'],
+        status: v['status'] as TopicBeforeAttach['status'],
+        startedAt: typeof v['startedAt'] === 'string' ? v['startedAt'] : null,
+        doneAt: typeof v['doneAt'] === 'string' ? v['doneAt'] : null,
+        startedRevisions: v['startedRevisions'] === true,
+    };
 }

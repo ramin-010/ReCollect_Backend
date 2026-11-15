@@ -163,11 +163,12 @@ export const samplePracticeNote = (over: { title?: string; markdown?: string } =
 
 /** A valid weekly-coach output. */
 export const sampleCoach = (over: Partial<Record<'strong' | 'slipping' | 'fix' | 'deadline', string>> & { focus?: string[] } = {}) => ({
-    strong: 'You finished 4 of 5 DSA reviews on time and answered 6 recall questions strong.',
-    slipping: 'System Design slipped: both reviews missed, and Dijkstra came back weak twice.',
+    // Numbers only from the coach test's week (the coach checks every number against its evidence).
+    strong: 'You did 1 of 2 DSA reviews on time and answered 1 recall question strong.',
+    slipping: 'Dijkstra came back weak, and 1 review was missed.',
     fix: 'Clear due reviews first thing each weekday morning, before anything new.',
-    deadline: 'At 0.5 milestones a week against 1.2 needed, the 30 Jun deadline is not realistic yet.',
-    focus: ['Re-test Dijkstra with negative edges', 'Clear the 2 missed System Design reviews', 'Draft the first mock interview plan'],
+    deadline: 'With 1 of 2 milestones done, the deadline is realistic at a steady pace.',
+    focus: ['Re-test Dijkstra with negative edges', 'Clear the missed DSA review', 'Draft the first mock interview plan'],
     ...over,
 });
 

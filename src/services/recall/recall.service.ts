@@ -22,6 +22,7 @@ import { earlierQuestions, findRecallRevision, itemTitle, materialOf, type Recal
 import { ModelOutputError, parseGradeOutput, parseQuestionsOutput, parseStoredQuestions, responseText, type RecallQuestion } from './output';
 import { AGAIN_IN_DAYS, countGrades, intendedEffect, parseStoredOutcome, recallResult, type RecallEffect, type RecallOutcome } from './outcome';
 import { gradeRequest, hasEnoughContent, questionsRequest, withRefusalFallbacks, type RecallMaterial } from './prompts';
+import { openWeakSpotsOf, weakSpotsAfterAnswer } from '../learningDb/sessions.service';
 
 type SetWithAttempts = RecallSet & { attempts: RecallAttempt[] };
 
@@ -65,7 +66,8 @@ export async function startRecall(userId: string, revisionId: string, now: Date 
     await assertUnderCap(userId, now);
 
     const earlier = await earlierQuestions(rev, live?.id);
-    const request = questionsRequest({ model: aiModel(), material, cycleNumber: rev.cycleNumber, earlier });
+    const weakSpots = rev.topicId ? (await openWeakSpotsOf(userId, [rev.topicId])).get(rev.topicId) ?? [] : [];
+    const request = questionsRequest({ model: aiModel(), material, cycleNumber: rev.cycleNumber, earlier, weakSpots });
     const message = await callClaude(withRefusalFallbacks(request), 'recall questions');
     await recordAiUsage(userId, 'recall_questions', message);
     let questions: RecallQuestion[];
@@ -178,6 +180,13 @@ export async function answerRecall(userId: string, setId: string, input: RecallA
             select: { id: true },
         });
     });
+    // Weak spots both ways (SYNC_SPINE_SPEC 1.2): never fails the answer.
+    try {
+        const rev = await prisma.revision.findUnique({ where: { id: set.revisionId }, select: { topicId: true } });
+        await weakSpotsAfterAnswer(userId, rev?.topicId ?? null, question, attempt.grade, now);
+    } catch (err) {
+        console.error('[recall] weak spots after an answer:', err);
+    }
     return serializeRecallAttempt({ questionId: question.id, ...attempt });
 }
 

@@ -256,7 +256,7 @@ export async function ensureTopicDoc(userId: string, topicId: string): Promise<{
         const topic = await tx.topic.findFirst({ where: { id: topicId, userId }, select: { id: true, docId: true, title: true } });
         if (!topic) throw notFound();
         if (topic.docId) return { docId: topic.docId };
-        const doc = await tx.doc.create({ data: { userId, title: topic.title.trim() || 'Untitled', docType: 'notes', cloudImages: [] }, select: { id: true } });
+        const doc = await tx.doc.create({ data: { userId, title: topic.title.trim() || 'Untitled', cloudImages: [] }, select: { id: true } });
         await tx.topic.update({ where: { id: topic.id }, data: { docId: doc.id }, select: { id: true } });
         return { docId: doc.id };
     });

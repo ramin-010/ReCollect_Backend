@@ -1,120 +1,69 @@
-// Share-link and access-request shapes, matching what the Mongo API returned.
+// Sharing shapes (MANAGER_AND_DOCS_PLAN §2: publish + people). The old share-link and access-request
+// shapes (Mongo era) went with ShareLink in the 2026-11-15 rebuild.
 //
-// serializeSharedDocLink → GET /api/doc/:slug: the ShareLink after
-//                          .populate({ path: 'doc', select: 'title yjsState docType isPinned createdAt
-//                          updatedAt coverImage cloudImages' }):
-//                          { _id, user: <ownerId>, type: 'doc', role, doc: { _id, title, yjsState, docType,
-//                            isPinned, createdAt, updatedAt, coverImage, cloudImages }, slug, expiresAt,
-//                            createdAt, updatedAt }. The cut content/dashboard/slide refs are gone. No __v.
-// serializeAccessRequest → an AccessRequest with user populated ('name email avatar') and doc either
-//                          unpopulated (<docId>, GET /api/docs/:id/requests) or populated with 'title'
-//                          ({ _id, title }, GET /api/docs/pending-requests):
-//                          { _id, user: {…}, doc, shareLink: <id>, status, role, requestedAt,
-//                            respondedAt (null while pending; Mongo omitted it), createdAt, updatedAt }
+// serializeDocPerson  → someone added to a doc: { _id: <their user id>, name, email, avatar, role, addedAt }
+// serializeDocRequest → a pending "asks to edit": { _id: <request id>, user: {…}, role, requestedAt }
 //
 // Also exported from ./index.ts.
-import type { AccessRequestStatus, CollaboratorRole, DocType, Prisma, ShareLinkType } from '@prisma/client';
+import type { CollaboratorRole, Prisma } from '@prisma/client';
 import { serializeUserSummary, userSummarySelect, type UserSummaryJson } from './user';
 
-/** The doc fields GET /api/doc/:slug returned. */
-export const sharedDocSelect = {
-    id: true,
-    title: true,
-    yjsState: true,
-    docType: true,
-    isPinned: true,
-    createdAt: true,
-    updatedAt: true,
-    coverImage: true,
-    cloudImages: true,
-} satisfies Prisma.DocSelect;
-
-export const sharedDocLinkInclude = { doc: { select: sharedDocSelect } } satisfies Prisma.ShareLinkInclude;
-export type SharedDocLinkRow = Prisma.ShareLinkGetPayload<{ include: typeof sharedDocLinkInclude }>;
-
-export interface SharedDocLinkJson {
-    _id: string;
-    user: string;
-    type: ShareLinkType;
-    role: CollaboratorRole;
-    doc: {
-        _id: string;
-        title: string;
-        yjsState: string | null;
-        docType: DocType;
-        isPinned: boolean;
-        createdAt: Date;
-        updatedAt: Date;
-        coverImage: string | null;
-        cloudImages: Prisma.JsonValue;
-    };
-    slug: string;
-    expiresAt: Date;
-    createdAt: Date;
-    updatedAt: Date;
-}
-
-export function serializeSharedDocLink(link: SharedDocLinkRow): SharedDocLinkJson {
-    const { doc } = link;
-    return {
-        _id: link.id,
-        user: link.userId,
-        type: link.type,
-        role: link.role,
-        doc: {
-            _id: doc.id,
-            title: doc.title,
-            yjsState: doc.yjsState,
-            docType: doc.docType,
-            isPinned: doc.isPinned,
-            createdAt: doc.createdAt,
-            updatedAt: doc.updatedAt,
-            coverImage: doc.coverImage,
-            cloudImages: doc.cloudImages,
-        },
-        slug: link.slug,
-        expiresAt: link.expiresAt,
-        createdAt: link.createdAt,
-        updatedAt: link.updatedAt,
-    };
-}
-
-/** Include for an access request whose doc stays an id. */
-export const accessRequestInclude = { user: { select: userSummarySelect } } satisfies Prisma.AccessRequestInclude;
-export type AccessRequestRow = Prisma.AccessRequestGetPayload<{ include: typeof accessRequestInclude }>;
-
-/** Include for an access request with its doc's title (the owner's "pending requests" panel). */
-export const accessRequestWithDocInclude = {
+export const docPersonSelect = {
+    userId: true,
+    role: true,
+    addedAt: true,
     user: { select: userSummarySelect },
-    doc: { select: { id: true, title: true } },
-} satisfies Prisma.AccessRequestInclude;
-export type AccessRequestWithDocRow = Prisma.AccessRequestGetPayload<{ include: typeof accessRequestWithDocInclude }>;
+} satisfies Prisma.DocCollaboratorSelect;
+export type DocPersonRow = Prisma.DocCollaboratorGetPayload<{ select: typeof docPersonSelect }>;
 
-export interface AccessRequestJson {
+export interface DocPersonJson {
+    /** Their user id (what PATCH/DELETE /api/docs/:id/people/:userId take). */
+    _id: string;
+    name: string;
+    email: string;
+    avatar: string;
+    role: CollaboratorRole;
+    addedAt: Date;
+}
+
+export function serializeDocPerson(row: DocPersonRow): DocPersonJson {
+    return { _id: row.userId, name: row.user.name, email: row.user.email, avatar: row.user.avatar, role: row.role, addedAt: row.addedAt };
+}
+
+export const docRequestSelect = {
+    id: true,
+    role: true,
+    requestedAt: true,
+    user: { select: userSummarySelect },
+} satisfies Prisma.AccessRequestSelect;
+export type DocRequestRow = Prisma.AccessRequestGetPayload<{ select: typeof docRequestSelect }>;
+
+export interface DocRequestJson {
     _id: string;
     user: UserSummaryJson;
-    doc: string | { _id: string; title: string };
-    shareLink: string;
-    status: AccessRequestStatus;
     role: CollaboratorRole;
     requestedAt: Date;
-    respondedAt: Date | null;
-    createdAt: Date;
-    updatedAt: Date;
 }
 
-export function serializeAccessRequest(request: AccessRequestRow | AccessRequestWithDocRow): AccessRequestJson {
-    const doc = 'doc' in request ? { _id: request.doc.id, title: request.doc.title } : request.docId;
-    return {
-        _id: request.id,
-        user: serializeUserSummary(request.user),
-        doc,
-        shareLink: request.shareLinkId,
-        status: request.status,
-        role: request.role,
-        requestedAt: request.requestedAt,
-        respondedAt: request.respondedAt,
-        createdAt: request.createdAt,
-        updatedAt: request.updatedAt,
-    };
+export function serializeDocRequest(row: DocRequestRow): DocRequestJson {
+    return { _id: row.id, user: serializeUserSummary(row.user), role: row.role, requestedAt: row.requestedAt };
+}
+
+/** A published doc's link, or null. */
+export interface PublishedJson {
+    url: string;
+    slug: string;
+    since: Date;
+}
+
+/** GET /api/docs/:id/people: the Share popover. Requests only for the owner ([] for everyone else). */
+export interface DocPeopleJson {
+    docId: string;
+    title: string;
+    owner: UserSummaryJson;
+    /** The caller's own role. */
+    you: 'owner' | CollaboratorRole;
+    people: DocPersonJson[];
+    requests: DocRequestJson[];
+    published: PublishedJson | null;
 }

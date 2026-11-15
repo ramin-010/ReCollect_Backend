@@ -3,21 +3,28 @@
 // Undo by kind:
 //   doc_append / doc_replace_section / doc_canvas_update   the agent's exact change is taken back,
 //                                     live (later typing stays; a board's records as they were)
-//   doc_create                        the doc is archived (its topic goes too unless already revised)
-//   goal_create / milestone_add / focus_add / pocket_add   the row is deleted
+//   doc_create                        the doc is archived (its topic goes too unless already revised;
+//                                     a planned topic it was attached to is put back as it was)
+//   doc_update                        the topic change goes back, then the title (if not renamed since)
+//   goal_create / milestone_add / focus_add / pocket_add / week_target_create   the row is deleted
 //   goal_update / milestone_update / focus_update   the fields go back to their values before the edit
 //   milestone_remove / focus_remove   the row comes back with its id (a milestone only if its goal is still there)
 //   revision_schedule                 the scheduled revisions go (409 once one was done)
 //   subject_create                    the subject goes (409 once it holds topics or notes)
 // A row someone already deleted counts as undone. Each edit can be undone once.
-import type { AgentEdit, GoalStatus } from '@prisma/client';
+import type { AgentEdit, AgentEditKind, GoalStatus } from '@prisma/client';
 import { prisma } from '../../db/prisma';
 import ErrorResponse from '../../utils/errorResponse';
 import { GOAL_ACTIVE_LIMIT } from '../learningDb/goals.service';
-import { toDbDay } from '../learningDb/common';
+import { fromDbDay, loadLearningContext, toDbDay } from '../learningDb/common';
+import { rescheduleRevisionForUser, uncompleteRevisionForUser } from '../learningDb/revisions.service';
+import { updateProject } from '../learningDb/sessions.service';
+import { updateLearningSettings } from '../learningDb/settings.service';
+import { restoreDoc, trashDoc } from '../docs/trash.service';
+import { restoreReminder, unsetReminder } from '../tasks/taskReminders.service';
 import { isValidDay, type DayString } from '../learning/time';
-import { isDocChange, serializeAgentEdit, type AgentEditJson } from './agentEditLog';
-import { undoDocChange, undoDocCreate } from './agentDocs.service';
+import { serializeAgentEdit, type AgentEditJson } from './agentEditLog';
+import { undoDocChange, undoDocCreate, undoDocUpdate } from './agentDocs.service';
 
 export const EDITS_LIMIT_DEFAULT = 20;
 export const EDITS_LIMIT_MAX = 100;
@@ -70,60 +77,184 @@ type UndoData = Record<string, unknown>;
 const stringOrNull = (v: unknown): string | null => (typeof v === 'string' ? v : null);
 const dayOrNull = (v: unknown): DayString | null => (typeof v === 'string' && isValidDay(v) ? (v as DayString) : null);
 
-async function performUndo(userId: string, edit: AgentEdit, now: Date): Promise<void> {
-    if (isDocChange(edit.kind)) return undoDocChange(userId, edit);
-    if (edit.kind === 'doc_create') return undoDocCreate(userId, edit, now);
+interface UndoContext {
+    userId: string;
+    edit: AgentEdit;
+    /** edit.undoData, or {}. */
+    data: UndoData;
+    /** edit.entityId, or ''. */
+    id: string;
+    now: Date;
+}
 
-    const data = (edit.undoData ?? {}) as UndoData;
-    const id = edit.entityId ?? '';
-    switch (edit.kind) {
-        case 'goal_create':
-            await prisma.goal.deleteMany({ where: { id, userId } });
-            return;
-        case 'goal_update':
-            return restoreGoal(userId, id, (data['before'] ?? {}) as UndoData, now);
-        case 'milestone_add':
-            await prisma.goalMilestone.deleteMany({ where: { id, goal: { userId } } });
-            return;
-        case 'milestone_update':
-            return restoreMilestone(userId, id, (data['before'] ?? {}) as UndoData);
-        case 'milestone_remove':
-            return recreateMilestone(userId, (data['row'] ?? {}) as UndoData);
-        case 'focus_add':
-            await prisma.focusItem.deleteMany({ where: { id, userId } });
-            return;
-        case 'focus_update': {
-            const before = (data['before'] ?? {}) as UndoData;
-            await prisma.focusItem.updateMany({
-                where: { id, userId },
-                data: {
-                    ...(typeof before['text'] === 'string' ? { text: before['text'] } : {}),
-                    ...(typeof before['done'] === 'boolean' ? { done: before['done'] } : {}),
-                },
-            });
-            return;
+/**
+ * One Undo per kind of agent write. Keyed by every AgentEditKind, so a new kind without an Undo
+ * is a type error (SYNC_SPINE_SPEC 0.4; tests/unit/agent/agentWrites.test.ts checks the routes).
+ */
+const UNDO: Record<AgentEditKind, (ctx: UndoContext) => Promise<void>> = {
+    doc_create: ({ userId, edit, now }) => undoDocCreate(userId, edit, now),
+    doc_append: ({ userId, edit }) => undoDocChange(userId, edit),
+    doc_replace_section: ({ userId, edit }) => undoDocChange(userId, edit),
+    doc_canvas_update: ({ userId, edit }) => undoDocChange(userId, edit),
+    doc_blocks: ({ userId, edit }) => undoDocChange(userId, edit),
+    doc_update: ({ userId, edit }) => undoDocUpdate(userId, edit),
+    goal_create: async ({ userId, id }) => {
+        await prisma.goal.deleteMany({ where: { id, userId } });
+    },
+    goal_update: ({ userId, id, data, now }) => restoreGoal(userId, id, (data['before'] ?? {}) as UndoData, now),
+    milestone_add: async ({ userId, id }) => {
+        await prisma.goalMilestone.deleteMany({ where: { id, goal: { userId } } });
+    },
+    milestone_update: ({ userId, id, data }) => restoreMilestone(userId, id, (data['before'] ?? {}) as UndoData),
+    milestone_remove: ({ userId, data }) => recreateMilestone(userId, (data['row'] ?? {}) as UndoData),
+    focus_add: async ({ userId, id }) => {
+        await prisma.focusItem.deleteMany({ where: { id, userId } });
+    },
+    focus_update: async ({ userId, id, data }) => {
+        const before = (data['before'] ?? {}) as UndoData;
+        await prisma.focusItem.updateMany({
+            where: { id, userId },
+            data: {
+                ...(typeof before['text'] === 'string' ? { text: before['text'] } : {}),
+                ...(typeof before['done'] === 'boolean' ? { done: before['done'] } : {}),
+            },
+        });
+    },
+    focus_remove: ({ userId, data }) => recreateFocus(userId, (data['row'] ?? {}) as UndoData),
+    decision_create: async ({ userId, id }) => {
+        await prisma.decision.deleteMany({ where: { id, userId } });
+    },
+    decision_update: async ({ userId, id, data }) => {
+        const b = (data['before'] ?? {}) as UndoData;
+        const day = dayOrNull(b['lookAgainDay']);
+        await prisma.decision.updateMany({
+            where: { id, userId },
+            data: {
+                ...(typeof b['title'] === 'string' ? { title: b['title'] } : {}),
+                ...(typeof b['why'] === 'string' ? { why: b['why'] } : {}),
+                expect: stringOrNull(b['expect']),
+                ...(day ? { lookAgainDay: toDbDay(day) } : {}),
+                ...(b['status'] === 'open' || b['status'] === 'reviewed' ? { status: b['status'] } : {}),
+                verdict: b['verdict'] === 'right' || b['verdict'] === 'wrong' || b['verdict'] === 'mixed' ? b['verdict'] : null,
+                verdictNote: stringOrNull(b['verdictNote']),
+                reviewedAt: typeof b['reviewedAt'] === 'string' ? new Date(b['reviewedAt']) : null,
+            },
+        });
+    },
+    // ── The manager's tools (stage 4) ──
+    doc_trash: async ({ userId, id }) => {
+        await restoreDoc(userId, id);
+    },
+    doc_restore: async ({ userId, id }) => {
+        await trashDoc(userId, id);
+    },
+    revision_complete: async ({ userId, id, now }) => {
+        const rev = await prisma.revision.findFirst({ where: { id, userId }, select: { status: true } });
+        if (rev?.status !== 'done') throw new ErrorResponse(409, "Can't undo: that review isn't marked done any more");
+        await uncompleteRevisionForUser(userId, id, now);
+    },
+    revision_reschedule: async ({ userId, id, data, now }) => {
+        const from = dayOrNull(data['from']);
+        const to = dayOrNull(data['to']);
+        const rev = await prisma.revision.findFirst({ where: { id, userId }, select: { status: true, scheduledFor: true } });
+        if (!rev || !from || rev.status !== 'pending' || fromDbDay(rev.scheduledFor) !== to) throw new ErrorResponse(409, "Can't undo: that review has changed since");
+        // Its old day may be past by now: today at the earliest.
+        const { today } = await loadLearningContext(userId, now);
+        await rescheduleRevisionForUser(userId, id, from < today ? today : from, now);
+    },
+    settings_update: async ({ userId, data, now }) => {
+        const b = (data['before'] ?? {}) as UndoData;
+        await updateLearningSettings(
+            userId,
+            {
+                ...(typeof b['dailyBudgetMin'] === 'number' ? { dailyBudgetMin: b['dailyBudgetMin'] } : {}),
+                ...('busyUntil' in b ? { busyUntil: dayOrNull(b['busyUntil']) } : {}),
+                ...(typeof b['nudgeEmailEnabled'] === 'boolean' ? { nudgeEmailEnabled: b['nudgeEmailEnabled'] } : {}),
+                ...(typeof b['nudgeTime'] === 'string' ? { nudgeTime: b['nudgeTime'] } : {}),
+                ...('agentProfile' in b ? { agentProfile: stringOrNull(b['agentProfile']) } : {}),
+            },
+            now
+        );
+    },
+    project_update: async ({ userId, id, data }) => {
+        const b = (data['before'] ?? {}) as UndoData;
+        await updateProject(userId, id, {
+            ...(typeof b['name'] === 'string' ? { name: b['name'] } : {}),
+            goalId: stringOrNull(b['goalId']),
+            ...(typeof b['isArchived'] === 'boolean' ? { isArchived: b['isArchived'] } : {}),
+            nextStep: stringOrNull(b['nextStep']),
+        });
+    },
+    reminder_set: async ({ userId, id, data }) => {
+        await unsetReminder(userId, id, stringOrNull(data['createdTaskId']));
+    },
+    reminder_cancel: async ({ userId, id, now }) => {
+        await restoreReminder(userId, id, now);
+    },
+    revisions_spread: async ({ userId, data }) => {
+        // Each review back on its old day, unless it was done or moved since.
+        const changes = (Array.isArray(data['changes']) ? data['changes'] : []) as Array<{ id?: unknown; from?: unknown; to?: unknown }>;
+        let back = 0;
+        for (const c of changes) {
+            const from = dayOrNull(c.from);
+            const to = dayOrNull(c.to);
+            if (typeof c.id !== 'string' || !from || !to) continue;
+            const { count } = await prisma.revision.updateMany({ where: { id: c.id, userId, status: 'pending', scheduledFor: toDbDay(to) }, data: { scheduledFor: toDbDay(from) } });
+            back += count;
         }
-        case 'focus_remove':
-            return recreateFocus(userId, (data['row'] ?? {}) as UndoData);
-        case 'path_plan': {
-            const created = Array.isArray(data['created']) ? data['created'].filter((s): s is string => typeof s === 'string') : [];
-            const kept = await prisma.topic.count({ where: { id: { in: created }, userId, OR: [{ status: { not: 'planned' } }, { docId: { not: null } }] } });
-            if (kept > 0) throw new ErrorResponse(409, "Can't undo: a planned topic was started since");
-            await prisma.topic.deleteMany({ where: { id: { in: created }, userId, status: 'planned', docId: null } });
-            return;
-        }
-        case 'topic_update':
-            return restoreTopic(userId, id, (data['before'] ?? {}) as UndoData);
-        case 'pocket_add':
-            await prisma.quickNote.deleteMany({ where: { id, userId } });
-            return;
-        case 'revision_schedule':
-            return unscheduleRevisions(userId, data);
-        case 'subject_create':
-            return deleteEmptySubject(userId, id);
-        default:
-            throw new ErrorResponse(409, 'This edit cannot be undone');
-    }
+        if (back === 0 && changes.length > 0) throw new ErrorResponse(409, "Can't undo: those reviews were done or moved since");
+    },
+    task_create: async ({ userId, id }) => {
+        await prisma.todo.deleteMany({ where: { id, userId, workspaceId: null } });
+    },
+    task_update: async ({ userId, id, data }) => {
+        const before = (data['before'] ?? {}) as UndoData;
+        const status = before['status'];
+        const priority = before['priority'];
+        await prisma.todo.updateMany({
+            where: { id, userId, workspaceId: null },
+            data: {
+                ...(typeof before['title'] === 'string' ? { title: before['title'] } : {}),
+                ...(typeof status === 'string' && ['pending', 'in_progress', 'review', 'blocked', 'complete'].includes(status) ? { status: status as 'pending' } : {}),
+                ...(typeof priority === 'string' && ['low', 'normal', 'medium', 'high', 'urgent'].includes(priority) ? { priority: priority as 'normal' } : {}),
+                dueDate: typeof before['dueDate'] === 'string' ? new Date(before['dueDate']) : null,
+                completedAt: typeof before['completedAt'] === 'string' ? new Date(before['completedAt']) : null,
+            },
+        });
+    },
+    week_target_create: async ({ userId, id }) => {
+        await prisma.weekTarget.deleteMany({ where: { id, userId } });
+    },
+    week_target_update: async ({ userId, id, data }) => {
+        const before = (data['before'] ?? {}) as UndoData;
+        const status = before['status'];
+        await prisma.weekTarget.updateMany({
+            where: { id, userId },
+            data: {
+                ...(typeof before['text'] === 'string' ? { text: before['text'] } : {}),
+                ...(status === 'open' || status === 'done' || status === 'dropped' ? { status, doneAt: typeof before['doneAt'] === 'string' ? new Date(before['doneAt']) : null } : {}),
+                ...(typeof before['sortOrder'] === 'number' ? { sortOrder: before['sortOrder'] } : {}),
+            },
+        });
+    },
+    path_plan: async ({ userId, data }) => {
+        const created = Array.isArray(data['created']) ? data['created'].filter((s): s is string => typeof s === 'string') : [];
+        const kept = await prisma.topic.count({ where: { id: { in: created }, userId, OR: [{ status: { not: 'planned' } }, { docId: { not: null } }] } });
+        if (kept > 0) throw new ErrorResponse(409, "Can't undo: a planned topic was started since");
+        await prisma.topic.deleteMany({ where: { id: { in: created }, userId, status: 'planned', docId: null } });
+    },
+    topic_update: ({ userId, id, data }) => restoreTopic(userId, id, (data['before'] ?? {}) as UndoData),
+    pocket_add: async ({ userId, id }) => {
+        await prisma.quickNote.deleteMany({ where: { id, userId } });
+    },
+    revision_schedule: ({ userId, data }) => unscheduleRevisions(userId, data),
+    subject_create: ({ userId, id }) => deleteEmptySubject(userId, id),
+};
+
+async function performUndo(userId: string, edit: AgentEdit, now: Date): Promise<void> {
+    const undo = UNDO[edit.kind];
+    if (!undo) throw new ErrorResponse(409, 'This edit cannot be undone');
+    return undo({ userId, edit, data: (edit.undoData ?? {}) as UndoData, id: edit.entityId ?? '', now });
 }
 
 async function restoreGoal(userId: string, goalId: string, before: UndoData, now: Date): Promise<void> {

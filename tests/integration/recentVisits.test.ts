@@ -78,9 +78,12 @@ describe('GET /api/recent-visits', () => {
     it('my visits, newest first, in the old shape', async () => {
         const user = await createTestUser();
         const other = await createTestUser();
+        const docA = await prisma.doc.create({ data: { userId: user.id, title: 'A' }, select: { id: true } });
+        const trashed = await prisma.doc.create({ data: { userId: user.id, title: 'T', trashedAt: new Date() }, select: { id: true } });
         await prisma.recentVisit.createMany({
             data: [
-                { userId: user.id, itemId: 'a', itemType: 'doc', title: 'A', route: '/a', visitedAt: new Date('2026-10-01T00:00:00Z') },
+                { userId: user.id, itemId: trashed.id, itemType: 'doc', title: 'T', route: '/t', visitedAt: new Date('2026-10-04T00:00:00Z') },
+                { userId: user.id, itemId: docA.id, itemType: 'doc', title: 'A', route: '/a', visitedAt: new Date('2026-10-01T00:00:00Z') },
                 { userId: user.id, itemId: 'b', itemType: 'slide', title: 'B', route: '/b', visitedAt: new Date('2026-10-03T00:00:00Z') },
                 { userId: other.id, itemId: 'c', itemType: 'doc', title: 'C', route: '/c' },
             ],
@@ -89,7 +92,8 @@ describe('GET /api/recent-visits', () => {
         const res = await request(app).get('/api/recent-visits').set('Cookie', authCookie(user));
         expect(res.status).toBe(200);
         expect(res.body.success).toBe(true);
-        expect(res.body.data.map((v: any) => v.itemId)).toEqual(['b', 'a']);
+        // a doc in the trash (or deleted) is left out
+        expect(res.body.data.map((v: any) => v.itemId)).toEqual(['b', docA.id]);
         expect(res.body.data[0]).toEqual({
             _id: expect.any(String),
             user: user.id,

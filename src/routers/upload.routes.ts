@@ -44,6 +44,12 @@ router.post('/', authMiddleware, upload as RequestHandler, (async (req, res, nex
     }
 
     const { cloudUrl, cloudPublicId, cloudProvider } = imageFiles[0]!;
+    // upfly skips a file it can't convert (a broken or unsupported image): that is the sender's
+    // file, not a server failure.
+    const meta = (imageFiles[0] as { _metadata?: { isSkipped?: boolean } })._metadata;
+    if (!cloudUrl && meta?.isSkipped) {
+      return res.status(400).json({ error: 'The image could not be read. Try another file (PNG, JPEG, WebP or GIF).' });
+    }
 
     if (!cloudUrl) {
       console.error('[Upload] Cloud URL missing in file object:', imageFiles[0]);

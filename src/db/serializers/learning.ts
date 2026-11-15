@@ -277,8 +277,10 @@ export function serializeLearningSettings(u: {
     nudgeTime: string;
     lastNudgeDay: Date | null;
     lastSeenDay: Date | null;
+    agentProfile?: string | null;
 }) {
     return {
+        agentProfile: u.agentProfile ?? null,
         dailyBudgetMin: u.dailyBudgetMin,
         routineEnabled: u.routineEnabled,
         busyUntil: dayOrNull(u.busyUntil),

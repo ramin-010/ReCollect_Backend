@@ -48,9 +48,9 @@ const node = (over: Partial<NodeRecord> & { id: string }): NodeRecord => ({ shap
 const byId = (board: Board) => new Map(board.nodes.map((n) => [n.id, n]));
 const canvasBlock = (canvasId: string | null, data: unknown = null): JSONContent => ({ type: 'canvas', attrs: { canvasId, height: 440, data } });
 const para = (text: string): JSONContent => ({ type: 'paragraph', content: [{ type: 'text', text }] });
-const ydocOf = (state: string) => {
+const ydocOf = (state: Uint8Array | string) => {
     const ydoc = new Y.Doc();
-    Y.applyUpdate(ydoc, Buffer.from(state, 'base64'));
+    Y.applyUpdate(ydoc, typeof state === 'string' ? Buffer.from(state, 'base64') : state);
     return ydoc;
 };
 /** The board of the first canvas in some Markdown, as parsed (the JSON form). */

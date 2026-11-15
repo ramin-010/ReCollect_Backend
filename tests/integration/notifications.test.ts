@@ -157,17 +157,18 @@ describe('PATCH /api/notifications/:id/read and /read-all', () => {
         expect((await prisma.notification.findUniqueOrThrow({ where: { id: theirs.id } })).isRead).toBe(false);
     });
 
-    it('read-all marks only my notifications', async () => {
+    it('read-all marks only my notifications that show now; one scheduled for later stays unread', async () => {
         const me = await createTestUser();
         const other = await createTestUser();
-        await notify(me.id);
-        await notify(me.id, { scheduledFor: new Date(Date.now() + 3_600_000) });
+        const now = await notify(me.id);
+        const later = await notify(me.id, { scheduledFor: new Date(Date.now() + 3_600_000) });
         const theirs = await notify(other.id);
 
         const res = await request(app).patch('/api/notifications/read-all').set('Cookie', authCookie(me));
         expect(res.status).toBe(200);
         expect(res.body).toEqual({ success: true, message: 'All notifications marked as read' });
-        expect(await prisma.notification.count({ where: { recipientId: me.id, isRead: false } })).toBe(0);
+        expect((await prisma.notification.findUniqueOrThrow({ where: { id: now.id } })).isRead).toBe(true);
+        expect((await prisma.notification.findUniqueOrThrow({ where: { id: later.id } })).isRead).toBe(false);
         expect((await prisma.notification.findUniqueOrThrow({ where: { id: theirs.id } })).isRead).toBe(false);
     });
 });

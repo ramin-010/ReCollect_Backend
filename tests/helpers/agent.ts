@@ -4,7 +4,7 @@ import app from '../../src/app';
 import { createApiToken } from '../../src/services/apiTokens/apiTokens.service';
 import type { ApiScope } from '../../src/types/auth';
 
-export const ALL_SCOPES: ApiScope[] = ['read', 'docs:write', 'learning:write'];
+export const ALL_SCOPES: ApiScope[] = ['read', 'docs:write', 'learning:write', 'sessions:write', 'tasks:write'];
 
 /** A real token for the user (the plain `rcl_…` string, as POST /api/tokens returns it once). */
 export async function createTestToken(user: { id: string }, scopes: ApiScope[] = ALL_SCOPES, name = 'Claude Code'): Promise<{ token: string; id: string }> {

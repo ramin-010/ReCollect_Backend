@@ -4,10 +4,11 @@ import 'dotenv/config';
 import app from './app';
 import { startCronScheduler } from './services/cronScheduler';
 import { startOtpCleanupCron } from './services/auth/otp.service';
-import { startShareLinkCleanupCron } from './services/docs/docSharing.service';
 import { startLearningCron } from './services/learningDb/rollover.service';
 import { startMorningNudgeCron } from './services/learningDb/nudge.service';
 import { startRecallCrons } from './services/recall/batch.service';
+import { startSearchTextPass } from './services/docs/docSearch.service';
+import { startTrashCron } from './services/docs/trash.service';
 import { initializeCollaboration, startCollaborationServer } from './collaboration';
 
 // All data lives in Postgres (Prisma). It connects lazily on the first query; see src/db/prisma.ts.
@@ -18,10 +19,9 @@ if (!process.env.DATABASE_URL) {
 // Reminder emails: the cron polls Postgres every minute for due reminders.
 startCronScheduler();
 
-// Postgres has no TTL index: delete expired OTPs and share links periodically
-// (the endpoints also reject expired rows).
+// Postgres has no TTL index: delete expired OTPs periodically (the endpoints also reject expired
+// rows). Share links expired no more: a published doc's link lives until it is unpublished.
 startOtpCleanupCron();
-startShareLinkCleanupCron();
 
 // Learning rollover: every 15 min (and once now) for users whose local day changed: streak settling,
 // and (routine on only) day slots, backfill, triage healing. Idempotent.
@@ -35,6 +35,13 @@ startMorningNudgeCron();
 // poll every 10 min that stores ended batches. Both idle without CLAUDE_API_KEY;
 // RECALL_NIGHTLY_BATCH=off stops the nightly submission.
 startRecallCrons();
+
+// Doc search: once now, the words of every doc that has none (after the migration, an import, or
+// content saved since the last search). Each search also writes them for the searcher's docs.
+startSearchTextPass();
+
+// The trash: docs deleted 30 days ago are deleted for good (hourly).
+startTrashCron();
 
 const PORT = process.env.PORT
 app.listen(PORT, () => {

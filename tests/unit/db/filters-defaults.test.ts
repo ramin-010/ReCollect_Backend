@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { containsInsensitive, escapeLike, startsWithInsensitive } from '../../../src/db/filters';
-import { defaultShareLinkExpiry, generateInviteToken } from '../../../src/db/defaults';
+import { generateInviteToken } from '../../../src/db/defaults';
 
 describe('escapeLike', () => {
     it('escapes LIKE wildcards and the escape character itself', () => {
@@ -15,14 +15,6 @@ describe('escapeLike', () => {
 });
 
 describe('app-side defaults', () => {
-    it('share links expire 3 calendar days later', () => {
-        const now = new Date('2026-10-21T10:00:00Z');
-        const expiry = defaultShareLinkExpiry(now);
-        expect(Math.round((expiry.getTime() - now.getTime()) / 36e5)).toBeGreaterThanOrEqual(71);
-        expect(Math.round((expiry.getTime() - now.getTime()) / 36e5)).toBeLessThanOrEqual(73);
-        expect(now.toISOString()).toBe('2026-10-21T10:00:00.000Z'); // input not mutated
-    });
-
     it('invite tokens are 32-char base64url strings', () => {
         const token = generateInviteToken();
         expect(token).toMatch(/^[A-Za-z0-9_-]{32}$/);

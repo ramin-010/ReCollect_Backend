@@ -39,7 +39,7 @@ async function agentFor(user: { id: string }, scopes?: Parameters<typeof createT
 async function storedBoard(docId: string, canvasId: string): Promise<{ board: Board; height: unknown }> {
     const row = await prisma.doc.findUniqueOrThrow({ where: { id: docId } });
     const ydoc = new Y.Doc();
-    Y.applyUpdate(ydoc, Buffer.from(row.yjsState!, 'base64'));
+    Y.applyUpdate(ydoc, row.yjsState!);
     const element = ydoc
         .getXmlFragment('default')
         .toArray()

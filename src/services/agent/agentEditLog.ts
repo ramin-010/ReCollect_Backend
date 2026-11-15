@@ -60,7 +60,7 @@ export async function recordAgentEdit(actor: AgentActor, input: AgentEditInput, 
     return row.id;
 }
 
-const DOC_CHANGE_KINDS: ReadonlySet<AgentEditKind> = new Set(['doc_append', 'doc_replace_section', 'doc_canvas_update']);
+const DOC_CHANGE_KINDS: ReadonlySet<AgentEditKind> = new Set(['doc_append', 'doc_replace_section', 'doc_canvas_update', 'doc_blocks']);
 
 /** Undo is offered until it is used; doc changes need their snapshot. */
 export function canUndo(edit: Pick<AgentEdit, 'kind' | 'undoneAt' | 'snapshotId'>): boolean {

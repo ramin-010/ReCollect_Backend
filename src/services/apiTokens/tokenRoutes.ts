@@ -8,10 +8,14 @@
 //   - GETs need `read`; doc writes `docs:write`; learning writes `learning:write`.
 //   - Agents write docs only through /api/agent/docs (live through Hocuspocus, snapshot + Undo):
 //     the REST doc writes (editor saves, sharing, collaborators) are cookie-only.
-//   - No deletes in v1, and nothing that fakes Ramin's own actions (completing revisions, the
-//     daily rollover, settings). Pocket (quick) notes can be added, never read.
+//   - Nothing permanent: no deletes for good (deleting a doc moves it to the 30-day trash, Undo
+//     takes it out; emptying the trash is an action that needs his tap, POST /api/actions). Since
+//     stage 4 (the manager, MANAGER_AND_DOCS_PLAN §3.2) agents may complete and move revisions,
+//     change a few learning settings and projects, each logged with an Undo. Never the daily
+//     rollover. Pocket (quick) notes can be added, never read.
 //   - Home's Undo / "seen" for agent edits are cookie-only: an agent can't silence its own work.
 // A cookie session has every scope and is never checked against this list.
+import type { AgentEditKind } from '@prisma/client';
 import type { ApiScope } from '../../types/auth';
 
 type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -39,8 +43,17 @@ export const TOKEN_ROUTES: readonly TokenRoute[] = [
     route('GET', '/api/agent/docs', 'read'),
     route('GET', '/api/agent/docs/:id', 'read'),
     route('POST', '/api/agent/docs', 'docs:write'),
+    route('PATCH', '/api/agent/docs/:id', 'docs:write'),
     route('POST', '/api/agent/docs/:id/append', 'docs:write'),
     route('POST', '/api/agent/docs/:id/replace-section', 'docs:write'),
+    route('GET', '/api/agent/docs/:id/outline', 'read'),
+    route('GET', '/api/agent/docs/:id/blocks', 'read'),
+    route('POST', '/api/agent/docs/:id/blocks', 'docs:write'),
+    route('POST', '/api/agent/docs/:id/blocks/move', 'docs:write'),
+    route('POST', '/api/agent/docs/:id/blocks/delete', 'docs:write'),
+    route('PATCH', '/api/agent/docs/:id/blocks/:blockId', 'docs:write'),
+    route('POST', '/api/agent/docs/:id/trash', 'docs:write'),
+    route('POST', '/api/agent/docs/:id/restore', 'docs:write'),
     route('POST', '/api/agent/docs/:id/canvas/:canvasId', 'docs:write'),
     route('GET', '/api/agent/docs/:id/preview', 'read'),
     route('GET', '/api/agent/edits', 'read'),
@@ -75,7 +88,104 @@ export const TOKEN_ROUTES: readonly TokenRoute[] = [
     route('PATCH', '/api/focus/:id', 'learning:write'),
     route('DELETE', '/api/focus/:id', 'learning:write'),
     route('PUT', '/api/quick-notes/:id', 'learning:write'), // create only, for tokens
+
+    // The record (SYNC_SPINE_SPEC 1.2): a session by its key; reading sessions and projects.
+    route('PUT', '/api/sessions/by-key/:key', 'sessions:write'),
+    route('GET', '/api/sessions', 'read'),
+    route('GET', '/api/projects', 'read'),
+    route('GET', '/api/brief', 'read'), // the brief: where Ramin stands (SYNC_SPINE_SPEC 1.3)
+
+    // The week and suggestions (LOOP_COMPLETE_SPEC 1.6): agents read and set targets, and propose;
+    // only Ramin accepts (the accept / dismiss / decide routes are not listed).
+    route('GET', '/api/week', 'read'),
+    route('GET', '/api/mirror', 'read'), // where Ramin stands, per goal and subject (1.7)
+    // Personal tasks (4.1): never workspace tasks, attachments or a delete.
+    route('GET', '/api/tasks', 'read'),
+    route('POST', '/api/tasks', 'tasks:write'),
+    route('PATCH', '/api/tasks/:id', 'tasks:write'),
+    // The decision journal (4.2).
+    route('GET', '/api/decisions', 'read'),
+    route('POST', '/api/decisions', 'learning:write'),
+    route('PATCH', '/api/decisions/:id', 'learning:write'),
+    route('POST', '/api/week/targets', 'learning:write'),
+    route('PATCH', '/api/week/targets/:id', 'learning:write'),
+    route('GET', '/api/suggestions', 'read'),
+    route('POST', '/api/suggestions', 'learning:write'),
+    // The manager's tools (stage 4): revisions done or moved, a few settings, projects; actions
+    // that need his tap (level 3) are only asked for.
+    route('POST', '/api/revisions/:id/complete', 'learning:write'),
+    route('POST', '/api/revisions/:id/reschedule', 'learning:write'),
+    route('PATCH', '/api/learning/settings', 'learning:write'),
+    route('PATCH', '/api/projects/:id', 'sessions:write'),
+    route('POST', '/api/actions', 'learning:write'),
+    // Stage 4 part 2: reminders, a topic's Recall results, a doc's sharing (read), the spread.
+    route('GET', '/api/reminders', 'read'),
+    route('POST', '/api/reminders', 'tasks:write'),
+    route('POST', '/api/reminders/:id/cancel', 'tasks:write'),
+    route('GET', '/api/topics/:id/recall', 'read'),
+    route('GET', '/api/agent/docs/:id/sharing', 'read'),
+    route('POST', '/api/revisions/spread', 'learning:write'),
+    // Stage 6: the phone's wallpaper and widget (an automation app fetches them with a read token).
+    route('GET', '/api/ambient/widget', 'read'),
+    route('GET', '/api/ambient/wallpaper.png', 'read'),
 ];
+
+/**
+ * Every write a token may make (each TOKEN_ROUTES entry that is not a GET), in exactly one of the
+ * two lists below (SYNC_SPINE_SPEC 0.4; tests/unit/agent/agentWrites.test.ts holds them to it).
+ *
+ * LOGGED: the AgentEditKind the route writes, so it shows under Home's "From your agent" and
+ * can be undone (agentEdits.service.ts has one Undo per kind, checked by the type system).
+ */
+export const LOGGED: Readonly<Record<string, AgentEditKind>> = {
+    'POST /api/agent/docs': 'doc_create',
+    'PATCH /api/agent/docs/:id': 'doc_update',
+    'POST /api/agent/docs/:id/append': 'doc_append',
+    'POST /api/agent/docs/:id/replace-section': 'doc_replace_section',
+    'POST /api/agent/docs/:id/blocks': 'doc_blocks',
+    'POST /api/agent/docs/:id/blocks/move': 'doc_blocks',
+    'POST /api/agent/docs/:id/blocks/delete': 'doc_blocks',
+    'PATCH /api/agent/docs/:id/blocks/:blockId': 'doc_blocks',
+    'POST /api/agent/docs/:id/canvas/:canvasId': 'doc_canvas_update',
+    'POST /api/subjects': 'subject_create',
+    'POST /api/topics': 'revision_schedule',
+    'POST /api/revisions/start': 'revision_schedule',
+    'POST /api/goals': 'goal_create',
+    'PATCH /api/goals/:id': 'goal_update',
+    'POST /api/goals/:id/milestones': 'milestone_add',
+    'PATCH /api/goal-milestones/:id': 'milestone_update',
+    'DELETE /api/goal-milestones/:id': 'milestone_remove',
+    'POST /api/subjects/:id/path': 'path_plan',
+    'PATCH /api/topics/:id/path': 'topic_update',
+    'POST /api/focus': 'focus_add',
+    'PATCH /api/focus/:id': 'focus_update',
+    'DELETE /api/focus/:id': 'focus_remove',
+    'PUT /api/quick-notes/:id': 'pocket_add',
+    'POST /api/week/targets': 'week_target_create',
+    'PATCH /api/week/targets/:id': 'week_target_update',
+    'POST /api/tasks': 'task_create',
+    'PATCH /api/tasks/:id': 'task_update',
+    'POST /api/decisions': 'decision_create',
+    'PATCH /api/decisions/:id': 'decision_update',
+    'POST /api/agent/docs/:id/trash': 'doc_trash',
+    'POST /api/agent/docs/:id/restore': 'doc_restore',
+    'POST /api/revisions/:id/complete': 'revision_complete',
+    'POST /api/revisions/:id/reschedule': 'revision_reschedule',
+    'PATCH /api/learning/settings': 'settings_update',
+    'PATCH /api/projects/:id': 'project_update',
+    'POST /api/reminders': 'reminder_set',
+    'POST /api/reminders/:id/cancel': 'reminder_cancel',
+    'POST /api/revisions/spread': 'revisions_spread',
+};
+
+/** Token writes that are not AgentEdit rows, each with the reason. */
+export const SELF_LOGGED: Readonly<Record<string, string>> = {
+    'POST /api/canvas/layout': 'stateless: lays a board out and stores nothing',
+    'POST /api/canvas/render': 'stateless: draws a board as SVG or PNG and stores nothing',
+    'PUT /api/sessions/by-key/:key': 'the session list is its own log (each entry names its writer; Ramin edits or deletes any); a topic change it asks for is logged as topic_update',
+    'POST /api/suggestions': 'a pending suggestion is its own visible record (Home → Suggested, naming who proposed it): nothing changes until Ramin accepts it, and he can dismiss it',
+    'POST /api/actions': 'a pending action is its own visible record (Home → Suggested, "Do it", naming who asked): nothing happens until Ramin taps it, and he can dismiss it',
+};
 
 /** The path of a URL without its query string. */
 export function pathOf(url: string): string {

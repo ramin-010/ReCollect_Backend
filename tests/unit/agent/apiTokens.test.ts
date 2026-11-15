@@ -45,9 +45,9 @@ describe('token format and hashing', () => {
     });
 
     it('the JSON never contains the hash', () => {
-        const row = { id: 't1', userId: 'u', name: 'Claude', tokenHash: 'secret-hash', prefix: 'rcl_abcdefgh', scopes: ['read', 'bogus'], lastUsedAt: null, revokedAt: null, createdAt: new Date(0) };
+        const row = { id: 't1', userId: 'u', name: 'Claude', tokenHash: 'secret-hash', prefix: 'rcl_abcdefgh', scopes: ['read', 'bogus'], lastUsedAt: null, revokedAt: null, createdAt: new Date(0), expiresAt: null, oauthClientId: null };
         const json = serializeApiToken(row);
-        expect(json).toEqual({ _id: 't1', name: 'Claude', prefix: 'rcl_abcdefgh', scopes: ['read'], lastUsedAt: null, revokedAt: null, createdAt: new Date(0) });
+        expect(json).toEqual({ _id: 't1', name: 'Claude', prefix: 'rcl_abcdefgh', scopes: ['read'], lastUsedAt: null, revokedAt: null, createdAt: new Date(0), signIn: false });
         expect(JSON.stringify(json)).not.toContain('secret-hash');
     });
 });
@@ -93,6 +93,13 @@ describe('which endpoints accept a token (tokenRoutes.ts)', () => {
         ['POST', '/api/agent/docs/abc123/append', 'docs:write'],
         ['POST', '/api/agent/docs/abc123/replace-section', 'docs:write'],
         ['GET', '/api/agent/edits', 'read'],
+        // Stage 4 (the manager): logged, undoable; emptying the trash is only asked for.
+        ['POST', '/api/agent/docs/abc123/trash', 'docs:write'],
+        ['POST', '/api/revisions/r1/complete', 'learning:write'],
+        ['POST', '/api/revisions/r1/reschedule', 'learning:write'],
+        ['PATCH', '/api/learning/settings', 'learning:write'],
+        ['PATCH', '/api/projects/p1', 'sessions:write'],
+        ['POST', '/api/actions', 'learning:write'],
         ['GET', '/api/docs', 'read'],
         ['GET', '/api/docs/cm0abc123', 'read'],
         ['HEAD', '/api/docs/cm0abc123', 'read'],
@@ -150,11 +157,9 @@ describe('which endpoints accept a token (tokenRoutes.ts)', () => {
         ['DELETE', '/api/subjects/s1'],
         ['PATCH', '/api/subjects/s1'],
         ['DELETE', '/api/topics/t1'],
-        ['POST', '/api/revisions/r1/complete'],
         ['POST', '/api/revisions/r1/uncomplete'],
         ['POST', '/api/revisions/fresh-start'],
         ['POST', '/api/learning/ensure-today'],
-        ['PATCH', '/api/learning/settings'],
         ['POST', '/api/captures'],
         // other modules
         ['GET', '/api/todos'],
@@ -175,7 +180,7 @@ describe('which endpoints accept a token (tokenRoutes.ts)', () => {
         const statelessPosts = ['/api/canvas/layout', '/api/canvas/render'];
         for (const route of TOKEN_ROUTES) {
             expect(route.pattern.startsWith('/api/')).toBe(true);
-            expect(['read', 'docs:write', 'learning:write']).toContain(route.scope);
+            expect(['read', 'docs:write', 'learning:write', 'sessions:write', 'tasks:write']).toContain(route.scope);
             expect(route.method === 'GET' || statelessPosts.includes(route.pattern)).toBe(route.scope === 'read');
         }
     });

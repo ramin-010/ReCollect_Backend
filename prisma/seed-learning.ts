@@ -23,9 +23,10 @@
 // ensure-today (or the cron does), like in real use; with the routine off it creates none.
 // Re-running resets the dev user's learning data (subjects, topics + their docs, captures,
 // quick notes, routine, slots, debriefs, goals, focus lines, the seeded todos).
+import { randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import type { prisma as PrismaClientType } from '../src/db/prisma';
-import { docJsonToYjsState } from '../src/services/docs/docContent';
+import { templateDocState } from '../src/services/docs/blocks/newDocState';
 import { generatePreviewState } from '../src/utils/previewUtils';
 import { parseDateOnly } from '../src/utils/timezone';
 import {
@@ -63,7 +64,8 @@ function docState(title: string, paragraphs: string[]) {
             ...paragraphs.map((p) => ({ type: 'paragraph', content: [{ type: 'text', text: p }] })),
         ],
     };
-    const yjsState = docJsonToYjsState(json);
+    // On the new editor, as every doc since the switch (2026-11-15).
+    const yjsState = templateDocState(json, title);
     return { yjsState, previewState: generatePreviewState(yjsState) };
 }
 
@@ -152,7 +154,7 @@ export async function seedLearning(db: Db, userId: string, now: Date = new Date(
     await db.subjectStreak.create({ data: { userId, subjectId: dsa.id, currentStreak: 3, longestStreak: 9, lastCreditDay: d(yesterday) } });
 
     const topic = async (subjectId: string, title: string, tags: string[], body: string[]) => {
-        const doc = await db.doc.create({ data: { userId, title, docType: 'notes', ...docState(title, body) } });
+        const doc = await db.doc.create({ data: { userId, title, ...docState(title, body) } });
         return db.topic.create({ data: { userId, subjectId, docId: doc.id, title, tags } });
     };
     const binary = await topic(dsa.id, 'Binary search', ['arrays', 'search'], ['lo/hi invariant: answer is in [lo, hi].', 'Search on the answer for "minimise the maximum" problems.']);
@@ -191,9 +193,9 @@ export async function seedLearning(db: Db, userId: string, now: Date = new Date(
     // ── Quick notes ──
     await db.quickNote.createMany({
         data: [
-            { id: '5e1d3c2a-1b0f-4e8d-9c7b-6a5f4e3d2c1b', userId, content: '**Contest checklist**: read all 4 first, brute force Q3 before optimising.', isPinned: true, category: 'PRIMARY', createdAt: at(addDays(today, -2), '09:00') },
-            { id: '7a6b5c4d-3e2f-4a1b-8c9d-0e1f2a3b4c5d', userId, content: 'Ask Arjun about the Amazon LP questions', category: 'TEMPORARY', createdAt: at(yesterday, '18:20') },
-            { id: '9f8e7d6c-5b4a-4392-a1b0-c9d8e7f6a5b4', userId, content: 'KMP failure function: longest proper prefix that is also a suffix.', category: 'PRIMARY', createdAt: new Date(now.getTime() - 2 * 3600_000) },
+            { id: randomUUID(), userId, content: '**Contest checklist**: read all 4 first, brute force Q3 before optimising.', isPinned: true, category: 'PRIMARY', createdAt: at(addDays(today, -2), '09:00') },
+            { id: randomUUID(), userId, content: 'Ask Arjun about the Amazon LP questions', category: 'TEMPORARY', createdAt: at(yesterday, '18:20') },
+            { id: randomUUID(), userId, content: 'KMP failure function: longest proper prefix that is also a suffix.', category: 'PRIMARY', createdAt: new Date(now.getTime() - 2 * 3600_000) },
         ],
     });
 
@@ -383,10 +385,10 @@ async function seedLoopV2(
     ].join('\n');
     await db.quickNote.createMany({
         data: [
-            { id: '3c9b1f2e-7d4a-4e6b-9f0c-2a1b3c4d5e6f', userId, content: deploy, isPinned: true, category: 'PRIMARY', createdAt: at(daysAgo(30), '10:00') },
-            { id: '8d7c6b5a-4f3e-4d2c-8b1a-0f9e8d7c6b5a', userId, content: 'ssh -i ~/.ssh/recollect.pem ubuntu@203.0.113.10', isPinned: true, category: 'PRIMARY', createdAt: at(daysAgo(29), '10:05') },
-            { id: '1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d', userId, content: longNote, category: 'PRIMARY', createdAt: at(daysAgo(12), '20:15') },
-            { id: '2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d6e', userId, content: 'System design primer\nhttps://github.com/donnemartin/system-design-primer', category: 'PRIMARY', createdAt: new Date(now.getTime() - 26 * 3600_000) },
+            { id: randomUUID(), userId, content: deploy, isPinned: true, category: 'PRIMARY', createdAt: at(daysAgo(30), '10:00') },
+            { id: randomUUID(), userId, content: 'ssh -i ~/.ssh/recollect.pem ubuntu@203.0.113.10', isPinned: true, category: 'PRIMARY', createdAt: at(daysAgo(29), '10:05') },
+            { id: randomUUID(), userId, content: longNote, category: 'PRIMARY', createdAt: at(daysAgo(12), '20:15') },
+            { id: randomUUID(), userId, content: 'System design primer\nhttps://github.com/donnemartin/system-design-primer', category: 'PRIMARY', createdAt: new Date(now.getTime() - 26 * 3600_000) },
         ],
     });
 

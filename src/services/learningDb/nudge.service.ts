@@ -142,6 +142,11 @@ export function startMorningNudgeCron(): void {
         try {
             const r = await runMorningNudgePass();
             if (r.sent > 0 || r.failed > 0) console.log(`[learning] morning nudge: ${r.sent} sent, ${r.failed} failed`);
+            // The morning notification rides the same pass (ALWAYS_ON_SPEC 6.3); loaded lazily so the
+            // email path never depends on it.
+            const { runMorningPushPass } = await import('../push/push.service');
+            const p = await runMorningPushPass();
+            if (p.sent > 0) console.log(`[learning] morning notification: ${p.sent} sent`);
         } catch (err) {
             console.error('[learning] morning nudge pass failed:', err);
         } finally {

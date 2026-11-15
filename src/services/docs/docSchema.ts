@@ -42,6 +42,9 @@ import { printCanvasFence } from './diagram/print';
 /** The Y.XmlFragment the editor binds to (TipTap Collaboration's default field). */
 export const DOC_YJS_FRAGMENT = 'default';
 
+/** The new editor's fragment (BlockNote, DOCS_EDITOR_V2_PLAN), beside the old one until the switch. */
+export const BLOCKS_YJS_FRAGMENT = 'blocks';
+
 // ─── Markdown helpers ──────────────────────────────────────────────────
 
 /** Render block children one by one (keeps sibling context), separated by a blank line. */

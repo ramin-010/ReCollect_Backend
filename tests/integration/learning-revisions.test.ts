@@ -263,7 +263,7 @@ describe('GET /api/today', () => {
         });
 
         const inboxNote = await prisma.capture.create({ data: { userId: user.id, content: 'loose thought', isPinned: true } });
-        await prisma.capture.create({ data: { userId: user.id, content: 'filed', subjectId: s.id } });
+        const filed = await prisma.capture.create({ data: { userId: user.id, content: 'filed', subjectId: s.id, createdAt: new Date(Date.now() - 60_000) } });
         await prisma.quickNote.create({ data: { id: '6f1c2b8e-0e0e-4c1b-9a51-1b2c3d4e5f60', userId: user.id, content: 'scratch' } });
         const dated = await prisma.todo.create({ data: { userId: user.id, title: 'Dated', dueDate: new Date(Date.now() + 86400_000) } });
         await prisma.todo.create({ data: { userId: user.id, title: 'No date' } });
@@ -285,8 +285,9 @@ describe('GET /api/today', () => {
         expect(data.tasks.map((t: any) => t.title).sort()).toEqual(['Dated', 'Goal']);
         expect(data.tasks.find((t: any) => t._id === goal.id).goalType).toBe('WEEKLY');
         expect(data.tasks.find((t: any) => t._id === dated.id).user._id).toBe(user.id);
-        expect(data.inbox.count).toBe(1);
+        expect(data.inbox.count).toBe(2);
         expect(data.inbox.items[0]).toMatchObject({ _id: inboxNote.id, isPinned: true, subject: null, attachments: [] });
+        expect(data.inbox.items[1]).toMatchObject({ _id: filed.id, subject: { _id: s.id } });
         expect(data.quickNotes).toEqual([expect.objectContaining({ _id: '6f1c2b8e-0e0e-4c1b-9a51-1b2c3d4e5f60', content: 'scratch', category: 'PRIMARY' })]);
         expect(data.triage).toEqual({ kind: 'none' });
         expect(data.todayDebrief).toBeNull();

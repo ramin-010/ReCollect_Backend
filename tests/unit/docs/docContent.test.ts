@@ -238,9 +238,27 @@ describe('image helpers', () => {
         expect(extractImageIdsFromYjsState(state)).toEqual(['img_1']);
 
         const ydoc = new Y.Doc();
-        Y.applyUpdate(ydoc, Buffer.from(state, 'base64'));
+        Y.applyUpdate(ydoc, state);
         expect(extractImageIdsFromYDoc(ydoc)).toEqual(['img_1']);
         ydoc.destroy();
+    });
+
+    it('lists the URLs of the new editor\'s file blocks (fragment "blocks") beside the old image ids', () => {
+        const ydoc = new Y.Doc();
+        const group = new Y.XmlElement('blockGroup');
+        const container = new Y.XmlElement('blockContainer');
+        const image = new Y.XmlElement('image');
+        image.setAttribute('url', 'https://cdn/x.webp');
+        container.insert(0, [image]);
+        group.insert(0, [container]);
+        ydoc.getXmlFragment('blocks').insert(0, [group]);
+        expect(extractImageIdsFromYDoc(ydoc)).toEqual(['https://cdn/x.webp']);
+        ydoc.destroy();
+        // A doc without the new fragment doesn't get one from reading it.
+        const plain = new Y.Doc();
+        extractImageIdsFromYDoc(plain);
+        expect(plain.share.has('blocks')).toBe(false);
+        plain.destroy();
     });
 
     it('returns null (not "no images") for a state it cannot read', () => {

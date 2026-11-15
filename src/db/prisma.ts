@@ -5,6 +5,9 @@
 //
 //   prisma.user.findUnique({ where: { email }, omit: { password: false } })
 //
+// Doc.searchText (a doc's words for search, as long as the doc) is omitted the same way; only
+// src/services/docs/docSearch.service.ts reads it, in raw SQL.
+//
 // For transactions use prisma.$transaction(async (tx) => …) and pass `tx` down to services
 // (they take an optional `db: DbClient = prisma` argument).
 import 'dotenv/config';
@@ -15,7 +18,7 @@ import { Pool } from 'pg';
 function createPrismaClient(pool: Pool) {
     return new PrismaClient({
         adapter: new PrismaPg(pool),
-        omit: { user: { password: true } },
+        omit: { user: { password: true }, doc: { searchText: true } },
     });
 }
 

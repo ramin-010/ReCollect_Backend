@@ -493,8 +493,9 @@ export async function assignPersonalTodo(userId: string, todoId: string, emails:
  */
 export async function unassignPersonalTodo(userId: string, todoId: string, email: unknown, now: Date = new Date()): Promise<TodoWithRelations> {
     await prisma.$transaction(async (tx) => {
-        // As before, no visibility filter here (assign has one).
-        const todo = await tx.todo.findFirst({ where: { id: todoId, userId }, select: { id: true } });
+        // Personal tasks only, as assign: a workspace task's assignees are the workspace's to change
+        // (before 2026-11-15 this route could unassign them and turn the task private, out of its workspace).
+        const todo = await tx.todo.findFirst({ where: { id: todoId, userId, visibility: { in: [...PERSONAL_VISIBILITIES] } }, select: { id: true } });
         if (!todo) throw new ErrorResponse(404, TASK_NOT_OWNED);
 
         if (email) {

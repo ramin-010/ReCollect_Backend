@@ -1,9 +1,10 @@
 // Hocuspocus handler for docs (rooms `doc_<id>`): who may connect, load/store of the Yjs state,
 // and the Cloudinary orphan-image cleanup when someone disconnects. DB access goes through
-// src/services/docs/docs.service.ts; yjsState stays Base64 text.
+// src/services/docs/docs.service.ts; yjsState is bytes (D3, 2026-11-15).
 import { DocumentHandler, CollabAccess, CollabDocument, registerDocumentHandler, hocuspocusServer } from './hocuspocus';
 import { batchDeleteFromCloud } from '../utils/cloudinary';
 import { generatePreviewAndMetadata } from '../utils/previewUtils';
+import { stateBytes } from '../services/docs/docState';
 import { extractImageIdsFromYDoc, extractImageIdsFromYjsState } from '../services/docs/docContent';
 import { docProblem, repairDoc } from '../services/docs/docRepair';
 import type * as Y from 'yjs';
@@ -37,7 +38,7 @@ const docHandler: DocumentHandler = {
    * Docs don't support anonymous access (share links only lead to an access request). Owner and
    * editors connect read-write; viewers connect read-only (Hocuspocus drops their updates).
    */
-  async authorize(userId: string | null, docId: string, _shareToken?: string): Promise<CollabAccess | null> {
+  async authorize(userId: string | null, docId: string): Promise<CollabAccess | null> {
     try {
       if (!userId) return null;
       const role = await getDocLiveRole(docId, userId);
@@ -67,10 +68,10 @@ const docHandler: DocumentHandler = {
     return repairs;
   },
 
-  async save(docId: string, yjsState: string): Promise<void> {
+  async save(docId: string, yjsState: Uint8Array): Promise<void> {
     const { previewState, metadata } = generatePreviewAndMetadata(yjsState);
     await storeDocYjsState(docId, {
-      yjsState,
+      yjsState: stateBytes(yjsState),
       previewState,
       title: metadata.title,
       coverImage: metadata.coverImage,

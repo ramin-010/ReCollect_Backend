@@ -21,8 +21,11 @@ import * as Y from 'yjs';
 import { prosemirrorToYDoc, yXmlFragmentToProsemirrorJSON } from 'y-prosemirror';
 import ErrorResponse from '../../utils/errorResponse';
 import { PendingDiagramError, copyCanvasMaps, readBoard, takeCanvasData, withCanvasData, writeBoards, type Absorbed } from './canvas';
-import { DOC_EDITOR_EXTENSIONS, DOC_YJS_FRAGMENT, getDocSchema } from './docSchema';
+import { BLOCKS_YJS_FRAGMENT, DOC_EDITOR_EXTENSIONS, DOC_YJS_FRAGMENT, getDocSchema } from './docSchema';
 import { repairDoc } from './docRepair';
+import { hasBlocks, readBlocks } from './blocks/serverEditor';
+import { blocksToOldJson } from './blocks/toOldJson';
+import { stateBytes, stateUpdate, type DocState, type StateBytes } from './docState';
 
 export { DOC_EDITOR_EXTENSIONS, DOC_YJS_FRAGMENT, getDocSchema };
 
@@ -117,18 +120,18 @@ export function schemaFor(content: unknown): Schema {
 
 export interface DocStateOptions {
     /**
-     * The Base64 state this content replaces (a REST save): the boards of canvases still in the
-     * content carry over from it, and a canvas's `data` only fills a board it doesn't have.
+     * The state this content replaces (a REST save): the boards of canvases still in the content
+     * carry over from it, and a canvas's `data` only fills a board it doesn't have.
      */
-    canvasesFrom?: string | null | undefined;
+    canvasesFrom?: DocState | null | undefined;
 }
 
-/** A Base64 state as a Y.Doc, or null when it can't be read. */
-function openState(yjsStateBase64: string | null | undefined): Y.Doc | null {
-    if (!yjsStateBase64) return null;
+/** A stored state as a Y.Doc, or null when it can't be read. */
+function openState(state: DocState | null | undefined): Y.Doc | null {
+    if (!state) return null;
     const ydoc = new Y.Doc();
     try {
-        Y.applyUpdate(ydoc, Buffer.from(yjsStateBase64, 'base64'));
+        Y.applyUpdate(ydoc, stateUpdate(state));
         return ydoc;
     } catch (err) {
         console.error('[docContent] Could not read the previous yjsState (canvas boards not carried over):', err);
@@ -138,13 +141,13 @@ function openState(yjsStateBase64: string | null | undefined): Y.Doc | null {
 }
 
 /**
- * TipTap JSON (editor.getJSON()) → Base64 Yjs update, the format stored in Doc.yjsState.
+ * TipTap JSON (editor.getJSON()) → a Yjs update as bytes, the format stored in Doc.yjsState.
  * Malformed content (e.g. a node without a type, an empty text node) → 400.
  * `metadata` (optional) fills the Y.Doc's `metadata` map like the live editor does (title, cover).
  * Canvas blocks are absorbed: their `data` goes into the canvas maps (ids made where missing or
  * repeated), with `options.canvasesFrom` the boards of the replaced state carry over.
  */
-export function docJsonToYjsState(content: unknown, metadata?: { title?: string; coverImage?: string | null }, options: DocStateOptions = {}): string {
+export function docJsonToYjsState(content: unknown, metadata?: { title?: string; coverImage?: string | null }, options: DocStateOptions = {}): StateBytes {
     const previous = openState(options.canvasesFrom);
     try {
         let absorbed: Absorbed<JSONContent>;
@@ -176,7 +179,7 @@ export function docJsonToYjsState(content: unknown, metadata?: { title?: string;
                 if (metadata.title !== undefined) map.set('title', metadata.title);
                 if (metadata.coverImage !== undefined) map.set('coverImage', metadata.coverImage);
             }
-            return Buffer.from(Y.encodeStateAsUpdate(ydoc)).toString('base64');
+            return stateBytes(Y.encodeStateAsUpdate(ydoc));
         } finally {
             ydoc.destroy();
         }
@@ -186,13 +189,15 @@ export function docJsonToYjsState(content: unknown, metadata?: { title?: string;
 }
 
 /**
- * Base64 Yjs state → TipTap JSON, exactly like the browser's yjsStateToJson() (schema-free), with
- * each canvas's board injected as attrs.data (for reading: Markdown, search text).
+ * A stored Yjs state (bytes, or Base64) → TipTap JSON, exactly like the browser's yjsStateToJson()
+ * (schema-free), with each canvas's board injected as attrs.data (for reading: Markdown, search text).
  */
-export function yjsStateToDocJson(yjsStateBase64: string): { type: 'doc'; content: unknown[] } {
+export function yjsStateToDocJson(state: DocState): { type: 'doc'; content: unknown[] } {
     const ydoc = new Y.Doc();
     try {
-        Y.applyUpdate(ydoc, Buffer.from(yjsStateBase64, 'base64'));
+        Y.applyUpdate(ydoc, stateUpdate(state));
+        // A doc on the new editor reads from its blocks, as old JSON (DOCS_EDITOR_V2_PLAN phase 4).
+        if (hasBlocks(ydoc)) return withCanvasData(blocksToOldJson(readBlocks(ydoc)), ydoc) as { type: 'doc'; content: unknown[] };
         // A stored state from before a repair reads as the editor will show it (./docRepair.ts).
         repairDoc(ydoc);
         const json = yXmlFragmentToProsemirrorJSON(ydoc.getXmlFragment(DOC_YJS_FRAGMENT)) as JSONContent;
@@ -229,7 +234,15 @@ export function replaceImageSrcs(content: unknown, urls: Record<string, { url: s
     }
 }
 
-/** imageId attrs of the image nodes in a Y.Doc's editor fragment (the images the doc still uses). */
+/** The new editor's fragment (BlockNote, DOCS_EDITOR_V2_PLAN); its file blocks keep only a `url`. */
+const BLOCKS_FRAGMENT = BLOCKS_YJS_FRAGMENT;
+const BLOCK_FILE_TYPES = new Set(['image', 'file', 'video', 'audio']);
+
+/**
+ * The images a Y.Doc still uses: the imageId attrs of the old editor's image nodes, plus the URLs
+ * of the new editor's file blocks (fragment "blocks"), which carry no imageId. `partitionCloudImages`
+ * keeps an image when either its id or its URL is listed.
+ */
 export function extractImageIdsFromYDoc(ydoc: Y.Doc): string[] {
     const ids: string[] = [];
     // Duck-typed (as before) so it also works on Hocuspocus' live Document objects.
@@ -243,17 +256,30 @@ export function extractImageIdsFromYDoc(ydoc: Y.Doc): string[] {
         }
         for (const child of element.toArray()) stack.push(child);
     }
+    // Only read the new fragment when the doc has one (never create it here).
+    if (ydoc.share.has(BLOCKS_FRAGMENT)) {
+        const blocks: any[] = ydoc.getXmlFragment(BLOCKS_FRAGMENT).toArray();
+        while (blocks.length > 0) {
+            const element = blocks.pop();
+            if (!element || typeof element.toArray !== 'function') continue;
+            if (typeof element.nodeName === 'string' && BLOCK_FILE_TYPES.has(element.nodeName)) {
+                const url = element.getAttribute?.('url');
+                if (url) ids.push(String(url));
+            }
+            for (const child of element.toArray()) blocks.push(child);
+        }
+    }
     return ids;
 }
 
 /**
- * imageId attrs used by a stored Base64 Yjs state, or null when the state can't be read
+ * imageId attrs used by a stored Yjs state, or null when the state can't be read
  * (callers must then skip orphan cleanup; the old code treated it as "no images" and deleted all).
  */
-export function extractImageIdsFromYjsState(yjsStateBase64: string): string[] | null {
+export function extractImageIdsFromYjsState(state: DocState): string[] | null {
     const ydoc = new Y.Doc();
     try {
-        Y.applyUpdate(ydoc, Buffer.from(yjsStateBase64, 'base64'));
+        Y.applyUpdate(ydoc, stateUpdate(state));
         return extractImageIdsFromYDoc(ydoc);
     } catch (err) {
         console.error('[docContent] Failed to read image ids from a yjsState:', err);

@@ -5,7 +5,7 @@
 //
 // Conventions
 // - Ids are cuid strings. The REST API still calls them `_id` (see src/db/serializers).
-// - Embedded arrays that are queried became child/join tables (DocCollaborator, DocBannedUser,
+// - Embedded arrays that are queried became child/join tables (DocCollaborator,
 //   WorkspaceMember, Space, TodoAssignee, TodoTag). Embedded data that is never queried became Json.
 // - Mongoose `timestamps: true` became createdAt/updatedAt.
 // - Mongo had no foreign keys. Here, rows owned by a user/doc/workspace/todo CASCADE when the parent
@@ -62,8 +62,6 @@ model User {
 
   docs                 Doc[]
   docCollaborations    DocCollaborator[]
-  docBans              DocBannedUser[]
-  shareLinks           ShareLink[]
   accessRequests       AccessRequest[]
   todos                Todo[]
   todoAssignments      TodoAssignee[]
@@ -103,8 +101,12 @@ model User {
   nudgeEmailEnabled Boolean   @default(true)
   /// 'HH:mm', the user's local time for the morning email.
   nudgeTime         String    @default("08:30")
+  /// "About me, for my agents" (SYNC_SPINE_SPEC 1.3): how Ramin learns and works, read first by every chat's brief.
+  agentProfile      String?   @db.VarChar(600)
   /// Local day the morning email was last sent (idempotency).
   lastNudgeDay      DateTime? @db.Date
+  /// Local day the morning notification was last sent (idempotency; ALWAYS_ON_SPEC 6.3).
+  lastPushDay       DateTime? @db.Date
   /// Local day of the last POST /api/learning/ensure-today (the app was opened).
   lastSeenDay       DateTime? @db.Date
   /// lastSeenDay as it was before today's first visit, so "comeback" mode lasts the whole day
@@ -126,6 +128,7 @@ model User {
 
   // ── Agents (personal access tokens, the agent edit log; see the Agents section at the end) ──
   apiTokens       ApiToken[]
+  oauthCodes      OAuthCode[]
   agentEdits      AgentEdit[]
   idempotencyKeys IdempotencyKey[]
 
@@ -134,6 +137,23 @@ model User {
   aiUsage    AiUsage[]
   aiSettings AiSettings?
   coachNotes CoachNote[]
+
+  // ── The record (SYNC_SPINE_SPEC 1.2: sessions, projects, weak spots; see the end) ──
+  workSessions WorkSession[]
+  projects     Project[]
+  weakSpots    WeakSpot[]
+  weekTargets  WeekTarget[]
+  suggestions  Suggestion[]
+  decisions    Decision[]
+
+  // ── Imports (the Revise import; see the end) ──
+  importedRows ImportedRow[]
+
+  // ── The Ask AI manager's conversations (see the end) ──
+  assistantThreads AssistantThread[]
+
+  // ── The morning notification (Web Push; see the end) ──
+  pushSubscriptions PushSubscription[]
 
   @@index([googleId])
 }
@@ -164,50 +184,59 @@ model Otp {
 // Docs, collaboration, sharing
 // ============================================================================
 
-enum DocType {
-  notes
-  meeting
-  project
-  personal
-}
-
 enum CollaboratorRole {
   editor
   viewer
 }
 
 model Doc {
-  id           String   @id @default(cuid())
+  id           String                   @id @default(cuid())
   userId       String
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user         User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
   /// Trimmed.
   title        String
-  /// Base64-encoded Yjs update, stored as text exactly like in Mongo (bytea comes later).
-  yjsState     String?
+  /// The doc's Yjs state (an encoded update), as bytes (D3, 2026-11-15; Base64 text before).
+  yjsState     Bytes?
   previewState String?
-  docType      DocType  @default(notes)
   coverImage   String?
-  isPinned     Boolean  @default(false)
-  isArchived   Boolean  @default(false)
+  isPinned     Boolean                  @default(false)
+  isArchived   Boolean                  @default(false)
   /// [{ imageId, cloudUrl, cloudPublicId }]
-  cloudImages  Json     @default("[]")
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  cloudImages  Json                     @default("[]")
+  createdAt    DateTime                 @default(now())
+  updatedAt    DateTime                 @updatedAt
+  /// In the trash since then (MANAGER_AND_DOCS_PLAN §3.2): hidden from lists and search, deleted for
+  /// good 30 days later (or when the trash is emptied). Restoring clears it.
+  trashedAt    DateTime?
+  /// Published to the web (MANAGER_AND_DOCS_PLAN §2): anyone with /p/<publicSlug> can read it, no login,
+  /// never edit. Stable until unpublished (both cleared); publishing again makes a new slug.
+  publicSlug   String?                  @unique
+  publishedAt  DateTime?
+  /// The doc's words for search (each block on its line, canvas boards' words too). NULL = not
+  /// written yet: a content change that doesn't bring them sets NULL (trigger, migration
+  /// 20261114250000_doc_search) and src/services/docs/docSearch.service.ts writes them. Omitted
+  /// from every query by default (src/db/prisma.ts).
+  searchText   String?
+  /// Kept by a trigger from title (weight A) and searchText (B), English stems and plain words; GIN index.
+  /// Raw SQL only (docSearch.service.ts).
+  searchVector Unsupported("tsvector")?
 
-  collaborators  DocCollaborator[]
-  bannedUsers    DocBannedUser[]
-  shareLinks     ShareLink[]
-  accessRequests AccessRequest[]
+  collaborators    DocCollaborator[]
+  accessRequests   AccessRequest[]
   /// Learning topics whose content is this doc (at most one per user).
-  topics         Topic[]
+  topics           Topic[]
   /// States taken before agent edits (Undo), and the agent edit log.
-  snapshots      DocSnapshot[]
-  agentEdits     AgentEdit[]
+  snapshots        DocSnapshot[]
+  agentEdits       AgentEdit[]
   /// Recall question sets written from this doc.
-  recallSets     RecallSet[]
+  recallSets       RecallSet[]
+  /// Ask AI asked from inside this doc (DOCS_EDITOR_V2_PLAN phase 5).
+  assistantThreads AssistantThread[]
 
   @@index([userId])
   @@index([userId, updatedAt(sort: Desc)])
+  @@index([searchVector], type: Gin)
+  @@index([trashedAt])
 }
 
 /// Doc.collaborators[] in Mongo (queried as 'collaborators.user' 23 times).
@@ -224,62 +253,22 @@ model DocCollaborator {
   @@index([userId])
 }
 
-/// Doc.bannedUsers[] in Mongo.
-model DocBannedUser {
-  id       String   @id @default(cuid())
-  docId    String
-  doc      Doc      @relation(fields: [docId], references: [id], onDelete: Cascade)
-  userId   String
-  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  bannedAt DateTime @default(now())
-
-  @@unique([docId, userId])
-  @@index([userId])
-}
-
-/// Only doc links are left (content/dashboard/slide links were cut).
-enum ShareLinkType {
-  doc
-}
-
-model ShareLink {
-  id        String           @id @default(cuid())
-  userId    String
-  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  type      ShareLinkType    @default(doc)
-  role      CollaboratorRole @default(viewer)
-  docId     String
-  doc       Doc              @relation(fields: [docId], references: [id], onDelete: Cascade)
-  slug      String           @unique
-  /// Mongo default: now + 3 days, deleted by a TTL index. Set it with defaultShareLinkExpiry()
-  /// (src/db/defaults.ts); queries already filter expiresAt > now.
-  expiresAt DateTime
-  createdAt DateTime         @default(now())
-  updatedAt DateTime         @updatedAt
-
-  accessRequests AccessRequest[]
-
-  @@index([userId, docId, expiresAt])
-  @@index([docId])
-  @@index([expiresAt])
-}
-
 enum AccessRequestStatus {
   pending
   approved
   rejected
 }
 
+/// A visitor of a published doc asks the owner to edit it (one per person and doc; asking again reopens it).
 model AccessRequest {
   id          String              @id @default(cuid())
   userId      String
   user        User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   docId       String
   doc         Doc                 @relation(fields: [docId], references: [id], onDelete: Cascade)
-  shareLinkId String
-  shareLink   ShareLink           @relation(fields: [shareLinkId], references: [id], onDelete: Cascade)
   status      AccessRequestStatus @default(pending)
-  role        CollaboratorRole    @default(viewer)
+  /// What they asked for: a visitor of a published doc asks to edit.
+  role        CollaboratorRole    @default(editor)
   requestedAt DateTime            @default(now())
   respondedAt DateTime?
   createdAt   DateTime            @default(now())
@@ -287,7 +276,6 @@ model AccessRequest {
 
   @@unique([userId, docId])
   @@index([docId, status])
-  @@index([shareLinkId])
 }
 
 // ============================================================================
@@ -362,10 +350,11 @@ model Todo {
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
 
-  assignees  TodoAssignee[]
-  tags       TodoTag[]
-  reminders  Reminder[]
-  activities ActivityLog[]
+  assignees   TodoAssignee[]
+  tags        TodoTag[]
+  weekTargets WeekTarget[]
+  reminders   Reminder[]
+  activities  ActivityLog[]
 
   @@index([userId, createdAt(sort: Desc)])
   @@index([userId, status])
@@ -691,30 +680,34 @@ model Subject {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  topics   Topic[]
-  captures Capture[]
-  streaks  SubjectStreak[]
-  history  DailyHistory[]
-  goals    GoalSubject[]
+  topics      Topic[]
+  captures    Capture[]
+  streaks     SubjectStreak[]
+  history     DailyHistory[]
+  goals       GoalSubject[]
+  sessions    WorkSession[]
+  weakSpots   WeakSpot[]
+  weekTargets WeekTarget[]
+  decisions   Decision[]
 
   @@index([userId, createdAt])
 }
 
 /// A doc + a subject + its revisions.
 model Topic {
-  id           String   @id @default(cuid())
+  id           String      @id @default(cuid())
   userId       String
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user         User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   subjectId    String
-  subject      Subject  @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  subject      Subject     @relation(fields: [subjectId], references: [id], onDelete: Cascade)
   /// The content. SET NULL when the doc is deleted: the topic and its revision history survive,
   /// and POST /api/topics/:id/doc creates a fresh doc.
   docId        String?
-  doc          Doc?     @relation(fields: [docId], references: [id], onDelete: SetNull)
+  doc          Doc?        @relation(fields: [docId], references: [id], onDelete: SetNull)
   /// Shown only when there is no doc (otherwise doc.title).
   title        String
   /// Revise's per-subject Tag rows, as names.
-  tags         String[] @default([])
+  tags         String[]    @default([])
   sortOrder    Float?
   /// Where it is on its subject's path (BUDDY_PLAN B1). Existing topics were learned: done.
   status       TopicStatus @default(done)
@@ -722,14 +715,17 @@ model Topic {
   doneAt       DateTime?
   /// What to do next on it, written by an agent (at most 300 characters).
   nextStep     String?     @db.VarChar(300)
-  isArchived   Boolean  @default(false)
+  isArchived   Boolean     @default(false)
   /// Imported topics only: Revise canvasData verbatim, for a later read-only canvas view. Never edited.
   legacyCanvas Json?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
 
-  revisions Revision[]
-  captures  Capture[]
+  revisions   Revision[]
+  captures    Capture[]
+  sessions    WorkSession[]
+  weakSpots   WeakSpot[]
+  weekTargets WeekTarget[]
 
   @@unique([userId, docId])
   @@index([subjectId])
@@ -979,6 +975,7 @@ model Goal {
 
   subjects   GoalSubject[]
   milestones GoalMilestone[]
+  projects   Project[]
 
   @@index([userId, status])
 }
@@ -1011,6 +1008,8 @@ model GoalMilestone {
   createdBy CreatedBy @default(user)
   agentName String?   @db.VarChar(60)
 
+  weekTargets WeekTarget[]
+
   @@index([goalId, sortOrder])
 }
 
@@ -1032,6 +1031,10 @@ enum AgentEditKind {
   doc_replace_section
   /// update_canvas: a board changed in place (Undo takes the agent's exact change back, like doc_append).
   doc_canvas_update
+  /// update_doc: a doc renamed, filed under a subject or made a planned topic's note (Undo puts each back).
+  doc_update
+  /// The new editor's blocks (insert, update, move, delete by block id; DocOps): Undo takes the exact change back.
+  doc_blocks
   goal_create
   goal_update
   milestone_add
@@ -1050,31 +1053,115 @@ enum AgentEditKind {
   pocket_add
   revision_schedule
   subject_create
+  /// A week target an agent added (Undo removes it) or changed (Undo puts the old fields back).
+  week_target_create
+  week_target_update
+  /// A personal task an agent added (Undo deletes it) or changed (Undo puts the old fields back).
+  task_create
+  task_update
+  /// A decision an agent logged (Undo deletes it) or changed (Undo puts the old fields back).
+  decision_create
+  decision_update
+  /// A doc an agent moved to the trash (Undo restores it) or restored (Undo puts it back in the trash).
+  doc_trash
+  doc_restore
+  /// A revision an agent marked done (Undo marks it not done) or moved to another day (Undo moves it back).
+  revision_complete
+  revision_reschedule
+  /// Learning settings an agent changed (Undo puts the old values back).
+  settings_update
+  /// A project an agent changed: name, goal, next step, archived (Undo puts the old fields back).
+  project_update
+  /// A reminder an agent set on a task, or with a new task (Undo cancels it, and deletes that task).
+  reminder_set
+  /// A reminder an agent cancelled (Undo sets it again while its time is still ahead).
+  reminder_cancel
+  /// Overdue reviews an agent spread over the next days (Undo puts each back on its old day).
+  revisions_spread
 }
 
 /// A personal access token (Settings → Tokens): `Authorization: Bearer rcl_…`. Only the SHA-256 of
 /// the token is stored; the plain token is shown once, when it is created.
 model ApiToken {
-  id         String    @id @default(cuid())
-  userId     String
-  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id            String       @id @default(cuid())
+  userId        String
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   /// Trimmed; at most 100 characters.
-  name       String    @db.VarChar(100)
+  name          String       @db.VarChar(100)
   /// SHA-256 (hex) of the whole token.
-  tokenHash  String    @unique
+  tokenHash     String       @unique
   /// The token's first 12 characters, for display ("rcl_ab12cd34").
-  prefix     String    @db.VarChar(12)
+  prefix        String       @db.VarChar(12)
   /// A subset of 'read', 'docs:write', 'learning:write'.
-  scopes     String[]
+  scopes        String[]
   /// Updated at most once a minute.
-  lastUsedAt DateTime?
+  lastUsedAt    DateTime?
   /// Set = revoked (the token stops working; the row stays for the list).
-  revokedAt  DateTime?
-  createdAt  DateTime  @default(now())
+  revokedAt     DateTime?
+  createdAt     DateTime     @default(now())
+  /// Set = the token stops working then (a sign-in's access token: an hour, renewed in place by its
+  /// refresh token). Null = until revoked (tokens he makes in Settings → Agents).
+  expiresAt     DateTime?
+  /// The OAuth client a sign-in issued this token to (claude.ai's connector), else null.
+  oauthClientId String?
+  oauthClient   OAuthClient? @relation(fields: [oauthClientId], references: [id], onDelete: SetNull)
 
-  edits AgentEdit[]
+  edits         AgentEdit[]
+  refreshTokens OAuthRefreshToken[]
 
   @@index([userId, createdAt])
+}
+
+/// An app that signs in to Recollect with OAuth (ALWAYS_ON_SPEC 6.5): claude.ai's connector, Claude Code.
+model OAuthClient {
+  /// The client_id: random for a registered client (DCR); the metadata document's URL (CIMD).
+  id           String   @id
+  name         String   @db.VarChar(200)
+  redirectUris String[]
+  /// 'dcr' (it registered) or 'cimd' (its metadata document, refetched when the cache runs out).
+  kind         String   @db.VarChar(10)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  tokens ApiToken[]
+  codes  OAuthCode[]
+}
+
+/// A one-time authorization code (10 minutes), bound to the client, the redirect, PKCE and the scopes.
+model OAuthCode {
+  id            String      @id @default(cuid())
+  /// SHA-256 (hex) of the code.
+  codeHash      String      @unique
+  clientId      String
+  client        OAuthClient @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  userId        String
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  redirectUri   String
+  codeChallenge String
+  scopes        String[]
+  resource      String
+  expiresAt     DateTime
+  usedAt        DateTime?
+  /// The access token the code was exchanged for (a replayed code revokes it).
+  apiTokenId    String?
+  createdAt     DateTime    @default(now())
+
+  @@index([expiresAt])
+}
+
+/// A refresh token of a sign-in (30 days, rotated on every use; a second use revokes the connection).
+model OAuthRefreshToken {
+  id         String    @id @default(cuid())
+  /// SHA-256 (hex) of the token.
+  tokenHash  String    @unique
+  apiTokenId String
+  apiToken   ApiToken  @relation(fields: [apiTokenId], references: [id], onDelete: Cascade)
+  expiresAt  DateTime
+  /// Set when it was exchanged for a new pair.
+  usedAt     DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([apiTokenId])
 }
 
 /// A doc's whole Yjs state just before an agent edit, for Undo.
@@ -1082,11 +1169,11 @@ model DocSnapshot {
   id          String   @id @default(cuid())
   docId       String
   doc         Doc      @relation(fields: [docId], references: [id], onDelete: Cascade)
-  /// Base64 Yjs state of the doc before the edit (the format of Doc.yjsState).
-  yjsState    String
-  /// Base64 Yjs update the agent applied on top of `yjsState`. Undo reverts exactly this change, so
-  /// what people typed after it is kept. Null = Undo restores the whole snapshot.
-  agentUpdate String?
+  /// The doc's Yjs state before the edit, as bytes (the format of Doc.yjsState).
+  yjsState    Bytes
+  /// The Yjs update the agent applied on top of `yjsState`, as bytes. Undo reverts exactly this change,
+  /// so what people typed after it is kept. Null = Undo restores the whole snapshot.
+  agentUpdate Bytes?
   createdAt   DateTime @default(now())
 
   edits AgentEdit[]
@@ -1178,6 +1265,12 @@ enum AiFeature {
   recall_grade
   practice_note
   weekly_coach
+  /// The `@ai` task line (LOOP_COMPLETE_SPEC 4.1).
+  task_parse
+  /// The Ask AI manager (MANAGER_AND_DOCS_PLAN §3.4).
+  assistant
+  /// Ask AI inside a doc (DOCS_EDITOR_V2_PLAN phase 5).
+  doc_ask
 }
 
 /// The questions for one review (one revision) of a doc or capture. At most one unfinished set per
@@ -1263,7 +1356,7 @@ model AiSettings {
   userId        String   @id
   user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   /// Questions and grading stop for the rest of the (local) month once spend reaches this.
-  monthlyCapUsd Decimal  @default(20) @db.Decimal(10, 2)
+  monthlyCapUsd Decimal  @default(50) @db.Decimal(10, 2)
   updatedAt     DateTime @updatedAt
 }
 
@@ -1304,4 +1397,346 @@ model CoachNote {
   createdAt DateTime @default(now())
 
   @@index([userId, createdAt])
+}
+
+// ─── The record (SYNC_SPINE_SPEC 1.2) ─────────────────────────────────────────
+// One WorkSession per piece of work, written by an agent (checkpoint), a Claude Code hook, or by
+// hand. Session writes are not AgentEdit rows: the list is their log (each row says who wrote it,
+// and Ramin can change or delete any). Weak spots go from study chats to Recall and back.
+
+enum SessionKind {
+  study
+  practice
+  build
+  review
+}
+
+/**
+ * practice: how the problem was solved.
+ */
+enum PracticeOutcome {
+  alone
+  hints
+  after_answer
+}
+
+enum SessionSource {
+  agent
+  hook
+  user
+}
+
+enum WeakSpotStatus {
+  open
+  cleared
+}
+
+enum WeakSpotSource {
+  session
+  recall
+}
+
+model WorkSession {
+  id         String           @id @default(cuid())
+  userId     String
+  user       User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// The writer's key (checkpoint "s_…", a Claude Code session "cc_…"); null for a manual entry.
+  key        String?          @db.VarChar(80)
+  kind       SessionKind      @default(study)
+  /// The user's local day it started.
+  day        DateTime         @db.Date
+  startedAt  DateTime
+  endedAt    DateTime?
+  minutes    Int?
+  subjectId  String?
+  subject    Subject?         @relation(fields: [subjectId], references: [id], onDelete: SetNull)
+  topicId    String?
+  topic      Topic?           @relation(fields: [topicId], references: [id], onDelete: SetNull)
+  projectId  String?
+  project    Project?         @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  /// What was done.
+  title      String           @db.VarChar(200)
+  scoreDone  Int?
+  scoreTotal Int?
+  outcome    PracticeOutcome?
+  problem    String?          @db.VarChar(200)
+  url        String?          @db.VarChar(500)
+  nextStep   String?          @db.VarChar(300)
+  /// build: { branch, commits: string[≤ 10] }.
+  details    Json?
+  source     SessionSource    @default(user)
+  agentName  String?          @db.VarChar(60)
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  weakSpots WeakSpot[]
+
+  @@unique([userId, key])
+  @@index([userId, day])
+}
+
+/// Where build sessions belong: a repo or a piece of work (the folder name is its key).
+model Project {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// The folder name, lower case.
+  key        String   @db.VarChar(100)
+  name       String   @db.VarChar(120)
+  goalId     String?
+  goal       Goal?    @relation(fields: [goalId], references: [id], onDelete: SetNull)
+  nextStep   String?  @db.VarChar(300)
+  isArchived Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  sessions    WorkSession[]
+  weekTargets WeekTarget[]
+  decisions   Decision[]
+
+  @@unique([userId, key])
+}
+
+/// Something the learner got wrong or found shaky, on a topic (or a subject). Recall asks about
+/// open ones first; a right answer clears it.
+model WeakSpot {
+  id        String         @id @default(cuid())
+  userId    String
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  topicId   String?
+  topic     Topic?         @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  subjectId String?
+  subject   Subject?       @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  text      String         @db.VarChar(160)
+  /// lower(text) with single spaces: one weak spot per text and topic.
+  textKey   String         @db.VarChar(160)
+  status    WeakSpotStatus @default(open)
+  source    WeakSpotSource @default(session)
+  sessionId String?
+  session   WorkSession?   @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  createdAt DateTime       @default(now())
+  clearedAt DateTime?
+
+  @@unique([userId, topicId, textKey])
+  @@index([userId, status])
+  @@index([subjectId])
+}
+
+// ─── The week and suggestions (LOOP_COMPLETE_SPEC 1.6) ─────────────────────────
+// A week (Monday to Sunday, his zone) holds up to 5 targets. A target is done when it is ticked, or
+// when what it points at is done (a topic, a milestone, a task) or its count is reached. Proposals
+// from the app, the coach or an agent are Suggestion rows: one place on Home, one tap to accept.
+
+enum WeekTargetStatus {
+  open
+  done
+  dropped
+}
+
+/// What a counted target counts in its week.
+enum WeekMeasure {
+  /// practice sessions
+  practice
+  /// minutes of sessions
+  minutes
+  /// topics finished
+  topics
+}
+
+enum SuggestionKind {
+  week_target
+  focus_line
+  profile_edit
+  /// An action that needs Ramin's tap (the manager, stage 4): no handler yet.
+  action
+}
+
+enum SuggestionStatus {
+  pending
+  accepted
+  dismissed
+}
+
+enum SuggestionProposer {
+  app
+  coach
+  agent
+  ask_ai
+}
+
+model WeekTarget {
+  id          String           @id @default(cuid())
+  userId      String
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// The week's Monday (the user's local day).
+  weekStart   DateTime         @db.Date
+  text        String           @db.VarChar(140)
+  sortOrder   Int              @default(0)
+  status      WeekTargetStatus @default(open)
+  doneAt      DateTime?
+  /// At most one link, or a count (measure + amount, optionally in a subject or a project).
+  topicId     String?
+  topic       Topic?           @relation(fields: [topicId], references: [id], onDelete: SetNull)
+  milestoneId String?
+  milestone   GoalMilestone?   @relation(fields: [milestoneId], references: [id], onDelete: SetNull)
+  todoId      String?
+  todo        Todo?            @relation(fields: [todoId], references: [id], onDelete: SetNull)
+  measure     WeekMeasure?
+  amount      Int?
+  subjectId   String?
+  subject     Subject?         @relation(fields: [subjectId], references: [id], onDelete: SetNull)
+  projectId   String?
+  project     Project?         @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  createdBy   CreatedBy        @default(user)
+  agentName   String?          @db.VarChar(60)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@index([userId, weekStart])
+}
+
+model Suggestion {
+  id         String             @id @default(cuid())
+  userId     String
+  user       User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind       SuggestionKind
+  /// What the card says.
+  text       String             @db.VarChar(200)
+  reason     String?            @db.VarChar(200)
+  /// What accepting does (per kind).
+  payload    Json
+  proposedBy SuggestionProposer
+  agentName  String?            @db.VarChar(60)
+  /// Proposals made together, e.g. "week:2026-11-16" (the Sunday review).
+  batch      String?            @db.VarChar(40)
+  status     SuggestionStatus   @default(pending)
+  /// After this day a pending suggestion is no longer shown.
+  expiresDay DateTime?          @db.Date
+  decidedAt  DateTime?
+  createdAt  DateTime           @default(now())
+
+  @@index([userId, status])
+  @@index([userId, batch])
+}
+
+// ─── The decision journal (LOOP_COMPLETE_SPEC 4.2) ─────────────────────────────
+// What was decided, why, what was expected, and a day to look again. On that day Home asks "Was
+// this right?" once (Right · Mixed · Wrong, or look again later). Never a red count.
+
+enum DecisionStatus {
+  open
+  reviewed
+}
+
+enum DecisionVerdict {
+  right
+  wrong
+  mixed
+}
+
+model Decision {
+  id           String           @id @default(cuid())
+  userId       String
+  user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title        String           @db.VarChar(160)
+  why          String           @db.VarChar(600)
+  expect       String?          @db.VarChar(400)
+  /// The user's local day to look again.
+  lookAgainDay DateTime         @db.Date
+  status       DecisionStatus   @default(open)
+  verdict      DecisionVerdict?
+  verdictNote  String?          @db.VarChar(400)
+  reviewedAt   DateTime?
+  subjectId    String?
+  subject      Subject?         @relation(fields: [subjectId], references: [id], onDelete: SetNull)
+  projectId    String?
+  project      Project?         @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  createdBy    CreatedBy        @default(user)
+  agentName    String?          @db.VarChar(60)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  @@index([userId, status, lookAgainDay])
+  @@index([projectId])
+}
+
+// ====================================================================
+// IMPORTS (LOOP_COMPLETE_SPEC S3: backend/scripts/import-revise.ts)
+// ====================================================================
+
+/// A row brought in from another app, so a second run brings only what is new.
+model ImportedRow {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// The app it came from: 'revise'.
+  source      String   @db.VarChar(40)
+  /// Its table there, e.g. 'Capture'.
+  sourceTable String   @db.VarChar(60)
+  sourceId    String   @db.VarChar(80)
+  /// Where it went here, e.g. 'Todo'.
+  targetTable String   @db.VarChar(60)
+  targetId    String   @db.VarChar(80)
+  importedAt  DateTime @default(now())
+
+  @@unique([userId, source, sourceTable, sourceId])
+}
+
+// ====================================================================
+// THE MANAGER (MANAGER_AND_DOCS_PLAN 3.4): Ask AI's conversations
+// ====================================================================
+
+enum AssistantRole {
+  user
+  assistant
+}
+
+/// One conversation with the manager: kept 90 days after its last message, deletable.
+model AssistantThread {
+  id        String             @id @default(cuid())
+  userId    String
+  user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// The first line of his first message.
+  title     String             @db.VarChar(120)
+  /// Asked from inside this doc (its asks are not listed on /ask); gone with the doc.
+  docId     String?
+  doc       Doc?               @relation(fields: [docId], references: [id], onDelete: Cascade)
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+  messages  AssistantMessage[]
+
+  @@index([userId, updatedAt(sort: Desc)])
+  @@index([docId])
+}
+
+model AssistantMessage {
+  id        String          @id @default(cuid())
+  threadId  String
+  thread    AssistantThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  role      AssistantRole
+  text      String
+  /// The tools an answer used: [{ name, level, input, result, ok, editId? }] (short forms).
+  tools     Json            @default("[]")
+  /// An answer's token usage and its cost.
+  usage     Json?
+  costUsd   Decimal?        @db.Decimal(10, 6)
+  createdAt DateTime        @default(now())
+
+  @@index([threadId, createdAt])
+}
+
+// ── The morning notification (ALWAYS_ON_SPEC 6.3) ──
+
+/// One browser or installed app that receives the morning notification (a Web Push subscription).
+model PushSubscription {
+  id        String   @id @default(uuid())
+  userId    String
+  /// The push service URL; unique: one row per browser.
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }

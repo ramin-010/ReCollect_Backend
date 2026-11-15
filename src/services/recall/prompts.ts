@@ -126,8 +126,19 @@ export function docBlock(m: RecallMaterial | null): string {
 
 const MAX_EARLIER = 10;
 
-/** The question-writing request: the review number and the earlier questions with their grades. */
-export function questionsTask(cycleNumber: number, earlier: readonly EarlierQuestion[]): string {
+/** An open weak spot of the topic (SYNC_SPINE_SPEC 1.2), found in a study session or a past review. */
+export interface WeakSpotRef {
+    _id: string;
+    text: string;
+}
+
+const MAX_WEAK_SPOTS = 5;
+
+/**
+ * The question-writing request: the review number, the earlier questions with their grades, and
+ * the topic's open weak spots (asked about first, each question naming the one it covers).
+ */
+export function questionsTask(cycleNumber: number, earlier: readonly EarlierQuestion[], weakSpots: readonly WeakSpotRef[] = []): string {
     const review = Math.min(Math.max(Math.trunc(cycleNumber) || 1, 1), REVISION_CYCLES);
     const lines = [`This is review ${review} of ${REVISION_CYCLES} of these notes.`];
     const listed = earlier.slice(0, MAX_EARLIER);
@@ -136,6 +147,16 @@ export function questionsTask(cycleNumber: number, earlier: readonly EarlierQues
         for (const q of listed) lines.push(`- [${q.grade ?? 'not answered'}] (${q.kind}) ${q.prompt.replace(/\s+/g, ' ').trim()}`);
     } else {
         lines.push('There are no earlier reviews of these notes.');
+    }
+    const spots = weakSpots.slice(0, MAX_WEAK_SPOTS);
+    if (spots.length > 0) {
+        lines.push(
+            '',
+            "The learner's open weak spots on this topic, from study sessions and past reviews. Ask about these first, one question each where the notes cover it, and put that weak spot's id in the question's weakSpotId; every other question gets an empty weakSpotId:"
+        );
+        for (const w of spots) lines.push(`- [${w._id}] ${w.text.replace(/\s+/g, ' ').trim()}`);
+    } else {
+        lines.push('', 'No weak spots are listed: every weakSpotId is an empty string.');
     }
     lines.push('', 'Write the questions.');
     return lines.join('\n');
@@ -163,6 +184,7 @@ export function questionsRequest(input: {
     material: RecallMaterial;
     cycleNumber: number;
     earlier: readonly EarlierQuestion[];
+    weakSpots?: readonly WeakSpotRef[];
 }): CreateParams {
     return {
         model: input.model,
@@ -175,7 +197,7 @@ export function questionsRequest(input: {
                 role: 'user',
                 content: [
                     { type: 'text', text: docBlock(input.material), cache_control: EPHEMERAL },
-                    { type: 'text', text: questionsTask(input.cycleNumber, input.earlier) },
+                    { type: 'text', text: questionsTask(input.cycleNumber, input.earlier, input.weakSpots ?? []) },
                 ],
             },
         ],

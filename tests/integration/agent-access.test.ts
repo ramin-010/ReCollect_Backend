@@ -29,6 +29,7 @@ describe('/api/tokens (cookie only)', () => {
             lastUsedAt: null,
             revokedAt: null,
             createdAt: expect.any(String),
+            signIn: false,
         });
         const row = await prisma.apiToken.findUniqueOrThrow({ where: { id: rest._id } });
         expect(row.tokenHash).toBe(crypto.createHash('sha256').update(token).digest('hex'));
@@ -124,7 +125,8 @@ describe('token authentication', () => {
             await agent.post('/api/docs', { title: 'x' }),
             await agent.get('/api/docs/shared-by-me'),
             await agent.post('/api/learning/ensure-today'),
-            await agent.patch('/api/learning/settings', { dailyBudgetMin: 60 }),
+            // (PATCH /api/learning/settings is open to agents since stage 4: a few fields, logged; manager-tools.test.ts.)
+            await agent.post('/api/docs/trash/empty'),
             await agent.post('/api/agent/edits/seen', { ids: ['x'] }),
             await agent.post('/api/agent/edits/x/undo'),
         ];

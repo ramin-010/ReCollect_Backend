@@ -7,6 +7,7 @@
 // Run it with the API server up to date (it repairs docs on load too); a doc open in an editor is
 // repaired by the server, and this sweep's copy of it is equally repaired.
 import * as Y from 'yjs';
+import { stateBytes } from '../src/services/docs/docState';
 import { prisma } from '../src/db/prisma';
 import { docProblem, repairDoc } from '../src/services/docs/docRepair';
 import { generatePreviewAndMetadata } from '../src/utils/previewUtils';
@@ -18,7 +19,7 @@ async function main(): Promise<void> {
     for (const doc of docs) {
         const ydoc = new Y.Doc();
         try {
-            Y.applyUpdate(ydoc, Buffer.from(doc.yjsState!, 'base64'));
+            Y.applyUpdate(ydoc, doc.yjsState!);
         } catch (err) {
             console.warn(`unreadable state, skipped: ${doc.id} (${doc.title})`);
             ydoc.destroy();
@@ -30,7 +31,7 @@ async function main(): Promise<void> {
             repaired += 1;
             console.log(`${write ? 'repaired' : 'would repair'}: ${doc.id} "${doc.title}" (${repairs} fix${repairs === 1 ? '' : 'es'})`);
             if (write) {
-                const yjsState = Buffer.from(Y.encodeStateAsUpdate(ydoc)).toString('base64');
+                const yjsState = stateBytes(Y.encodeStateAsUpdate(ydoc));
                 const { previewState } = generatePreviewAndMetadata(yjsState);
                 await prisma.doc.update({ where: { id: doc.id }, data: { yjsState, previewState } });
             }

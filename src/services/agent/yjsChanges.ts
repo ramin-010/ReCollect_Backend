@@ -9,7 +9,7 @@
 // ../docs/canvas.ts): the maps a change touched are undone with it.
 import * as Y from 'yjs';
 import { canvasRootsTouched, restoreCanvasMaps } from '../docs/canvas';
-import { DOC_YJS_FRAGMENT } from '../docs/docSchema';
+import { BLOCKS_YJS_FRAGMENT, DOC_YJS_FRAGMENT } from '../docs/docSchema';
 import { repairLegacyBlocks } from '../docs/docRepair';
 
 /** What one change did: the state before it and the change (null when nothing changed). */
@@ -44,7 +44,8 @@ export function containsUpdates(doc: Y.Doc, ...updates: Uint8Array[]): boolean {
 
 /**
  * The update that undoes `change` (made on top of `before`) and nothing else; null if nothing to
- * undo. Its scope: the editor fragment plus every canvas map the change touched.
+ * undo. Its scope: both editors' fragments (the old one and the new editor's "blocks") plus every
+ * canvas map the change touched.
  */
 export function revertUpdate(before: Uint8Array, change: Uint8Array): Uint8Array | null {
     const canvasMaps = canvasRootsTouched(before, change);
@@ -52,7 +53,7 @@ export function revertUpdate(before: Uint8Array, change: Uint8Array): Uint8Array
     try {
         Y.applyUpdate(scratch, before);
         const origin = Symbol('agent-change');
-        const scope = [scratch.getXmlFragment(DOC_YJS_FRAGMENT), ...canvasMaps.map((name) => scratch.getMap(name))];
+        const scope = [scratch.getXmlFragment(DOC_YJS_FRAGMENT), scratch.getXmlFragment(BLOCKS_YJS_FRAGMENT), ...canvasMaps.map((name) => scratch.getMap(name))];
         const undo = new Y.UndoManager(scope, { trackedOrigins: new Set([origin]), captureTimeout: 0 });
         Y.applyUpdate(scratch, change, origin);
         const updates: Uint8Array[] = [];
@@ -78,6 +79,13 @@ export function restoreSnapshotContent(fragment: Y.XmlFragment, snapshot: Uint8A
         const blocks = copy.getXmlFragment(DOC_YJS_FRAGMENT).toArray().map((el) => (el as Y.XmlElement | Y.XmlText).clone());
         if (fragment.length > 0) fragment.delete(0, fragment.length);
         if (blocks.length > 0) fragment.insert(0, blocks);
+        // The new editor's fragment too, when the snapshot has one (never emptied by a snapshot from before it).
+        if (fragment.doc && copy.share.has(BLOCKS_YJS_FRAGMENT) && copy.getXmlFragment(BLOCKS_YJS_FRAGMENT).length > 0) {
+            const target = fragment.doc.getXmlFragment(BLOCKS_YJS_FRAGMENT);
+            const kept = copy.getXmlFragment(BLOCKS_YJS_FRAGMENT).toArray().map((el) => (el as Y.XmlElement | Y.XmlText).clone());
+            if (target.length > 0) target.delete(0, target.length);
+            target.insert(0, kept);
+        }
         if (fragment.doc) restoreCanvasMaps(fragment.doc, copy);
     } finally {
         copy.destroy();

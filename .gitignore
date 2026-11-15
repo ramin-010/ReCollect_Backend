@@ -30,3 +30,6 @@ tsconfig.tsbuildinfo
 
 # Git Bash crash dumps
 *.stackdump
+
+# the manager test set's run results (each run writes one; QA account data)
+evals/results/

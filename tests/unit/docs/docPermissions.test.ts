@@ -1,24 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import {
-    accessibleDocWhere,
-    canEditDoc,
-    canViewDoc,
-    getDocRole,
-    isBannedFromDoc,
-    isDocOwner,
-    type DocAccessSubject,
-} from '../../../src/services/docs/docPermissions';
+import { accessibleDocWhere, canEditDoc, canViewDoc, getDocRole, isDocOwner, type DocAccessSubject } from '../../../src/services/docs/docPermissions';
 
 const doc: DocAccessSubject = {
     userId: 'owner',
     collaborators: [
         { userId: 'editor', role: 'editor' },
         { userId: 'viewer', role: 'viewer' },
-        // Not reachable through the API (removal deletes the row and bans in one transaction), but if
-        // it ever exists the ban must win.
-        { userId: 'banned-collaborator', role: 'editor' },
     ],
-    bannedUsers: [{ userId: 'banned' }, { userId: 'banned-collaborator' }, { userId: 'owner' }],
 };
 
 describe('doc permission helpers', () => {
@@ -26,8 +14,6 @@ describe('doc permission helpers', () => {
         ['owner', 'owner', true, true],
         ['editor', 'editor', true, true],
         ['viewer', 'viewer', true, false],
-        ['banned', null, false, false],
-        ['banned-collaborator', null, false, false],
         ['stranger', null, false, false],
     ] as const)('%s → role %s, view %s, edit %s', (userId, role, view, edit) => {
         expect(getDocRole(doc, userId)).toBe(role);
@@ -35,22 +21,17 @@ describe('doc permission helpers', () => {
         expect(canEditDoc(doc, userId)).toBe(edit);
     });
 
-    it('isDocOwner only for the owner; a ban row never locks the owner out', () => {
+    it('isDocOwner only for the owner; the owner needs no collaborator row', () => {
         expect(isDocOwner(doc, 'owner')).toBe(true);
         expect(isDocOwner(doc, 'editor')).toBe(false);
-        expect(isBannedFromDoc(doc, 'owner')).toBe(true);
-        expect(canEditDoc(doc, 'owner')).toBe(true);
+        expect(getDocRole({ userId: 'owner', collaborators: [] }, 'owner')).toBe('owner');
     });
 
-    it('works with bannedUsers pre-filtered or left out', () => {
-        const noBans = { userId: 'owner', collaborators: [{ userId: 'viewer', role: 'viewer' as const }] };
-        expect(getDocRole(noBans, 'viewer')).toBe('viewer');
-        expect(isBannedFromDoc(noBans, 'viewer')).toBe(false);
+    it('works with collaborators pre-filtered to one user', () => {
+        expect(getDocRole({ userId: 'owner', collaborators: [{ userId: 'viewer', role: 'viewer' }] }, 'viewer')).toBe('viewer');
     });
 
-    it('accessibleDocWhere: owner, or collaborator without a ban', () => {
-        expect(accessibleDocWhere('u1')).toEqual({
-            OR: [{ userId: 'u1' }, { collaborators: { some: { userId: 'u1' } }, bannedUsers: { none: { userId: 'u1' } } }],
-        });
+    it('accessibleDocWhere: owner or collaborator (no bans since the sharing rebuild)', () => {
+        expect(accessibleDocWhere('u1')).toEqual({ OR: [{ userId: 'u1' }, { collaborators: { some: { userId: 'u1' } } }] });
     });
 });

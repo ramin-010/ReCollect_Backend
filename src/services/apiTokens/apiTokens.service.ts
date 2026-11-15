@@ -73,6 +73,8 @@ export function serializeApiToken(row: ApiToken) {
         lastUsedAt: row.lastUsedAt,
         revokedAt: row.revokedAt,
         createdAt: row.createdAt,
+        /** Made by an app's sign-in (claude.ai, Claude Code), not by hand; renewed by the app itself. */
+        signIn: row.oauthClientId !== null,
     };
 }
 

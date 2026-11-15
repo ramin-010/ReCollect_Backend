@@ -96,8 +96,9 @@ export async function markNotificationRead(userId: string, notificationId: strin
     }
 }
 
-export async function markAllNotificationsRead(userId: string, db: DbClient = prisma): Promise<number> {
-    const { count } = await db.notification.updateMany({ where: { recipientId: userId, isRead: false }, data: { isRead: true } });
+/** "Read all": only what he can see now. A notification scheduled for later stays unread until it shows (before 2026-11-15 it was marked read in advance). */
+export async function markAllNotificationsRead(userId: string, db: DbClient = prisma, now: Date = new Date()): Promise<number> {
+    const { count } = await db.notification.updateMany({ where: { recipientId: userId, isRead: false, ...visibleAt(now) }, data: { isRead: true } });
     return count;
 }
 

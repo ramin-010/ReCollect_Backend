@@ -22,6 +22,7 @@ import { isUnderCap, recordAiUsage } from '../claude/usage.service';
 import { earlierQuestions, materialOf, recallRevisionInclude } from './material';
 import { ModelOutputError, type RecallQuestion } from './output';
 import { hasEnoughContent, questionsRequest } from './prompts';
+import { openWeakSpotsOf } from '../learningDb/sessions.service';
 import { questionsFromMessage } from './recall.service';
 
 /** At most this many sets per user per night (a long backlog fills up over several nights). */
@@ -70,12 +71,13 @@ export async function planNightlyRecall(now: Date = new Date()): Promise<Planned
             const material = await materialOf(user.id, rev);
             if (!hasEnoughContent(material)) continue;
             const earlier = await earlierQuestions(rev);
+            const weakSpots = rev.topicId ? (await openWeakSpotsOf(user.id, [rev.topicId])).get(rev.topicId) ?? [] : [];
             planned.push({
                 userId: user.id,
                 revisionId: rev.id,
                 cycleNumber: rev.cycleNumber,
                 docId: material.docId,
-                request: { custom_id: rev.id, params: questionsRequest({ model, material, cycleNumber: rev.cycleNumber, earlier }) },
+                request: { custom_id: rev.id, params: questionsRequest({ model, material, cycleNumber: rev.cycleNumber, earlier, weakSpots }) },
             });
             count += 1;
         }

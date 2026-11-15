@@ -27,6 +27,7 @@ const settingsSchema = z.object({
     busyUntil: zDay.nullable().optional(),
     nudgeEmailEnabled: z.boolean().optional(),
     nudgeTime: z.string().refine((v) => isValidTime(v), { message: "must be a time 'HH:mm'" }).optional(),
+    agentProfile: z.string().max(600, 'At most 600 characters').nullable().optional(),
 });
 
 export const getSettingsHandler = handler(async (req, res) => {
@@ -119,5 +120,6 @@ const freshStartSchema = z.object({ dryRun: z.boolean().optional() });
 /** POST /api/revisions/fresh-start {dryRun?} → { moved, spreadDays } (dryRun: the same answer, nothing written). */
 export const freshStartHandler = handler(async (req, res) => {
     const { dryRun } = parse(freshStartSchema, req.body);
-    ok(res, await freshStart(requireUser(req).id, { dryRun }));
+    const { moved, spreadDays } = await freshStart(requireUser(req).id, { dryRun });
+    ok(res, { moved, spreadDays });
 });
