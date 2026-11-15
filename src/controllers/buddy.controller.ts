@@ -28,6 +28,8 @@ import { BUDDY_NAME_MAX, BUDDY_TONES, MAX_BUDDY_CAP_USD, buddySettings, updateBu
 import { WORDS_PER_CHUNK, queueWords } from '../services/buddy/capture.service';
 import { buddyUsage } from '../services/buddy/spend';
 import { listRoutines, setRoutineEnabled } from '../services/buddy/routines';
+import { answerQuestion } from '../services/buddy/chapter';
+import { prisma } from '../db/prisma';
 import { currentLine, latestStep, nextNoteFor } from '../services/buddy/voice';
 import { nightIfDue } from '../services/buddy/worker';
 import { buddyMaySpend } from '../services/buddy/spend';
@@ -142,8 +144,14 @@ export const patchSettingsHandler = handler(async (req, res) => {
 /** GET /api/buddy/you → what /you draws: settings, counts and every memory (newest first, at most 500) */
 export const youHandler = handler(async (req, res) => {
     const userId = requireUser(req).id;
-    const [settings, counts, memories, routines] = await Promise.all([buddySettings(userId), memoryCounts(userId), listMemories(userId, { status: 'all', limit: LIST_LIMIT_MAX }), listRoutines(userId)]);
-    ok(res, { settings, counts, memories, routines });
+    const [settings, counts, memories, routines, chapters] = await Promise.all([
+        buddySettings(userId),
+        memoryCounts(userId),
+        listMemories(userId, { status: 'all', limit: LIST_LIMIT_MAX }),
+        listRoutines(userId),
+        prisma.buddyChapter.findMany({ where: { userId }, orderBy: { period: 'desc' }, take: 24, select: { id: true, period: true, text: true, questions: true } }),
+    ]);
+    ok(res, { settings, counts, memories, routines, chapters: chapters.map((c) => ({ _id: c.id, period: c.period, text: c.text, questions: c.questions })) });
 });
 
 /** POST /api/buddy/words {sessionKey, seq, project?, messages} (the hooks) → 202 { queued } */
@@ -220,6 +228,12 @@ export const feedbackHandler = handler(async (req, res) => {
 export const routineHandler = handler(async (req, res) => {
     const input = parse(z.object({ enabled: z.boolean() }).strict(), req.body);
     ok(res, await setRoutineEnabled(requireUser(req).id, param(req, 'id'), input.enabled));
+});
+
+/** POST /api/buddy/questions {memoryId, answer: yes|no} (the app): his answer to a chapter's "Still true?" */
+export const questionHandler = handler(async (req, res) => {
+    const input = parse(z.object({ memoryId: z.string().trim().min(1).max(64), answer: z.enum(['yes', 'no']) }).strict(), req.body);
+    ok(res, await answerQuestion(requireUser(req).id, input.memoryId, input.answer));
 });
 
 /** GET /api/buddy/export → everything as JSON (a file download) */

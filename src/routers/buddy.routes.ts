@@ -32,5 +32,7 @@ router.post('/tell', requireScope('ambient'), buddy.tellHandler);
 router.post('/feedback', requireScope('ambient'), buddy.feedbackHandler);
 // B6: a routine's switch.
 router.patch('/routines/:id', cookieOnly, buddy.routineHandler);
+// B7: his answer to a chapter's "Still true?".
+router.post('/questions', cookieOnly, buddy.questionHandler);
 
 export default router;

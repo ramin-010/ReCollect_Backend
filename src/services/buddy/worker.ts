@@ -12,6 +12,7 @@ import { digestChunk } from './digest';
 import { buddyMaySpend } from './spend';
 import { runNight, type BuddyDayJson } from './think';
 import { pulseIfDue } from './pulse';
+import { chapterIfDue } from './chapter';
 
 export const CHUNK_MAX_AGE_MS = 48 * 3600_000;
 export const CHUNK_TRIES = 3;
@@ -118,8 +119,11 @@ export async function runDueNights(now: Date = new Date()): Promise<{ ran: numbe
     let failed = 0;
     for (const { userId } of users) {
         try {
-            if (await nightIfDue(userId, now)) ran++;
-            else if ((await buddyMaySpend(userId, now)) === 'ok' && (await pulseIfDue(userId, now)).ran) ran++;
+            if (await nightIfDue(userId, now)) {
+                ran++;
+                // The first nights of a month also write the month that ended (B7).
+                if (await chapterIfDue(userId, now)) ran++;
+            } else if ((await buddyMaySpend(userId, now)) === 'ok' && (await pulseIfDue(userId, now)).ran) ran++;
         } catch (err) {
             failed++;
             console.error(`[buddy] a step failed for a user: ${err instanceof Error ? err.message : String(err)}`);

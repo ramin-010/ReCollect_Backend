@@ -164,6 +164,7 @@ model User {
   buddySteps   BuddyDay[]
   buddyThumbs  BuddyFeedback[]
   routines     Routine[]
+  chapters     BuddyChapter[]
 
   @@index([googleId])
 }
@@ -2020,4 +2021,24 @@ model Routine {
   createdAt  DateTime  @default(now())
 
   @@unique([userId, kind])
+}
+
+/// A month (or a year) of his life in a short chapter (BUDDY_MEMORY_PLAN §3.7, B7): written on the 1st
+/// from that month's numbers, notes and memory changes; kept for good, searched by recall_memory.
+model BuddyChapter {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// "2026-11"
+  period    String   @db.VarChar(7)
+  text      String
+  /// The month's numbers it was written from (kept, so a number in the text can be traced).
+  facts     Json     @default("{}")
+  /// The audit's "Still true?" questions: [{ memoryId, question }], each answered once on /you.
+  questions Json     @default("[]")
+  model     String   @db.VarChar(100)
+  costUsd   Decimal  @default(0) @db.Decimal(10, 6)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, period])
 }
