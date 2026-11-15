@@ -141,6 +141,20 @@ export const patchSettingsHandler = handler(async (req, res) => {
     ok(res, await updateBuddySettings(requireUser(req).id, patch));
 });
 
+/** The health numbers (BUDDY_MEMORY_PLAN §3.7.5), last 30 days: the share of memories he confirmed, his thumbs, what the guards threw out. */
+async function buddyHealth(userId: string) {
+    const since = new Date(Date.now() - 30 * 86_400_000);
+    const [active, confirmed, more, less, steps] = await Promise.all([
+        prisma.memory.count({ where: { userId, status: 'active' } }),
+        prisma.memory.count({ where: { userId, status: 'active', byUser: true } }),
+        prisma.buddyFeedback.count({ where: { userId, verdict: 'more', createdAt: { gte: since } } }),
+        prisma.buddyFeedback.count({ where: { userId, verdict: 'less', createdAt: { gte: since } } }),
+        prisma.buddyDay.findMany({ where: { userId, createdAt: { gte: since } }, select: { dropped: true } }),
+    ]);
+    const dropped = steps.reduce((n, s) => n + (Array.isArray(s.dropped) ? s.dropped.length : 0), 0);
+    return { confirmedShare: active ? Math.round((confirmed / active) * 100) : 0, thumbs: { more, less }, dropped, steps: steps.length };
+}
+
 /** GET /api/buddy/you → what /you draws: settings, counts and every memory (newest first, at most 500) */
 export const youHandler = handler(async (req, res) => {
     const userId = requireUser(req).id;
@@ -151,7 +165,7 @@ export const youHandler = handler(async (req, res) => {
         listRoutines(userId),
         prisma.buddyChapter.findMany({ where: { userId }, orderBy: { period: 'desc' }, take: 24, select: { id: true, period: true, text: true, questions: true } }),
     ]);
-    ok(res, { settings, counts, memories, routines, chapters: chapters.map((c) => ({ _id: c.id, period: c.period, text: c.text, questions: c.questions })) });
+    ok(res, { settings, counts, memories, routines, chapters: chapters.map((c) => ({ _id: c.id, period: c.period, text: c.text, questions: c.questions })), health: await buddyHealth(userId) });
 });
 
 /** POST /api/buddy/words {sessionKey, seq, project?, messages} (the hooks) → 202 { queued } */
