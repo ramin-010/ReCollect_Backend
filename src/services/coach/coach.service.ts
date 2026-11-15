@@ -157,6 +157,13 @@ export async function generateCoachNote(userId: string, opts: { fresh?: boolean 
             orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         });
         if (todays) return { note: serializeCoachNote(todays), created: false };
+        // B5 (BUDDY_MEMORY_PLAN §3.3): with his buddy on, Sunday's night writes the week's note; the
+        // week stays on it until the next Sunday (no second model for the same week).
+        const buddy = await prisma.buddyState.findUnique({ where: { userId }, select: { enabled: true, paused: true } });
+        if (buddy?.enabled && !buddy.paused) {
+            const weeks = await prisma.coachNote.findFirst({ where: { userId, createdAt: { gte: new Date(now.getTime() - 7 * 86_400_000) } }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }] });
+            if (weeks) return { note: serializeCoachNote(weeks), created: false };
+        }
     }
 
     const window = coachWindow(ctx.today);
