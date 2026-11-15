@@ -141,6 +141,8 @@ export const TOKEN_ROUTES: readonly TokenRoute[] = [
     // B4: the phone app's "Tell your buddy" and thumbs (its ambient token; nothing else).
     route('POST', '/api/buddy/tell', 'ambient'),
     route('POST', '/api/buddy/feedback', 'ambient'),
+    // B7: his months, for recall_memory.
+    route('GET', '/api/buddy/chapters', 'read'),
 ];
 
 /**

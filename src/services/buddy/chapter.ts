@@ -192,6 +192,17 @@ export async function chapterIfDue(userId: string, now: Date = new Date()): Prom
     return true;
 }
 
+const MONTH_NAMES = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+
+/** His months that hold every word of the query (a month's name or "2026-03" finds that month): recall_memory. */
+export async function searchChapters(userId: string, q: string, limit = 6): Promise<Array<{ period: string; text: string }>> {
+    const rows = await prisma.buddyChapter.findMany({ where: { userId }, orderBy: { period: 'desc' }, take: 48, select: { period: true, text: true } });
+    const words = q.toLowerCase().split(/[^\p{L}\p{N}-]+/u).filter((w) => w.length > 1);
+    if (!words.length) return rows.slice(0, limit);
+    const named = (r: { period: string }) => `${r.period} ${MONTH_NAMES[Number(r.period.slice(5, 7)) - 1] ?? ''} ${r.period.slice(0, 4)}`;
+    return rows.filter((r) => words.every((w) => `${named(r)} ${r.text.toLowerCase()}`.includes(w))).slice(0, limit);
+}
+
 /** His answer to a "Still true?" question: yes makes the memory his own (no model changes it), no marks it wrong. */
 export async function answerQuestion(userId: string, memoryId: string, answer: 'yes' | 'no'): Promise<{ answered: true }> {
     const chapters = await prisma.buddyChapter.findMany({ where: { userId }, select: { id: true, questions: true } });

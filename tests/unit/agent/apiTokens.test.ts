@@ -124,6 +124,7 @@ describe('which endpoints accept a token (tokenRoutes.ts)', () => {
         ['POST', '/api/buddy/remember', 'sessions:write'],
         ['GET', '/api/buddy/memories', 'read'],
         ['POST', '/api/buddy/memories/m1/close', 'sessions:write'],
+        ['GET', '/api/buddy/chapters', 'read'],
     ])('%s %s needs %s', (method, url, scope) => {
         expect(tokenRouteScope(method, url)).toBe(scope);
     });

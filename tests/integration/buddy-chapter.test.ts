@@ -59,6 +59,11 @@ describe('the month', () => {
         // /you shows the chapter; his "yes" makes the memory his, and the question goes.
         const you = (await api(user).get('/api/buddy/you')).body.data;
         expect(you.chapters[0]).toMatchObject({ period: '2026-11' });
+        // Agents find a month by its name (recall_memory).
+        const { asAgent, createTestToken } = await import('../helpers/agent');
+        const chat = asAgent((await createTestToken(user)).token);
+        expect((await chat.get('/api/buddy/chapters?q=november')).body.data).toEqual([{ period: '2026-11', text: expect.stringContaining('November was the month') }]);
+        expect((await chat.get('/api/buddy/chapters?q=march')).body.data).toEqual([]);
         await api(user).post('/api/buddy/questions', { memoryId: a.id, answer: 'yes' });
         expect((await prisma.memory.findUniqueOrThrow({ where: { id: a.id } })).byUser).toBe(true);
         expect(((await prisma.buddyChapter.findUniqueOrThrow({ where: { id: ch.id } })).questions as unknown[]).length).toBe(1);

@@ -34,5 +34,6 @@ router.post('/feedback', requireScope('ambient'), buddy.feedbackHandler);
 router.patch('/routines/:id', cookieOnly, buddy.routineHandler);
 // B7: his answer to a chapter's "Still true?".
 router.post('/questions', cookieOnly, buddy.questionHandler);
+router.get('/chapters', requireScope('read'), buddy.chaptersHandler);
 
 export default router;

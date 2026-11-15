@@ -28,7 +28,7 @@ import { BUDDY_NAME_MAX, BUDDY_TONES, MAX_BUDDY_CAP_USD, buddySettings, updateBu
 import { WORDS_PER_CHUNK, queueWords } from '../services/buddy/capture.service';
 import { buddyUsage } from '../services/buddy/spend';
 import { listRoutines, setRoutineEnabled } from '../services/buddy/routines';
-import { answerQuestion } from '../services/buddy/chapter';
+import { answerQuestion, searchChapters } from '../services/buddy/chapter';
 import { prisma } from '../db/prisma';
 import { currentLine, latestStep, nextNoteFor } from '../services/buddy/voice';
 import { nightIfDue } from '../services/buddy/worker';
@@ -234,6 +234,12 @@ export const routineHandler = handler(async (req, res) => {
 export const questionHandler = handler(async (req, res) => {
     const input = parse(z.object({ memoryId: z.string().trim().min(1).max(64), answer: z.enum(['yes', 'no']) }).strict(), req.body);
     ok(res, await answerQuestion(requireUser(req).id, input.memoryId, input.answer));
+});
+
+/** GET /api/buddy/chapters?q= (read): his months that hold the words (recall_memory) */
+export const chaptersHandler = handler(async (req, res) => {
+    const q = parse(z.object({ q: z.string().max(200).optional() }), req.query);
+    ok(res, await searchChapters(requireUser(req).id, q.q ?? ''));
 });
 
 /** GET /api/buddy/export → everything as JSON (a file download) */
