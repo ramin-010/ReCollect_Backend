@@ -159,6 +159,9 @@ model User {
   buddyState   BuddyState?
   observations Observation[]
   memories     Memory[]
+  buddyChunks  BuddyChunk[]
+  buddyDays    BuddyCaptureDay[]
+  buddySteps   BuddyDay[]
 
   @@index([googleId])
 }
@@ -1278,6 +1281,12 @@ enum AiFeature {
   assistant
   /// Ask AI inside a doc (DOCS_EDITOR_V2_PLAN phase 5).
   doc_ask
+  /// The buddy (BUDDY_MEMORY_PLAN §5): the gate, the digest, the night, the pulses, the lock-screen check.
+  buddy_gate
+  buddy_digest
+  buddy_think
+  buddy_pulse
+  buddy_check
 }
 
 /// The questions for one review (one revision) of a doc or capture. At most one unfinished set per
@@ -1556,12 +1565,20 @@ enum SuggestionKind {
   profile_edit
   /// An action that needs Ramin's tap (the manager, stage 4): no handler yet.
   action
+  /// The buddy's items from his chats (BUDDY_MEMORY_PLAN §3.6): a personal task, a note for his inbox, a decision for the journal.
+  task
+  note
+  decision
+  /// "Do this by itself from now on?" (B6).
+  routine
 }
 
 enum SuggestionStatus {
   pending
   accepted
   dismissed
+  /// The buddy's items from his chats, not shown until the night ranks them (BUDDY_MEMORY_PLAN §3.1).
+  candidate
 }
 
 enum SuggestionProposer {
@@ -1569,6 +1586,8 @@ enum SuggestionProposer {
   coach
   agent
   ask_ai
+  /// The buddy (from his chats).
+  buddy
 }
 
 model WeekTarget {
@@ -1848,6 +1867,8 @@ model Observation {
   day         DateTime    @db.Date
   memoryId    String?
   memory      Memory?     @relation(fields: [memoryId], references: [id], onDelete: SetNull)
+  /// When the night step read it (folded into a memory, or judged not worth one); null = waiting.
+  foldedAt    DateTime?
   createdAt   DateTime    @default(now())
 
   @@index([userId, day])
@@ -1895,4 +1916,72 @@ model Memory {
 
   @@index([userId, status, kind])
   @@index([searchVector], type: Gin)
+}
+
+/// The capture queue (BUDDY_MEMORY_PLAN §3.1): his typed words from one Claude Code session, after the
+/// secret scrub, waiting for the gate and the digest. Deleted once digested; never kept past 48 hours.
+model BuddyChunk {
+  id         String      @id @default(cuid())
+  userId     String
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sessionKey String      @db.VarChar(80)
+  /// The hook's running number for this session: a retried POST is not queued twice.
+  seq        Int
+  project    String?     @db.VarChar(100)
+  source     BuddySource @default(hook)
+  /// [{ at, text, reply? }]
+  messages   Json
+  attempts   Int         @default(0)
+  lastError  String?     @db.VarChar(300)
+  createdAt  DateTime    @default(now())
+
+  @@unique([userId, sessionKey, seq])
+  @@index([createdAt])
+}
+
+/// What capture did on one of his days (counts only, never words): the usage view and the review.
+model BuddyCaptureDay {
+  userId  String
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  day     DateTime @db.Date
+  /// Messages received, kept by the gate, chunks, dropped (paused, expired, failed), scrubbed.
+  seen    Int      @default(0)
+  kept    Int      @default(0)
+  chunks  Int      @default(0)
+  dropped Int      @default(0)
+  secrets Int      @default(0)
+  /// What the digest wrote: notes about him, items for his inbox.
+  notes   Int      @default(0)
+  items   Int      @default(0)
+
+  @@id([userId, day])
+}
+
+enum BuddyStepKind {
+  night
+  pulse
+}
+
+/// What one thinking step wrote (BUDDY_MEMORY_PLAN §3.3): the day's three lines for the phone and
+/// Home, its note (or its silence), a follow-up for his next chat, and what the guards threw out.
+model BuddyDay {
+  id        String        @id @default(cuid())
+  userId    String
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// His local day the step ran for.
+  day       DateTime      @db.Date
+  kind      BuddyStepKind
+  /// [{ slot: morning|afternoon|evening, text, form, lockOk, sourceId?, fallback? }]
+  lines     Json
+  note      String?       @db.VarChar(800)
+  followUp  String?       @db.VarChar(300)
+  /// The memory changes applied (an audit, and what an Undo of the night would take back).
+  ops       Json          @default("[]")
+  /// What the op check and the guards threw out, and why (never his words).
+  dropped   Json          @default("[]")
+  model     String        @db.VarChar(100)
+  costUsd   Decimal       @default(0) @db.Decimal(10, 6)
+  createdAt DateTime      @default(now())
+
+  @@index([userId, day])
 }

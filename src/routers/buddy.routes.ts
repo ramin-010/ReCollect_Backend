@@ -20,5 +20,9 @@ router.get('/settings', cookieOnly, buddy.getSettingsHandler);
 router.patch('/settings', cookieOnly, buddy.patchSettingsHandler);
 router.get('/you', cookieOnly, buddy.youHandler);
 router.get('/export', cookieOnly, buddy.exportHandler);
+// B2: the hooks send his typed words (queued, scrubbed, digested, deleted) and fetch the buddy's note.
+router.post('/words', requireScope('sessions:write'), buddy.wordsHandler);
+router.get('/note', requireScope('read'), buddy.noteHandler);
+router.get('/usage', cookieOnly, buddy.usageHandler);
 
 export default router;

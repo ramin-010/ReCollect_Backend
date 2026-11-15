@@ -70,7 +70,33 @@ const brief = (s: SessionJson): BriefSession => ({
 });
 
 /** Where Ramin stands, now. `key` reuses a session key (a Claude Code session's); else a fresh one. */
-export async function getBrief(userId: string, options: { project?: string | undefined; key?: string | undefined } = {}, now: Date = new Date()): Promise<Brief> {
+/**
+ * A work folder's brief (BUDDY_MEMORY_PLAN §4.3): his goal is a new job, so an office chat gets only
+ * the day, this project's own line and the session key: no profile, goals, plan, sessions from
+ * elsewhere, Recall or buddy.
+ */
+function workBrief(b: Brief): Brief {
+    return {
+        ...b,
+        profile: null,
+        goals: [],
+        tasks: { dueToday: 0, overdue: 0, titles: [] },
+        decisions: { due: [], project: b.decisions.project },
+        week: { weekStart: b.week.weekStart, targets: [], reviewDue: false },
+        today: { revisions: { planned: 0, estMinutes: 0, done: 0, waiting: 0 }, focus: [] },
+        next: [],
+        recent: [],
+        recall: { days: 7, finished: 0, weakTopics: [] },
+        buddy: { who: null, heading: null, now: null, memories: [], note: null, followUp: null },
+    };
+}
+
+export async function getBrief(userId: string, options: { project?: string | undefined; key?: string | undefined; work?: boolean | undefined } = {}, now: Date = new Date()): Promise<Brief> {
+    const full = await fullBrief(userId, options, now);
+    return options.work ? workBrief(full) : full;
+}
+
+async function fullBrief(userId: string, options: { project?: string | undefined; key?: string | undefined } = {}, now: Date = new Date()): Promise<Brief> {
     const ctx = await loadLearningContext(userId, now);
     const window = coachWindow(ctx.today);
     const weekStart = weekStartOf(ctx.today);

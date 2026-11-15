@@ -21,6 +21,9 @@ import {
     updateMemoryByUser,
 } from '../services/buddy/memory.service';
 import { BUDDY_NAME_MAX, BUDDY_TONES, MAX_BUDDY_CAP_USD, buddySettings, updateBuddySettings } from '../services/buddy/state.service';
+import { WORDS_PER_CHUNK, queueWords } from '../services/buddy/capture.service';
+import { buddyUsage } from '../services/buddy/spend';
+import { nextNoteFor } from '../services/buddy/voice';
 import { handler, ok, param, parse } from './learning/common';
 
 const zKind = z.enum(MEMORY_KINDS);
@@ -132,6 +135,41 @@ export const youHandler = handler(async (req, res) => {
     const userId = requireUser(req).id;
     const [settings, counts, memories] = await Promise.all([buddySettings(userId), memoryCounts(userId), listMemories(userId, { status: 'all', limit: LIST_LIMIT_MAX })]);
     ok(res, { settings, counts, memories });
+});
+
+/** POST /api/buddy/words {sessionKey, seq, project?, messages} (the hooks) → 202 { queued } */
+export const wordsHandler = handler(async (req, res) => {
+    const input = parse(
+        z
+            .object({
+                sessionKey: z.string().trim().min(1).max(80),
+                seq: z.number().int().min(0).max(1_000_000),
+                project: z.string().trim().max(200).nullable().optional(),
+                messages: z
+                    .array(z.object({ at: z.string().max(40).optional(), text: z.string().max(20_000), reply: z.string().max(4000).optional() }).strict())
+                    .min(1)
+                    .max(WORDS_PER_CHUNK),
+            })
+            .strict(),
+        req.body
+    );
+    ok(res, await queueWords(requireUser(req).id, input), 202);
+});
+
+/** GET /api/buddy/note?after=<id> (the hooks, the phone app): the buddy's newest note for a chat, or 204 */
+export const noteHandler = handler(async (req, res) => {
+    const q = parse(z.object({ after: z.string().max(80).optional() }), req.query);
+    const note = await nextNoteFor(requireUser(req).id, q.after);
+    if (!note) {
+        res.status(204).end();
+        return;
+    }
+    ok(res, note);
+});
+
+/** GET /api/buddy/usage → this month's spend and cap, and the last 30 days (counts and cost, never words) */
+export const usageHandler = handler(async (req, res) => {
+    ok(res, await buddyUsage(requireUser(req).id));
 });
 
 /** GET /api/buddy/export → everything as JSON (a file download) */

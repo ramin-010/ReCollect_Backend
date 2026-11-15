@@ -9,6 +9,7 @@ import { startMorningNudgeCron } from './services/learningDb/nudge.service';
 import { startRecallCrons } from './services/recall/batch.service';
 import { startSearchTextPass } from './services/docs/docSearch.service';
 import { startTrashCron } from './services/docs/trash.service';
+import { startBuddyWorker } from './services/buddy/worker';
 import { initializeCollaboration, startCollaborationServer } from './collaboration';
 
 // All data lives in Postgres (Prisma). It connects lazily on the first query; see src/db/prisma.ts.
@@ -42,6 +43,8 @@ startSearchTextPass();
 
 // The trash: docs deleted 30 days ago are deleted for good (hourly).
 startTrashCron();
+// The buddy's capture queue: his typed words → the gate → the digest, every minute (BUDDY_MEMORY_PLAN §3.1).
+startBuddyWorker();
 
 const PORT = process.env.PORT
 app.listen(PORT, () => {

@@ -303,16 +303,19 @@ export interface MemoryCounts {
     closed: number;
     wrong: number;
     notes: number;
+    /** Notes from his chats the night step has not folded into a memory yet. */
+    pending: number;
 }
 
 export async function memoryCounts(userId: string): Promise<MemoryCounts> {
-    const [byStatus, lasting, notes] = await Promise.all([
+    const [byStatus, lasting, notes, pending] = await Promise.all([
         prisma.memory.groupBy({ by: ['status'], where: { userId }, _count: { _all: true } }),
         prisma.memory.count({ where: { userId, status: 'active', lasting: true } }),
         prisma.observation.count({ where: { userId } }),
+        prisma.observation.count({ where: { userId, memoryId: null } }),
     ]);
     const n = (s: MemoryStatus) => byStatus.find((r) => r.status === s)?._count._all ?? 0;
-    return { active: n('active'), lasting, working: n('active') - lasting, faded: n('faded'), closed: n('closed'), wrong: n('wrong'), notes };
+    return { active: n('active'), lasting, working: n('active') - lasting, faded: n('faded'), closed: n('closed'), wrong: n('wrong'), notes, pending };
 }
 
 async function ownMemory(userId: string, id: string): Promise<Memory> {

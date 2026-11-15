@@ -19,8 +19,11 @@ import { createFocusItem } from './focus.service';
 import { readPath } from './path.service';
 import { updateLearningSettings } from './settings.service';
 import { addWeekTarget, reviewDue, weekTargets, type WeekTargetInput } from './week.service';
+import { createTask } from '../tasks/tasks.service';
+import { createCapture } from './items.service';
+import { createDecision } from './decisions.service';
 
-export const SUGGESTION_KINDS = ['week_target', 'focus_line', 'profile_edit', 'action'] as const satisfies readonly SuggestionKind[];
+export const SUGGESTION_KINDS = ['week_target', 'focus_line', 'profile_edit', 'action', 'task', 'note', 'decision', 'routine'] as const satisfies readonly SuggestionKind[];
 /** Pending suggestions one agent may have waiting at once. */
 export const AGENT_PENDING_MAX = 10;
 const WEEK_PROPOSALS_MAX = 5;
@@ -150,6 +153,22 @@ const ACCEPT: Record<SuggestionKind, Accept | null> = {
     },
     // Level 3 (MANAGER_AND_DOCS_PLAN §3.2): his tap runs the call the action holds.
     action: async (userId, p) => runAction(userId, p),
+    // The buddy's items from his chats (BUDDY_MEMORY_PLAN §3.6): what his tap makes.
+    task: async (userId, p, now) => {
+        const t = await createTask(userId, { title: String(p['title'] ?? ''), due: str(p['dueDay']) ?? null }, now);
+        return t.due ? 'Added to your tasks, with its day' : 'Added to your tasks';
+    },
+    note: async (userId, p, now) => {
+        const title = String(p['title'] ?? '').trim();
+        await createCapture(userId, { type: 'NOTE', title: title.slice(0, 200), ...(str(p['why']) ? { content: str(p['why']) } : {}) }, now);
+        return 'Saved to your inbox';
+    },
+    decision: async (userId, p, now) => {
+        await createDecision(userId, { title: String(p['title'] ?? ''), why: str(p['why']) ?? 'From your chat', lookAgain: '30d', project: str(p['project']) ?? null }, now);
+        return 'Logged in your decisions (look again in 30 days)';
+    },
+    // B6 (routines) gives it an action; until then it can't be accepted.
+    routine: null,
 };
 
 async function pendingOf(userId: string, id: string): Promise<Suggestion> {

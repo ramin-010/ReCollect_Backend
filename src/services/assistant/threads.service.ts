@@ -29,7 +29,7 @@ export interface ToolUseJson {
 /** A tool as the page shows it: whether its edit was undone, and its card's state now. */
 export interface ToolUseView extends ToolUseJson {
     undone?: boolean;
-    action?: { status: 'pending' | 'accepted' | 'dismissed'; text: string } | null;
+    action?: { status: 'pending' | 'accepted' | 'dismissed' | 'candidate'; text: string } | null;
 }
 
 export interface AssistantMessageJson {
