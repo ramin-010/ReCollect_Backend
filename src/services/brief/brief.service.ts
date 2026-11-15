@@ -16,6 +16,7 @@ import { reviewDue, weekStartOf, weekTargets } from '../learningDb/week.service'
 import { getMirror } from '../mirror/mirror.service';
 import { taskSummary } from '../tasks/tasks.service';
 import { listDecisions } from '../learningDb/decisions.service';
+import { buddyBrief, type BuddyBrief } from '../buddy/memory.service';
 
 const WEAK_SPOTS_PER_TOPIC = 5;
 const RECENT = 5;
@@ -53,6 +54,8 @@ export interface Brief {
     recent: BriefSession[];
     recall: { days: 7; finished: number; weakTopics: Array<{ title: string; weak: number }> };
     project: { key: string; name: string; nextStep: string | null; lastSession: { day: string; minutes: number | null; title: string } | null } | null;
+    /** The buddy (BUDDY_MEMORY_PLAN §3.4): the portrait, the memories this chat starts with, a note for him. */
+    buddy: BuddyBrief;
     session: { key: string };
 }
 
@@ -71,7 +74,7 @@ export async function getBrief(userId: string, options: { project?: string | und
     const ctx = await loadLearningContext(userId, now);
     const window = coachWindow(ctx.today);
     const weekStart = weekStartOf(ctx.today);
-    const [today, settings, sessions, project, coachRows, targets, review, mirror, tasks, dueDecisions, projectDecisions] = await Promise.all([
+    const [today, settings, sessions, project, coachRows, targets, review, mirror, tasks, dueDecisions, projectDecisions, buddy] = await Promise.all([
         getToday(userId, now),
         getLearningSettings(userId),
         listSessions(userId, { days: 14 }, now),
@@ -83,6 +86,7 @@ export async function getBrief(userId: string, options: { project?: string | und
         taskSummary(userId, now),
         listDecisions(userId, { due: true }, now),
         options.project ? listDecisions(userId, { project: options.project }, now) : Promise.resolve([]),
+        buddyBrief(userId, { project: options.project }),
     ]);
     const topicIds = today.next.map((n) => n.topic._id);
     const [weak, last] = await Promise.all([openWeakSpotsOf(userId, topicIds), lastSessionsOf(userId, topicIds)]);
@@ -129,6 +133,7 @@ export async function getBrief(userId: string, options: { project?: string | und
             weakTopics: evidence.recall.weakestTopics.filter((t) => t.weak > 0).slice(0, WEAK_TOPICS).map((t) => ({ title: t.title, weak: t.weak })),
         },
         project: project ? { key: project.key, name: project.name, nextStep: project.nextStep, lastSession: project.lastSession } : null,
+        buddy,
         session: { key: options.key ?? newSessionKey(now) },
     };
 }

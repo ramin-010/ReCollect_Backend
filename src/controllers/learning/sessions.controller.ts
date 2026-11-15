@@ -4,7 +4,9 @@
 import { z } from 'zod';
 import { isTokenRequest, requireUser } from '../../middlwares/auth';
 import { agentActor } from '../../services/agent/agentEditLog';
+import { zLearnedNote } from '../buddy.controller';
 import {
+    LEARNED_PER_WRITE,
     MINUTES_MAX,
     PRACTICE_OUTCOMES,
     SESSION_KINDS,
@@ -42,6 +44,8 @@ const zWrite = z
         cleared: z.array(z.string().trim().min(1).max(400)).max(50).optional(),
         topicStatus: z.enum(['planned', 'in_progress', 'done', 'skipped']).optional(),
         source: z.enum(['agent', 'hook']).optional(),
+        /** What the chat learned about Ramin (the buddy, BUDDY_MEMORY_PLAN §3.1 B): at most 3 notes. */
+        learned: z.array(zLearnedNote).max(LEARNED_PER_WRITE).optional(),
     })
     .strict();
 
@@ -52,7 +56,7 @@ export const putSessionByKeyHandler = handler(async (req, res) => {
     ok(res, await upsertSessionByKey({ userId: user.id, actor: isTokenRequest(req) ? agentActor(req) : null }, param(req, 'key'), input));
 });
 
-const zCreate = zWrite.omit({ kindIfNew: true, titleIfNew: true, source: true, weakSpots: true, cleared: true, topicStatus: true }).extend({ title: z.string().min(1).max(400), day: zDay.optional() });
+const zCreate = zWrite.omit({ kindIfNew: true, titleIfNew: true, source: true, weakSpots: true, cleared: true, topicStatus: true, learned: true }).extend({ title: z.string().min(1).max(400), day: zDay.optional() });
 
 /** POST /api/sessions (the app: a manual entry) → the session */
 export const createSessionHandler = handler(async (req, res) => {

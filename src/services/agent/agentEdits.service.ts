@@ -25,6 +25,7 @@ import { restoreReminder, unsetReminder } from '../tasks/taskReminders.service';
 import { isValidDay, type DayString } from '../learning/time';
 import { serializeAgentEdit, type AgentEditJson } from './agentEditLog';
 import { undoDocChange, undoDocCreate, undoDocUpdate } from './agentDocs.service';
+import { undoMemoryClose } from '../buddy/memory.service';
 
 export const EDITS_LIMIT_DEFAULT = 20;
 export const EDITS_LIMIT_MAX = 100;
@@ -267,6 +268,8 @@ const UNDO: Record<AgentEditKind, (ctx: UndoContext) => Promise<void>> = {
     },
     revision_schedule: ({ userId, data }) => unscheduleRevisions(userId, data),
     subject_create: ({ userId, id }) => deleteEmptySubject(userId, id),
+    // The buddy: an agent's forget is undone by making the memory active again (409 if he changed it).
+    memory_close: ({ userId, id, data }) => undoMemoryClose(userId, id, (data['before'] ?? {}) as UndoData),
 };
 
 async function performUndo(userId: string, edit: AgentEdit, now: Date): Promise<void> {

@@ -1,0 +1,142 @@
+// The buddy (BUDDY_MEMORY_PLAN §7). Thin: validate, call the services in src/services/buddy/.
+// Token access per route is decided by authMiddleware (src/services/apiTokens/tokenRoutes.ts); the
+// router states the same rules (requireScope / cookieOnly).
+import { z } from 'zod';
+import { isTokenRequest, requireUser } from '../middlwares/auth';
+import { agentActor } from '../services/agent/agentEditLog';
+import {
+    LIST_LIMIT_MAX,
+    MEMORY_KINDS,
+    MEMORY_STATUSES,
+    MEMORY_TEXT_MAX,
+    TAG_MAX,
+    TAGS_MAX,
+    closeMemoryByAgent,
+    createMemoryByUser,
+    deleteMemory,
+    exportBuddy,
+    listMemories,
+    memoryCounts,
+    rememberNotes,
+    updateMemoryByUser,
+} from '../services/buddy/memory.service';
+import { BUDDY_NAME_MAX, BUDDY_TONES, MAX_BUDDY_CAP_USD, buddySettings, updateBuddySettings } from '../services/buddy/state.service';
+import { handler, ok, param, parse } from './learning/common';
+
+const zKind = z.enum(MEMORY_KINDS);
+// Longer texts are accepted and cut at a word (an agent's long note still lands).
+const zText = z.string().trim().min(1).max(MEMORY_TEXT_MAX * 4);
+const zTags = z.array(z.string().trim().min(1).max(TAG_MAX * 2)).max(TAGS_MAX);
+
+/** One note, as remember sends it. */
+export const zNote = z.object({ text: zText, kind: zKind.optional(), private: z.boolean().optional(), tags: zTags.optional() }).strict();
+/** Checkpoint's learned: an empty note is skipped (counted), never a reason to refuse the session. */
+export const zLearnedNote = zNote.extend({ text: z.string().max(MEMORY_TEXT_MAX * 4) });
+
+/** POST /api/buddy/remember {text, kind?, private?, tags?, sessionKey?, project?} → { paused, notes } */
+export const rememberHandler = handler(async (req, res) => {
+    const input = parse(zNote.extend({ sessionKey: z.string().trim().max(80).optional(), project: z.string().trim().max(200).optional() }).strict(), req.body);
+    const user = requireUser(req);
+    const token = isTokenRequest(req);
+    const result = await rememberNotes(
+        {
+            userId: user.id,
+            source: token ? 'agent' : 'app',
+            agentName: token ? agentActor(req).agentName : null,
+            sessionKey: input.sessionKey ?? null,
+            project: input.project ?? null,
+        },
+        [{ text: input.text, kind: input.kind, private: input.private, tags: input.tags }]
+    );
+    ok(res, result, result.notes[0]?.status === 'saved' ? 201 : 200);
+});
+
+/** GET /api/buddy/memories?q=&kind=&status=active|faded|closed|wrong|all&limit= */
+export const listMemoriesHandler = handler(async (req, res) => {
+    const q = parse(
+        z.object({
+            q: z.string().max(200).optional(),
+            kind: zKind.optional(),
+            status: z.enum([...MEMORY_STATUSES, 'all']).optional(),
+            limit: z.coerce.number().int().min(1).max(LIST_LIMIT_MAX).optional(),
+        }),
+        req.query
+    );
+    ok(res, await listMemories(requireUser(req).id, { q: q.q, kind: q.kind, status: q.status === 'active' ? 'mind' : q.status, limit: q.limit }));
+});
+
+/** POST /api/buddy/memories (the app: a memory he writes) → 201 the memory */
+export const createMemoryHandler = handler(async (req, res) => {
+    const input = parse(z.object({ text: zText, kind: zKind, private: z.boolean().optional(), tags: zTags.optional(), lasting: z.boolean().optional(), pinned: z.boolean().optional() }).strict(), req.body);
+    ok(res, await createMemoryByUser(requireUser(req).id, input), 201);
+});
+
+/** PATCH /api/buddy/memories/:id (the app: edit, pin, private, wrong, closed, back) */
+export const updateMemoryHandler = handler(async (req, res) => {
+    const patch = parse(
+        z
+            .object({
+                text: zText.optional(),
+                kind: zKind.optional(),
+                private: z.boolean().optional(),
+                pinned: z.boolean().optional(),
+                lasting: z.boolean().optional(),
+                tags: zTags.optional(),
+                status: z.enum(['active', 'wrong', 'closed']).optional(),
+            })
+            .strict()
+            .refine((p) => Object.keys(p).length > 0, 'Send what changes'),
+        req.body
+    );
+    ok(res, await updateMemoryByUser(requireUser(req).id, param(req, 'id'), patch));
+});
+
+/** DELETE /api/buddy/memories/:id (the app: forget for good, the notes behind it too) */
+export const deleteMemoryHandler = handler(async (req, res) => {
+    ok(res, await deleteMemory(requireUser(req).id, param(req, 'id')));
+});
+
+/** POST /api/buddy/memories/:id/close {reason?} (an agent's forget: closed, logged with Undo) → { memory, editId } */
+export const closeMemoryHandler = handler(async (req, res) => {
+    const input = parse(z.object({ reason: z.string().trim().max(400).optional() }).strict(), req.body);
+    ok(res, await closeMemoryByAgent(agentActor(req), param(req, 'id'), input.reason));
+});
+
+/** GET /api/buddy/settings → settings + the memory counts */
+export const getSettingsHandler = handler(async (req, res) => {
+    const userId = requireUser(req).id;
+    const [settings, counts] = await Promise.all([buddySettings(userId), memoryCounts(userId)]);
+    ok(res, { ...settings, counts });
+});
+
+/** PATCH /api/buddy/settings {enabled?, paused?, name?, tone?, capUsd?} */
+export const patchSettingsHandler = handler(async (req, res) => {
+    const patch = parse(
+        z
+            .object({
+                enabled: z.boolean().optional(),
+                paused: z.boolean().optional(),
+                name: z.string().max(BUDDY_NAME_MAX * 2).nullable().optional(),
+                tone: z.enum(BUDDY_TONES).optional(),
+                capUsd: z.number().min(0).max(MAX_BUDDY_CAP_USD).optional(),
+            })
+            .strict()
+            .refine((p) => Object.keys(p).length > 0, 'Send what changes'),
+        req.body
+    );
+    ok(res, await updateBuddySettings(requireUser(req).id, patch));
+});
+
+/** GET /api/buddy/you → what /you draws: settings, counts and every memory (newest first, at most 500) */
+export const youHandler = handler(async (req, res) => {
+    const userId = requireUser(req).id;
+    const [settings, counts, memories] = await Promise.all([buddySettings(userId), memoryCounts(userId), listMemories(userId, { status: 'all', limit: LIST_LIMIT_MAX })]);
+    ok(res, { settings, counts, memories });
+});
+
+/** GET /api/buddy/export → everything as JSON (a file download) */
+export const exportHandler = handler(async (req, res) => {
+    const data = await exportBuddy(requireUser(req).id);
+    res.setHeader('Content-Disposition', `attachment; filename="recollect-buddy-${data.exportedAt.slice(0, 10)}.json"`);
+    ok(res, data);
+});

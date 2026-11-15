@@ -120,6 +120,10 @@ describe('which endpoints accept a token (tokenRoutes.ts)', () => {
         ['PATCH', '/api/focus/f1', 'learning:write'],
         ['DELETE', '/api/focus/f1', 'learning:write'],
         ['PUT', '/api/quick-notes/7d9f1c2e-1111-4222-8333-944455556666', 'learning:write'],
+        // The buddy: a note, reading memories, an agent's forget (logged, undoable).
+        ['POST', '/api/buddy/remember', 'sessions:write'],
+        ['GET', '/api/buddy/memories', 'read'],
+        ['POST', '/api/buddy/memories/m1/close', 'sessions:write'],
     ])('%s %s needs %s', (method, url, scope) => {
         expect(tokenRouteScope(method, url)).toBe(scope);
     });
@@ -163,6 +167,14 @@ describe('which endpoints accept a token (tokenRoutes.ts)', () => {
         ['POST', '/api/learning/ensure-today'],
         ['POST', '/api/captures'],
         ['GET', '/api/captures'],
+        // the buddy: his own changes, settings, the page and the export are the app's
+        ['POST', '/api/buddy/memories'],
+        ['PATCH', '/api/buddy/memories/m1'],
+        ['DELETE', '/api/buddy/memories/m1'],
+        ['GET', '/api/buddy/settings'],
+        ['PATCH', '/api/buddy/settings'],
+        ['GET', '/api/buddy/you'],
+        ['GET', '/api/buddy/export'],
         // other modules
         ['GET', '/api/todos'],
         ['GET', '/api/workspaces'],

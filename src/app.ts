@@ -35,6 +35,7 @@ import assistantRoutes from './routers/assistant.routes';
 import alwaysOnRoutes from './routers/alwaysOn.routes';
 import mcpRoutes from './routers/mcp.routes';
 import phoneRoutes from './routers/phone.routes';
+import buddyRoutes from './routers/buddy.routes';
 import { consentRouter, publicOAuthRouter } from './routers/oauth.routes';
 import { allowedOrigins } from './config/origins';
 
@@ -106,6 +107,8 @@ export function createApp(): Application {
     app.use('/api/recall', recallRoutes);
     app.use('/api/ai', aiRouter);
     app.use('/api/assistant', assistantRoutes);
+    // The buddy (BUDDY_MEMORY_PLAN): what it knows about Ramin, its settings, the ways in.
+    app.use('/api/buddy', buddyRoutes);
     // Stage 6 (ALWAYS_ON_SPEC): the phone's wallpaper + widget, and the morning notification.
     app.use('/api', alwaysOnRoutes);
     // The phone app (ANDROID_APP_SPEC): the page its connect code opens, and its file. Public.

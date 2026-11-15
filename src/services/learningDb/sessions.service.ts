@@ -20,6 +20,7 @@ import { badRequest, notFound } from '../learning/http';
 import { fromDbDay, loadLearningContext, toDbDay } from './common';
 import { pathPlaces, readPath, updateTopicOnPath, type PathTopicJson } from './path.service';
 import { quoted, recordAgentEdit, type AgentActor } from '../agent/agentEditLog';
+import { rememberNotes, type NoteInput } from '../buddy/memory.service';
 
 export const SESSION_KINDS = ['study', 'practice', 'build', 'review'] as const satisfies readonly SessionKind[];
 export const PRACTICE_OUTCOMES = ['alone', 'hints', 'after_answer'] as const satisfies readonly PracticeOutcome[];
@@ -28,6 +29,8 @@ export const SESSION_TITLE_MAX = 200;
 export const WEAK_SPOT_MAX_CHARS = 160;
 export const WEAK_SPOTS_PER_WRITE = 10;
 export const MINUTES_MAX = 600;
+/** What a checkpoint may say it learned about Ramin at once (the buddy's notes). */
+export const LEARNED_PER_WRITE = 3;
 /**
  * A chat's checkpoint without minutes (LOOP_COMPLETE_SPEC S1.1 #5): the first write counts the time
  * since the key's start, up to FIRST_WRITE_CAP_MIN; each later write adds the time since the row's
@@ -258,6 +261,8 @@ export interface SessionInput {
     topicStatus?: TopicStatus | undefined;
     /** Tokens only: 'hook' for a Claude Code hook; else an agent. */
     source?: 'agent' | 'hook' | undefined;
+    /** Notes about Ramin for the buddy (BUDDY_MEMORY_PLAN §3.1 B), tagged with the session's project and subject. */
+    learned?: NoteInput[] | undefined;
 }
 
 export interface SessionWriteResult {
@@ -268,6 +273,8 @@ export interface SessionWriteResult {
     weakSpots: WeakSpotJson[];
     /** The id of the topic_update edit a topic change made (Undo), when there was one. */
     topicEditId: string | null;
+    /** What became of `learned`: new memories, ones seen again, ones skipped (marked wrong, empty); null when none were sent. */
+    learned: { saved: number; seen: number; skipped: number; paused: boolean } | null;
 }
 
 function checkScore(score: SessionInput['score']): { scoreDone: number | null; scoreTotal: number | null } | undefined {
@@ -348,6 +355,7 @@ export async function upsertSessionByKey(writer: SessionWriter, key: string, inp
     }
     if (input.weakSpots && input.weakSpots.length > WEAK_SPOTS_PER_WRITE) throw badRequest(`At most ${WEAK_SPOTS_PER_WRITE} weak spots at once`);
     if (input.url && !URL_RE.test(input.url.trim())) throw badRequest('url must start with http:// or https://');
+    if (input.learned && input.learned.length > LEARNED_PER_WRITE) throw badRequest(`At most ${LEARNED_PER_WRITE} learned notes at once`);
 
     const existing = await prisma.workSession.findUnique({ where: { userId_key: { userId, key } } });
     const topicId = input.topicId === undefined ? existing?.topicId ?? null : filing.topic?.id ?? null;
@@ -462,7 +470,30 @@ export async function upsertSessionByKey(writer: SessionWriter, key: string, inp
           ? (await prisma.weakSpot.findMany({ where: { userId, topicId: null, subjectId: row.subjectId, status: 'open' }, orderBy: { createdAt: 'asc' }, take: 20 })).map(weakSpotJson)
           : [];
     const fresh = await prisma.workSession.findUniqueOrThrow({ where: { id: row.id }, include: SESSION_INCLUDE });
-    return { session: serializeSession(fresh), topic, weakSpots: open, topicEditId };
+
+    // The buddy's notes ride the checkpoint (no extra call), tagged with this session's project and subject.
+    let learned: SessionWriteResult['learned'] = null;
+    if (input.learned?.length) {
+        const r = await rememberNotes(
+            {
+                userId,
+                source: writer.actor ? 'agent' : 'app',
+                agentName: writer.actor?.agentName ?? null,
+                sessionKey: key,
+                project: fresh.project?.key ?? null,
+                tags: fresh.subject ? [fresh.subject.name] : [],
+            },
+            input.learned,
+            now
+        );
+        learned = {
+            saved: r.notes.filter((n) => n.status === 'saved').length,
+            seen: r.notes.filter((n) => n.status === 'seen').length,
+            skipped: r.paused ? input.learned.length : r.notes.filter((n) => n.status === 'wrong' || n.status === 'empty').length,
+            paused: r.paused,
+        };
+    }
+    return { session: serializeSession(fresh), topic, weakSpots: open, topicEditId, learned };
 }
 
 /** POST /api/sessions: a manual entry (no key), by the app. */
