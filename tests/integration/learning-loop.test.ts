@@ -311,8 +311,9 @@ describe('GET /api/today: focus, goals, rhythm', () => {
 
         const goals = (await api(user).get('/api/today')).body.data.goals;
         expect(goals.map((g: any) => g.title)).toEqual(['Sooner', 'Later']);
-        expect(Object.keys(goals[1]).sort()).toEqual(['_id', 'daysLeft', 'deadline', 'forecast', 'nextMilestone', 'progress', 'title']);
-        expect(goals[1]).toMatchObject({ deadline: '2027-06-30', daysLeft: 228, progress: { done: 1, total: 3 }, nextMilestone: { title: 'B', done: false } });
+        expect(Object.keys(goals[1]).sort()).toEqual(['_id', 'createdDay', 'daysLeft', 'deadline', 'forecast', 'nextMilestone', 'progress', 'title']);
+        // createdDay: the goal meter's steady-pace tick (made today, in his zone).
+        expect(goals[1]).toMatchObject({ deadline: '2027-06-30', createdDay: TODAY, daysLeft: 228, progress: { done: 1, total: 3 }, nextMilestone: { title: 'B', done: false } });
         expect(goals[1].forecast).toMatchObject({ daysLeft: 228, progress: { done: 1, total: 3 }, status: 'ahead', projectedDay: inDays(14) });
         expect(goals[0]).toMatchObject({ title: 'Sooner', nextMilestone: null, forecast: { status: 'no_data', suggestion: 'Add a few milestones to see a forecast.' } });
     });

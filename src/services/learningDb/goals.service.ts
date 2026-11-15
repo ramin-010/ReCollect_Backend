@@ -48,7 +48,8 @@ export function todayGoalsJson(goals: readonly GoalWithRelations[], ctx: Pick<Le
     return goals
         .filter((g) => g.status === 'active')
         .sort((a, b) => a.deadline.getTime() - b.deadline.getTime() || a.createdAt.getTime() - b.createdAt.getTime())
-        .map((g) => serializeTodayGoal(g, forecastOf(g, ctx)));
+        // createdDay: Home's goal meter draws where a steady pace would be today.
+        .map((g) => ({ ...serializeTodayGoal(g, forecastOf(g, ctx)), createdDay: dayOf(g.createdAt, ctx.tz) }));
 }
 
 async function loadGoalJson(goalId: string, ctx: Pick<LearningContext, 'today' | 'tz'>): Promise<GoalJson> {
