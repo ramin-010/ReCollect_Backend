@@ -8,6 +8,8 @@ import { prisma } from '../../db/prisma';
 import { addDays, isValidDay, type DayString } from '../learning';
 import { fromDbDayOrNull, loadLearningContext, toDbDay } from '../learningDb/common';
 import { createTask } from '../tasks/tasks.service';
+import { createFocusItem } from '../learningDb/focus.service';
+import { weekStartOf, weekTargets } from '../learningDb/week.service';
 import { quoted, recordAgentEdit } from '../agent/agentEditLog';
 import { notFound } from '../learning/http';
 
@@ -19,6 +21,11 @@ export const ROUTINES = {
         itemKind: 'task',
         title: 'Adds the tasks you mention with a day',
         offer: 'Add the tasks you mention with a day by itself from now on?',
+    },
+    auto_focus: {
+        itemKind: 'focus_line',
+        title: "Sets the day's first focus line from your week's targets",
+        offer: "Set each day's first focus line from your week's targets by itself?",
     },
 } as const;
 export type RoutineKind = keyof typeof ROUTINES;
@@ -59,7 +66,9 @@ export async function maybeOfferRoutine(userId: string, acceptedKind: string, no
     const [kind, def] = entry;
     if (await prisma.routine.findUnique({ where: { userId_kind: { userId, kind } }, select: { id: true } })) return false;
     if (await prisma.suggestion.findFirst({ where: { userId, kind: 'routine', payload: { path: ['routine'], equals: kind } }, select: { id: true } })) return false;
-    const accepted = await prisma.suggestion.count({ where: { userId, proposedBy: 'buddy', kind: def.itemKind, status: 'accepted', decidedAt: { gte: new Date(now.getTime() - 30 * 86_400_000) } } });
+    const accepted = await prisma.suggestion.count({
+        where: { userId, ...(def.itemKind === 'task' ? { proposedBy: 'buddy' as const } : {}), kind: def.itemKind, status: 'accepted', decidedAt: { gte: new Date(now.getTime() - 30 * 86_400_000) } },
+    });
     if (accepted < ACCEPTS_FOR_OFFER) return false;
     const { today } = await loadLearningContext(userId, now);
     await prisma.suggestion.create({
@@ -89,6 +98,19 @@ export async function runRoutines(userId: string, now: Date = new Date()): Promi
                 const task = await createTask(userId, { title: String(p['title'] ?? item.text), due }, now);
                 await recordAgentEdit(actor, { kind: 'task_create', summary: `Added the task ${quoted(task.title)} (due ${due}) by itself`, entityId: task._id });
                 done.push(`added the task ${quoted(task.title)} for ${due}`);
+                runs++;
+            }
+        }
+        if (r.kind === 'auto_focus') {
+            // Only on a day without a focus line yet, and only from a week target still open.
+            const lines = await prisma.focusItem.count({ where: { userId, day: toDbDay(today) } });
+            const ctx = await loadLearningContext(userId, now);
+            const open = lines ? [] : (await weekTargets(userId, weekStartOf(today), ctx.tz)).filter((t) => !t.done);
+            const text = open[0]?.text.replace(/\s+/g, ' ').trim().slice(0, 140);
+            if (text) {
+                const item = await createFocusItem(userId, text, now);
+                await recordAgentEdit(actor, { kind: 'focus_add', summary: `Set today's focus line ${quoted(text)} from the week by itself`, entityId: item._id });
+                done.push(`set today's focus line to ${quoted(text)} from his week`);
                 runs++;
             }
         }

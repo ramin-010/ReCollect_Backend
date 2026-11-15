@@ -76,4 +76,30 @@ describe('routines', () => {
         await nightIfDue(user.id, new Date(Date.UTC(2026, 10, 16, 23, 30)));
         expect((await prisma.suggestion.findUniqueOrThrow({ where: { id: later.id } })).status).toBe('candidate');
     });
+
+    it("the focus routine: three accepted focus lines bring the offer; the night sets the day's first line from an open week target, with Undo", async () => {
+        const user = await createTestUser();
+        await api(user).patch('/api/buddy/settings', { enabled: true });
+        for (const t of ['One', 'Two', 'Three']) {
+            const s = await prisma.suggestion.create({ data: { userId: user.id, kind: 'focus_line', text: `Focus ${t}`, payload: { text: `Focus ${t}` }, proposedBy: 'app', status: 'pending' } });
+            await api(user).post(`/api/suggestions/${s.id}/accept`);
+        }
+        const offer = await prisma.suggestion.findFirstOrThrow({ where: { userId: user.id, kind: 'routine' } });
+        expect(offer.payload).toEqual({ routine: 'auto_focus' });
+        await api(user).post(`/api/suggestions/${offer.id}/accept`);
+        // Today already has focus lines (the three accepted): the routine leaves the day alone.
+        fake.push(fakeMessage(night));
+        expect((await api(user).post('/api/buddy/think')).status).toBe(200);
+        expect(await prisma.agentEdit.count({ where: { userId: user.id, kind: 'focus_add' } })).toBe(0);
+        // A new day without focus lines, and an open week target: the first line comes from it.
+        await prisma.focusItem.deleteMany({ where: { userId: user.id } });
+        expect((await api(user).post('/api/week/targets', { text: 'Finish message queues' })).status).toBe(201);
+        fake.push(fakeMessage(night));
+        await api(user).post('/api/buddy/think');
+        const line = await prisma.focusItem.findFirstOrThrow({ where: { userId: user.id } });
+        expect(line.text).toBe('Finish message queues');
+        const edit = await prisma.agentEdit.findFirstOrThrow({ where: { userId: user.id, kind: 'focus_add' } });
+        expect((await api(user).post(`/api/agent/edits/${edit.id}/undo`)).status).toBe(200);
+        expect(await prisma.focusItem.count({ where: { userId: user.id } })).toBe(0);
+    });
 });

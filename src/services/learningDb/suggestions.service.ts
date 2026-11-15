@@ -191,7 +191,7 @@ export async function acceptSuggestion(userId: string, id: string, now: Date = n
     const { count } = await prisma.suggestion.updateMany({ where: { id, status: 'pending' }, data: { status: 'accepted', decidedAt: now } });
     if (count === 0) throw conflict('This suggestion was already decided', 'ALREADY_DECIDED');
     // The buddy's third item of a kind in 30 days brings its offer to do it by itself (B6), once.
-    if (s.proposedBy === 'buddy') await maybeOfferRoutine(userId, s.kind, now);
+    if (s.proposedBy === 'buddy' || s.kind === 'focus_line') await maybeOfferRoutine(userId, s.kind, now);
     const json = serializeSuggestion(await prisma.suggestion.findUniqueOrThrow({ where: { id } }));
     return typeof result === 'string' ? { ...json, result } : json;
 }
