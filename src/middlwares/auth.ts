@@ -6,7 +6,7 @@ dotenv.config();
 
 import { findUserById, toAuthUser } from '../services/users/users.service';
 import { API_TOKEN_PREFIX, findApiToken, storedScopes, touchApiToken } from '../services/apiTokens/apiTokens.service';
-import { tokenRouteScope } from '../services/apiTokens/tokenRoutes';
+import { tokenRouteScopes } from '../services/apiTokens/tokenRoutes';
 import { API_SCOPES, type AuthUser, type RequestAuth } from '../types/auth';
 
 const COOKIE_AUTH: RequestAuth = Object.freeze({ via: 'cookie', scopes: API_SCOPES });
@@ -40,10 +40,10 @@ async function authenticateApiToken(req: Request, token: string): Promise<void> 
     if (row.revokedAt) throw new ErrorResponse(401, 'This access token was revoked');
     if (row.expiresAt && row.expiresAt.getTime() <= Date.now()) throw new ErrorResponse(401, 'This access token has expired');
 
-    const needed = tokenRouteScope(req.method, req.originalUrl);
-    if (!needed) throw new ErrorResponse(403, 'Access tokens cannot be used for this endpoint');
+    const accepted = tokenRouteScopes(req.method, req.originalUrl);
+    if (!accepted) throw new ErrorResponse(403, 'Access tokens cannot be used for this endpoint');
     const scopes = storedScopes(row.scopes);
-    if (!scopes.includes(needed)) throw new ErrorResponse(403, `This access token lacks the "${needed}" scope`);
+    if (!accepted.some((s) => scopes.includes(s))) throw new ErrorResponse(403, `This access token lacks the "${accepted[0]}" scope`);
 
     const user = await findUserById(row.userId);
     if (!user) throw new ErrorResponse(404, "User not found");

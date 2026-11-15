@@ -76,7 +76,8 @@ export async function assistantToken(userId: string): Promise<string> {
     }
     const old = await prisma.apiToken.findMany({ where: { userId, name: ASSISTANT_TOKEN_NAME, revokedAt: null }, select: { id: true } });
     for (const t of old) await revokeApiToken(userId, t.id);
-    const created = await createApiToken(userId, { name: ASSISTANT_TOKEN_NAME, scopes: [...API_SCOPES] as ApiScope[] });
+    // Every scope but the phone app's own `ambient` (the manager reads the picture's data through `read`).
+    const created = await createApiToken(userId, { name: ASSISTANT_TOKEN_NAME, scopes: API_SCOPES.filter((s): s is ApiScope => s !== 'ambient') });
     tokens.set(userId, created.token);
     return created.token;
 }

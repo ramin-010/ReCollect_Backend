@@ -25,6 +25,8 @@ export interface TokenRoute {
     /** Matched against the whole path (no query string), with an optional trailing slash. */
     path: RegExp;
     scope: ApiScope;
+    /** A second scope that also opens it (the phone app's `ambient` on the day's picture). */
+    also?: ApiScope;
     /** Shown in docs/tests. */
     pattern: string;
 }
@@ -33,9 +35,9 @@ const SEGMENT = '[^/]+';
 /** Doc ids are cuids or old ObjectIds: `/api/docs/shared-by-me` etc. never match. */
 const DOC_ID = '[A-Za-z0-9]+';
 
-function route(method: Method, pattern: string, scope: ApiScope): TokenRoute {
+function route(method: Method, pattern: string, scope: ApiScope, also?: ApiScope): TokenRoute {
     const source = pattern.replace(/:docId\b/g, DOC_ID).replace(/:\w+/g, SEGMENT);
-    return { method, path: new RegExp(`^${source}/?$`), scope, pattern };
+    return { method, path: new RegExp(`^${source}/?$`), scope, pattern, ...(also ? { also } : {}) };
 }
 
 export const TOKEN_ROUTES: readonly TokenRoute[] = [
@@ -126,8 +128,8 @@ export const TOKEN_ROUTES: readonly TokenRoute[] = [
     route('GET', '/api/agent/docs/:id/sharing', 'read'),
     route('POST', '/api/revisions/spread', 'learning:write'),
     // Stage 6: the phone's wallpaper and widget (an automation app fetches them with a read token).
-    route('GET', '/api/ambient/widget', 'read'),
-    route('GET', '/api/ambient/wallpaper.png', 'read'),
+    route('GET', '/api/ambient/widget', 'read', 'ambient'),
+    route('GET', '/api/ambient/wallpaper.png', 'read', 'ambient'),
 ];
 
 /**
@@ -191,6 +193,14 @@ export const SELF_LOGGED: Readonly<Record<string, string>> = {
 export function pathOf(url: string): string {
     const end = url.search(/[?#]/);
     return end === -1 ? url : url.slice(0, end);
+}
+
+/** Every scope that opens this request (any one is enough), or null when tokens may not call it at all. */
+export function tokenRouteScopes(method: string, url: string): readonly ApiScope[] | null {
+    const verb = (method.toUpperCase() === 'HEAD' ? 'GET' : method.toUpperCase()) as Method;
+    const path = pathOf(url);
+    const hit = TOKEN_ROUTES.find((r) => r.method === verb && r.path.test(path));
+    return hit ? (hit.also ? [hit.scope, hit.also] : [hit.scope]) : null;
 }
 
 /** The scope a token needs for this request, or null when tokens may not call it at all. */

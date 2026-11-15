@@ -10,10 +10,11 @@ import authMiddleware from './auth';
 import type { ApiScope } from '../types/auth';
 
 /** The request must carry `scope` (403 for a token without it). */
-export function requireScope(scope: ApiScope): RequestHandler {
+export function requireScope(scope: ApiScope, ...also: ApiScope[]): RequestHandler {
     return (req: Request, _res: Response, next: NextFunction) => {
         if (!req.auth) return next(new ErrorResponse(401, 'Not authorized, no token found'));
-        if (!req.auth.scopes.includes(scope)) return next(new ErrorResponse(403, `This access token lacks the "${scope}" scope`));
+        const scopes = req.auth.scopes;
+        if (![scope, ...also].some((s) => scopes.includes(s))) return next(new ErrorResponse(403, `This access token lacks the "${scope}" scope`));
         next();
     };
 }

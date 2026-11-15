@@ -14,7 +14,10 @@ import crypto from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import type { ApiToken, OAuthClient } from '@prisma/client';
 import { prisma } from '../../db/prisma';
-import { API_SCOPES, type ApiScope } from '../../types/auth';
+import { API_SCOPES as ALL_SCOPES, type ApiScope } from '../../types/auth';
+
+/** What an app signing in may ask for: every scope but the phone app's own `ambient` (Settings → Phone app makes that one). */
+const API_SCOPES = ALL_SCOPES.filter((s): s is Exclude<ApiScope, 'ambient'> => s !== 'ambient');
 import { generateApiToken, hashApiToken } from '../apiTokens/apiTokens.service';
 import { CimdError, clientFromMetadataUrl, isMetadataUrl } from './cimd';
 

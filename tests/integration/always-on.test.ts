@@ -26,6 +26,21 @@ describe('the ambient phone (6.6)', () => {
 });
 
 describe('the morning notification (6.3)', () => {
+    it("the phone app's ambient token reads only the picture and the widget; Settings lists where the phone can reach the server", async () => {
+        const user = await createTestUser();
+        const phone = (await createTestToken(user, ['ambient'], 'Phone app')).token;
+        const bearer = (path: string) => request(app).get(path).set('Authorization', `Bearer ${phone}`);
+        expect((await bearer('/api/ambient/widget')).status).toBe(200);
+        const png = await bearer('/api/ambient/wallpaper.png?w=540&h=1170');
+        expect([png.status, png.headers['content-type']]).toEqual([200, 'image/png']);
+        // Nothing else: not today, not the docs, not the agent API.
+        for (const path of ['/api/today', '/api/docs', '/api/agent/docs']) expect((await bearer(path)).status, path).toBe(403);
+        // The addresses: cookie only; the last one is always USB (localhost).
+        const list = await request(app).get('/api/ambient/addresses').set('Cookie', authCookie(user));
+        expect(list.body.data[list.body.data.length - 1]).toMatchObject({ kind: 'usb' });
+        expect((await bearer('/api/ambient/addresses')).status).toBe(403);
+    });
+
     it('saves one row per browser, lists the device count, removes it; cookie only', async () => {
         const user = await createTestUser();
         expect((await api(user).post('/api/push/subscription', sub(1))).status).toBe(201);

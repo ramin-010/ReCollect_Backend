@@ -1,9 +1,27 @@
 // GET /api/ambient/widget and /api/ambient/wallpaper.png (ALWAYS_ON_SPEC 6.6): the phone's wallpaper
 // and widget, drawn from the brief. A cookie session or a token with `read` (an automation app on the
 // phone fetches the picture a few times a day).
+import os from 'node:os';
 import { requireUser } from '../middlwares/auth';
 import { getAmbient, wallpaperPng } from '../services/ambient/ambient.service';
 import { handler, ok } from './learning/common';
+
+/**
+ * GET /api/ambient/addresses (cookie only) -> [{ url, kind }]: where the phone app can reach this
+ * server, best first: the public address (RECOLLECT_SELF_URL, once deployed), each address on the
+ * networks this computer is on (his phone's hotspot), and localhost (USB, with adb reverse).
+ */
+export const ambientAddressesHandler = handler(async (req, res) => {
+    const port = req.socket.localPort ?? (Number(process.env.PORT) || 8002);
+    const list: Array<{ url: string; kind: 'public' | 'network' | 'usb' }> = [];
+    const self = process.env.RECOLLECT_SELF_URL?.trim().replace(/\/+$/, '');
+    if (self && !/\/\/(localhost|127\.0\.0\.1)\b/.test(self)) list.push({ url: self, kind: 'public' });
+    for (const addrs of Object.values(os.networkInterfaces())) {
+        for (const a of addrs ?? []) if (a.family === 'IPv4' && !a.internal) list.push({ url: `http://${a.address}:${port}`, kind: 'network' });
+    }
+    list.push({ url: `http://localhost:${port}`, kind: 'usb' });
+    ok(res, list);
+});
 
 /** GET /api/ambient/widget */
 export const ambientWidgetHandler = handler(async (req, res) => {
