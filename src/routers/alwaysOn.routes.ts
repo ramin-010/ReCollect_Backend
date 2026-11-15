@@ -3,7 +3,7 @@
 import express, { RequestHandler } from 'express';
 import authMiddleware from '../middlwares/auth';
 import { cookieOnly, requireScope } from '../middlwares/scopes';
-import { ambientAddressesHandler, ambientWallpaperHandler, ambientWidgetHandler } from '../controllers/ambient.controller';
+import { ambientAddressesHandler, ambientDisconnectHandler, ambientWallpaperHandler, ambientWidgetHandler } from '../controllers/ambient.controller';
 import { pushStatusHandler, removePushSubscriptionHandler, savePushSubscriptionHandler, testPushHandler } from '../controllers/push.controller';
 
 const router = express.Router();
@@ -12,6 +12,8 @@ const auth = authMiddleware as RequestHandler;
 // The phone app's `ambient` token opens these two (and nothing else); a `read` token still does.
 router.get('/ambient/widget', auth, requireScope('read', 'ambient'), ambientWidgetHandler);
 router.get('/ambient/wallpaper.png', auth, requireScope('read', 'ambient'), ambientWallpaperHandler);
+// The phone app's Disconnect ends its own token.
+router.post('/ambient/disconnect', auth, requireScope('ambient'), ambientDisconnectHandler);
 // Settings → Phone app: where the phone can reach this server.
 router.get('/ambient/addresses', auth, cookieOnly, ambientAddressesHandler);
 

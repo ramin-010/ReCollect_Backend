@@ -284,7 +284,7 @@ describe('PATCH /api/todos/:id', () => {
         expect(ok.body).toMatchObject({ success: true, message: 'Task updated successfully', data: { _id: todo.id, status: 'complete' } });
     });
 
-    it('completedAt: set when it becomes complete, cleared only when it goes back to pending', async () => {
+    it('completedAt: set when it becomes complete, cleared when it leaves complete for any state', async () => {
         const me = await createTestUser();
         const todo = await todoRow(me.id);
         const patch = (body: Record<string, unknown>) => request(app).patch(`/api/todos/${todo.id}`).set('Cookie', authCookie(me)).send(body);
@@ -296,13 +296,24 @@ describe('PATCH /api/todos/:id', () => {
         const again = await patch({ status: 'complete' }); // already complete: unchanged
         expect(again.body.data.completedAt).toBe(completedAt);
 
-        const reviewing = await patch({ status: 'review' }); // the old handler only cleared on 'pending'
-        expect(reviewing.body.data.completedAt).toBe(completedAt);
+        // Back to review (or in progress, or blocked): no longer completed (the Mongo-era handler kept the date).
+        const reviewing = await patch({ status: 'review' });
+        expect(reviewing.body.data).toMatchObject({ status: 'review', completedAt: null });
 
         const restamped = await patch({ status: 'complete' }); // review → complete stamps it again
         expect(restamped.body.data.completedAt).not.toBeNull();
         expect(new Date(restamped.body.data.completedAt).getTime()).toBeGreaterThanOrEqual(new Date(completedAt).getTime());
 
+        // A change that doesn't touch the status keeps the date.
+        const renamed = await patch({ title: 'Renamed while complete' });
+        expect(renamed.body.data.completedAt).toBe(restamped.body.data.completedAt);
+
+        for (const status of ['in_progress', 'blocked'] as const) {
+            await patch({ status: 'complete' });
+            expect((await patch({ status })).body.data).toMatchObject({ status, completedAt: null });
+        }
+
+        await patch({ status: 'complete' });
         const reopened = await patch({ status: 'pending' });
         expect(reopened.body.data).toMatchObject({ status: 'pending', completedAt: null });
     });

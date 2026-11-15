@@ -24,13 +24,16 @@ export interface Png {
 
 /**
  * An SVG `width`×`height` px as a PNG at `scale` (2 by default: sharp on a retina screen), never
- * longer than `maxSide` px on a side.
+ * longer than `maxSide` px on a side. `fontFiles`: fonts the SVG brings (then no system fonts).
  */
-export function svgToPng(svg: string, width: number, height: number, scale = 2, maxSide = PNG_MAX_SIDE): Png {
+export function svgToPng(svg: string, width: number, height: number, scale = 2, maxSide = PNG_MAX_SIDE, fontFiles?: string[]): Png {
     const zoom = Math.max(0.1, Math.min(scale, maxSide / Math.max(width, height, 1)));
     const options: ResvgRenderOptions = {
         fitTo: { mode: 'zoom', value: zoom },
-        font: { loadSystemFonts: true, defaultFontFamily: 'Segoe UI', sansSerifFamily: 'Arial' },
+        // `fontFiles`: the picture brings its own (the wallpaper's Inter); otherwise the system's.
+        font: fontFiles?.length
+            ? { fontFiles, loadSystemFonts: false, defaultFontFamily: 'Inter', sansSerifFamily: 'Inter' }
+            : { loadSystemFonts: true, defaultFontFamily: 'Segoe UI', sansSerifFamily: 'Arial' },
     };
     const image = new (renderer().Resvg)(svg, options).render();
     return { png: image.asPng(), width: image.width, height: image.height };

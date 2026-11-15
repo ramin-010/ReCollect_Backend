@@ -180,9 +180,12 @@ describe('which endpoints accept a token (tokenRoutes.ts)', () => {
         const statelessPosts = ['/api/canvas/layout', '/api/canvas/render'];
         for (const route of TOKEN_ROUTES) {
             expect(route.pattern.startsWith('/api/')).toBe(true);
-            expect(['read', 'docs:write', 'learning:write', 'sessions:write', 'tasks:write']).toContain(route.scope);
+            expect(['read', 'docs:write', 'learning:write', 'sessions:write', 'tasks:write', 'ambient']).toContain(route.scope);
+            if (route.scope === 'ambient') continue; // the phone app's own door (its Disconnect), below
             expect(route.method === 'GET' || statelessPosts.includes(route.pattern)).toBe(route.scope === 'read');
         }
+        // `ambient` alone opens only the phone app's Disconnect; elsewhere it rides along with `read`.
+        expect(TOKEN_ROUTES.filter((r) => r.scope === 'ambient').map((r) => `${r.method} ${r.pattern}`)).toEqual(['POST /api/ambient/disconnect']);
     });
 
     it('pathOf drops the query string', () => {

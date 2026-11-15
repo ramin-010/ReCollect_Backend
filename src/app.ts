@@ -34,6 +34,7 @@ import recallRoutes, { aiRouter } from './routers/recall.routes';
 import assistantRoutes from './routers/assistant.routes';
 import alwaysOnRoutes from './routers/alwaysOn.routes';
 import mcpRoutes from './routers/mcp.routes';
+import phoneRoutes from './routers/phone.routes';
 import { consentRouter, publicOAuthRouter } from './routers/oauth.routes';
 import { allowedOrigins } from './config/origins';
 
@@ -107,6 +108,8 @@ export function createApp(): Application {
     app.use('/api/assistant', assistantRoutes);
     // Stage 6 (ALWAYS_ON_SPEC): the phone's wallpaper + widget, and the morning notification.
     app.use('/api', alwaysOnRoutes);
+    // The phone app (ANDROID_APP_SPEC): the page its connect code opens, and its file. Public.
+    app.use(phoneRoutes);
     // Remote MCP over HTTP (ALWAYS_ON_SPEC 6.5): /mcp and its protected-resource metadata.
     app.use(mcpRoutes);
     app.use('/api/oauth', consentRouter);

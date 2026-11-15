@@ -12,7 +12,7 @@
 //   - create defaults: status 'pending', priority 'medium'; visibility is always 'workspace'.
 //   - update: only title, description, status, priority, dueDate, reminderDate, subtasks, tags,
 //     assignees, recurrence, references, spaceId (+ uploaded images); an empty tags list clears the
-//     tags (absent = unchanged); completedAt set on → complete, cleared on complete → pending; the reminder is
+//     tags (absent = unchanged); completedAt set on → complete, cleared when it leaves complete; the reminder is
 //     replaced only when the date really changed.
 //   - activity entries (task_created / completed / status / priority / content / due date /
 //     assigned / unassigned) with the old metadata strings, and 'task_assigned' notifications +
@@ -370,10 +370,11 @@ export async function updateWorkspaceTodo(
             data.assignedAt = requested && requested.length > 0 ? now : null;
         }
 
-        // completedAt, as the old PATCH handler did it.
+        // completedAt: stamped when it becomes complete, cleared when it leaves complete for any state
+        // (the old handler cleared it only on 'pending'; fixed 11-15, as for personal tasks).
         if (newStatus === 'complete' && existing.status !== 'complete') {
             data.completedAt = now;
-        } else if (newStatus === 'pending' && existing.status === 'complete') {
+        } else if (newStatus !== undefined && newStatus !== 'complete' && existing.status === 'complete') {
             data.completedAt = null;
         }
 

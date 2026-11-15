@@ -216,6 +216,12 @@ describe('PATCH /api/workspace-todos/:id', () => {
         ]);
         expect(activity.every((a) => a.actorId === member.id && a.workspaceId === workspace.id)).toBe(true);
 
+        // complete → review clears completedAt too (the Mongo-era handler kept it; fixed 11-15).
+        const reviewing = await request(app).patch(`/api/workspace-todos/${todo.id}`).set('Cookie', authCookie(member)).send({ status: 'review' });
+        expect(reviewing.body.data).toMatchObject({ status: 'review', completedAt: null });
+        const again = await request(app).patch(`/api/workspace-todos/${todo.id}`).set('Cookie', authCookie(member)).send({ status: 'complete' });
+        expect(again.body.data.completedAt).not.toBeNull();
+
         // complete → pending clears completedAt and logs a status change.
         const back = await request(app).patch(`/api/workspace-todos/${todo.id}`).set('Cookie', authCookie(member)).send({ status: 'pending' });
         expect(back.body.data.completedAt).toBeNull();

@@ -2,8 +2,8 @@
 //
 // Mongoose behaviour redone here:
 //   - Todo pre('save') hook: completedAt = now when a todo is CREATED with status 'complete'.
-//     Updates follow the old PATCH handler instead (findByIdAndUpdate skipped the hook): completedAt
-//     is set when status becomes 'complete' and cleared only when it goes back to 'pending'.
+//     Updates: completedAt is set when status becomes 'complete' and cleared when it leaves
+//     'complete' for any state (the old PATCH handler cleared it only on 'pending'; fixed 11-15).
 //   - trim/required/enum validators and subdocument casting: see ./todoInput.
 //   - tags[] / assignees[] arrays: the TodoTag / TodoAssignee join tables, written in array order
 //     (see ./todoShape). Mongo stored any ObjectId; Postgres has foreign keys, so assignee ids that
@@ -341,10 +341,12 @@ export async function updatePersonalTodo(
             data.assignedAt = requested && requested.length > 0 ? now : null;
         }
 
-        // completedAt, as the old PATCH handler did it.
+        // completedAt: stamped when it becomes complete, cleared when it leaves complete for any state
+        // (the old handler cleared it only on 'pending', so a task moved back to review or in progress
+        // still read as completed: fixed 11-15, the builder's call).
         if (data.status === 'complete' && existing.status !== 'complete') {
             data.completedAt = now;
-        } else if (data.status === 'pending' && existing.status === 'complete') {
+        } else if (data.status !== undefined && data.status !== 'complete' && existing.status === 'complete') {
             data.completedAt = null;
         }
 

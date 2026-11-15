@@ -1,5 +1,8 @@
 // Stage 6 (ALWAYS_ON_SPEC): the wallpaper + widget, the morning notification's subscriptions and pass,
 // remote MCP's door, and the night job that prunes old agent history.
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import request from 'supertest';
 import { describe, expect, it, vi } from 'vitest';
 import app from '../../src/app';
@@ -23,15 +26,17 @@ describe('the ambient phone (6.6)', () => {
         expect(png.headers['content-type']).toBe('image/png');
         expect((png.body as Buffer).subarray(1, 4).toString('latin1')).toBe('PNG');
     });
-});
 
-describe('the morning notification (6.3)', () => {
     it("the phone app's ambient token reads only the picture and the widget; Settings lists where the phone can reach the server", async () => {
         const user = await createTestUser();
         const phone = (await createTestToken(user, ['ambient'], 'Phone app')).token;
         const bearer = (path: string) => request(app).get(path).set('Authorization', `Bearer ${phone}`);
-        expect((await bearer('/api/ambient/widget')).status).toBe(200);
-        const png = await bearer('/api/ambient/wallpaper.png?w=540&h=1170');
+        const widget = await bearer('/api/ambient/widget?titles=0');
+        expect(widget.status).toBe(200);
+        // What the app's screen shows: whose day it is and where a tap opens Recollect.
+        expect(widget.body.data).toMatchObject({ account: { name: user.name, email: user.email } });
+        expect(widget.body.data.appUrl === null || typeof widget.body.data.appUrl === 'string').toBe(true);
+        const png = await bearer('/api/ambient/wallpaper.png?w=540&h=1170&titles=0');
         expect([png.status, png.headers['content-type']]).toEqual([200, 'image/png']);
         // Nothing else: not today, not the docs, not the agent API.
         for (const path of ['/api/today', '/api/docs', '/api/agent/docs']) expect((await bearer(path)).status, path).toBe(403);
@@ -41,6 +46,44 @@ describe('the morning notification (6.3)', () => {
         expect((await bearer('/api/ambient/addresses')).status).toBe(403);
     });
 
+    it("the app's Disconnect ends its own token; nothing else can call it", async () => {
+        const user = await createTestUser();
+        const phone = (await createTestToken(user, ['ambient'], 'Phone app')).token;
+        const read = (await createTestToken(user, ['read'])).token;
+        expect((await request(app).post('/api/ambient/disconnect').set('Authorization', `Bearer ${read}`)).status).toBe(403);
+        expect((await request(app).post('/api/ambient/disconnect').set('Cookie', authCookie(user))).status).toBe(400);
+        const done = await request(app).post('/api/ambient/disconnect').set('Authorization', `Bearer ${phone}`);
+        expect([done.status, done.body.data]).toEqual([200, { disconnected: true }]);
+        expect((await request(app).get('/api/ambient/widget').set('Authorization', `Bearer ${phone}`)).status).toBe(401);
+        expect((await request(app).get('/api/ambient/widget').set('Authorization', `Bearer ${read}`)).status).toBe(200);
+    });
+
+    it('the connect page and the app file need no sign-in; the token never leaves the link', async () => {
+        const page = await request(app).get('/phone/connect');
+        expect(page.status).toBe(200);
+        expect(page.headers['content-type']).toMatch(/text\/html/);
+        expect(page.headers['content-security-policy']).toMatch(/script-src 'sha256-[A-Za-z0-9+/=]+'/);
+        expect(page.headers['referrer-policy']).toBe('no-referrer');
+        expect(page.text).toContain('Open the phone app');
+        expect(page.text).toContain('location.hash');
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rc-apk-'));
+        const apk = path.join(dir, 'recollect.apk');
+        try {
+            vi.stubEnv('RECOLLECT_APK_PATH', apk);
+            expect((await request(app).get('/phone/recollect.apk')).status).toBe(404);
+            expect((await request(app).get('/phone/connect')).text).toContain("doesn't have the phone app's file");
+            fs.writeFileSync(apk, Buffer.alloc(2048, 1));
+            const file = await request(app).get('/phone/recollect.apk');
+            expect([file.status, file.headers['content-type']]).toEqual([200, 'application/vnd.android.package-archive']);
+            expect((await request(app).get('/phone/connect')).text).toContain('Android, 2 KB');
+        } finally {
+            vi.unstubAllEnvs();
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+});
+
+describe('the morning notification (6.3)', () => {
     it('saves one row per browser, lists the device count, removes it; cookie only', async () => {
         const user = await createTestUser();
         expect((await api(user).post('/api/push/subscription', sub(1))).status).toBe(201);

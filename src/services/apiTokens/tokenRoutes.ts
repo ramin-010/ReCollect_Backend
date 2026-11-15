@@ -130,6 +130,7 @@ export const TOKEN_ROUTES: readonly TokenRoute[] = [
     // Stage 6: the phone's wallpaper and widget (an automation app fetches them with a read token).
     route('GET', '/api/ambient/widget', 'read', 'ambient'),
     route('GET', '/api/ambient/wallpaper.png', 'read', 'ambient'),
+    route('POST', '/api/ambient/disconnect', 'ambient'),
 ];
 
 /**
@@ -187,6 +188,7 @@ export const SELF_LOGGED: Readonly<Record<string, string>> = {
     'PUT /api/sessions/by-key/:key': 'the session list is its own log (each entry names its writer; Ramin edits or deletes any); a topic change it asks for is logged as topic_update',
     'POST /api/suggestions': 'a pending suggestion is its own visible record (Home → Suggested, naming who proposed it): nothing changes until Ramin accepts it, and he can dismiss it',
     'POST /api/actions': 'a pending action is its own visible record (Home → Suggested, "Do it", naming who asked): nothing happens until Ramin taps it, and he can dismiss it',
+    'POST /api/ambient/disconnect': "the phone app ends its own token and nothing else: Settings → Agents shows it as ended",
 };
 
 /** The path of a URL without its query string. */
