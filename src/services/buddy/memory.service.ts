@@ -24,6 +24,7 @@ import { searchTerms } from '../docs/docSearch.service';
 import { recordAgentEdit, quoted, type AgentActor } from '../agent/agentEditLog';
 import { scrubSecrets } from './scrub';
 import { buddySettings, isBuddyPaused } from './state.service';
+import { briefNote } from './voice';
 
 export const MEMORY_KINDS = ['fact', 'preference', 'value', 'aim', 'idea', 'decision', 'pattern', 'state', 'thread', 'win'] as const satisfies readonly MemoryKind[];
 export const MEMORY_STATUSES = ['active', 'faded', 'closed', 'wrong'] as const satisfies readonly MemoryStatus[];
@@ -312,7 +313,7 @@ export async function memoryCounts(userId: string): Promise<MemoryCounts> {
         prisma.memory.groupBy({ by: ['status'], where: { userId }, _count: { _all: true } }),
         prisma.memory.count({ where: { userId, status: 'active', lasting: true } }),
         prisma.observation.count({ where: { userId } }),
-        prisma.observation.count({ where: { userId, memoryId: null } }),
+        prisma.observation.count({ where: { userId, memoryId: null, foldedAt: null } }),
     ]);
     const n = (s: MemoryStatus) => byStatus.find((r) => r.status === s)?._count._all ?? 0;
     return { active: n('active'), lasting, working: n('active') - lasting, faded: n('faded'), closed: n('closed'), wrong: n('wrong'), notes, pending };
@@ -460,10 +461,11 @@ export interface BuddyBrief {
  * portrait yet, the most seen lasting ones fill up. Private memories stay out unless pinned.
  */
 export async function buddyBrief(userId: string, options: { project?: string | undefined } = {}): Promise<BuddyBrief> {
-    const [state, pinned, lasting] = await Promise.all([
+    const [state, pinned, lasting, said] = await Promise.all([
         buddySettings(userId),
         prisma.memory.findMany({ where: { userId, status: 'active', pinned: true }, orderBy: { lastSeenDay: 'desc' }, take: BRIEF_PINNED_MAX }),
         prisma.memory.findMany({ where: { userId, status: 'active', lasting: true, sensitivity: 'open', pinned: false }, orderBy: [{ seenCount: 'desc' }, { lastSeenDay: 'desc' }], take: BRIEF_MEMORIES_MAX }),
+        briefNote(userId),
     ]);
     const tag = options.project ? normalizeTag(options.project) : '';
     const tagged = tag
@@ -483,7 +485,32 @@ export async function buddyBrief(userId: string, options: { project?: string | u
         room -= m.text.length;
         memories.push({ kind: m.kind, text: m.text, pinned: m.pinned });
     }
-    return { who: state.portrait.who, heading: state.portrait.heading, now: state.portrait.now, memories, note: null, followUp: null };
+    return { who: state.portrait.who, heading: state.portrait.heading, now: state.portrait.now, memories, note: said.note, followUp: said.followUp };
+}
+
+// ─── His own words and thumbs (BUDDY_MEMORY_PLAN §3.1 D, §3.5) ────────────
+
+export const TELL_MAX = 1000;
+
+/** "Tell your buddy": straight in as a note for tonight (no gate), scrubbed like everything else. */
+export async function tellBuddy(userId: string, text: string, now: Date = new Date()): Promise<{ saved: boolean; paused?: true }> {
+    if (await isBuddyPaused(userId)) return { saved: false, paused: true };
+    const clean = cleanNoteText(text.slice(0, TELL_MAX));
+    if (!clean || !memoryKey(clean)) throw badRequest('Tell it something');
+    const { today } = await loadLearningContext(userId, now);
+    await prisma.observation.create({ data: { userId, text: clean, kind: 'fact', sensitivity: 'private', source: 'tell', day: toDbDay(today) } });
+    return { saved: true };
+}
+
+export const FEEDBACK_TARGETS = ['morning', 'afternoon', 'evening', 'note'] as const;
+
+/** A thumb on a line or the note of one of its steps (his own steps only). One per target: the last one counts. */
+export async function feedback(userId: string, input: { buddyDayId: string; target: (typeof FEEDBACK_TARGETS)[number]; verdict: 'more' | 'less' }): Promise<{ saved: true }> {
+    const day = await prisma.buddyDay.findFirst({ where: { id: input.buddyDayId, userId }, select: { id: true } });
+    if (!day) throw notFound();
+    await prisma.buddyFeedback.deleteMany({ where: { userId, buddyDayId: day.id, target: input.target } });
+    await prisma.buddyFeedback.create({ data: { userId, buddyDayId: day.id, target: input.target, verdict: input.verdict } });
+    return { saved: true };
 }
 
 // ─── Export ────────────────────────────────────────────────────────────────

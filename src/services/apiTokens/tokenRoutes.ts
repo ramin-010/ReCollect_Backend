@@ -138,6 +138,9 @@ export const TOKEN_ROUTES: readonly TokenRoute[] = [
     // B2: the hooks send his typed words and fetch the buddy's note for the session.
     route('POST', '/api/buddy/words', 'sessions:write'),
     route('GET', '/api/buddy/note', 'read'),
+    // B4: the phone app's "Tell your buddy" and thumbs (its ambient token; nothing else).
+    route('POST', '/api/buddy/tell', 'ambient'),
+    route('POST', '/api/buddy/feedback', 'ambient'),
 ];
 
 /**
@@ -198,6 +201,8 @@ export const SELF_LOGGED: Readonly<Record<string, string>> = {
     'POST /api/actions': 'a pending action is its own visible record (Home → Suggested, "Do it", naming who asked): nothing happens until Ramin taps it, and he can dismiss it',
     'POST /api/ambient/disconnect': "the phone app ends its own token and nothing else: Settings → Agents shows it as ended",
     'POST /api/buddy/remember': 'a memory is its own visible record (/you, naming the agent that saved it and its notes); Ramin edits, marks wrong or forgets any, and no agent can change one he touched',
+    'POST /api/buddy/tell': "the phone app hands on Ramin's own words: a note for tonight he sees on /you, nothing changes by it",
+    'POST /api/buddy/feedback': "the phone app hands on Ramin's thumb on a line: a signal for the next night, nothing changes by it",
     'POST /api/buddy/words': 'the hooks queue his own typed words for the buddy: scrubbed, digested into notes he sees on /you and suggestions he decides on, then deleted; nothing in the app changes by it',
 };
 

@@ -198,8 +198,8 @@ describe('which endpoints accept a token (tokenRoutes.ts)', () => {
             if (route.scope === 'ambient') continue; // the phone app's own door (its Disconnect), below
             expect(route.method === 'GET' || statelessPosts.includes(route.pattern)).toBe(route.scope === 'read');
         }
-        // `ambient` alone opens only the phone app's Disconnect; elsewhere it rides along with `read`.
-        expect(TOKEN_ROUTES.filter((r) => r.scope === 'ambient').map((r) => `${r.method} ${r.pattern}`)).toEqual(['POST /api/ambient/disconnect']);
+        // `ambient` alone opens only the phone app's own doors (Disconnect, Tell your buddy, a thumb); elsewhere it rides along with `read`.
+        expect(TOKEN_ROUTES.filter((r) => r.scope === 'ambient').map((r) => `${r.method} ${r.pattern}`)).toEqual(['POST /api/ambient/disconnect', 'POST /api/buddy/tell', 'POST /api/buddy/feedback']);
     });
 
     it('pathOf drops the query string', () => {

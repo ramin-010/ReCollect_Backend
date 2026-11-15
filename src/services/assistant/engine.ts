@@ -8,6 +8,7 @@
 // stream; his Stop (a signal) ends the model call in flight and runs no further tool. Asked from
 // inside a doc (DOCS_EDITOR_V2_PLAN phase 5), the same loop has the doc in hand instead of the brief.
 import type Anthropic from '@anthropic-ai/sdk';
+import { characterPrompt } from '../buddy/character';
 import { prisma } from '../../db/prisma';
 import { getAiClient, type BetaMessage } from '../claude/client';
 import { isUnderCap, recordAiUsage } from '../claude/usage.service';
@@ -123,6 +124,14 @@ async function editSince(userId: string, since: Date): Promise<string | null> {
     return edit?.id ?? null;
 }
 
+/** The buddy's voice for Ask AI: its character and notebook, when his buddy is on (null otherwise). */
+async function buddyVoice(userId: string): Promise<string | null> {
+    const state = await prisma.buddyState.findUnique({ where: { userId } });
+    if (!state?.enabled || state.paused) return null;
+    const character = characterPrompt({ name: state.name, tone: state.tone === 'gentle' ? 'gentle' : 'candid' });
+    return `Here you are also his buddy: answer in this voice, while the rules above decide what you may do.\n\n${character}${state.notebook ? `\n\nYour notebook from last night:\n${state.notebook}` : ''}`;
+}
+
 export async function runAssistant(input: AssistantInput): Promise<AssistantTurn> {
     const { userId } = input;
     const model = assistantModel();
@@ -143,7 +152,9 @@ export async function runAssistant(input: AssistantInput): Promise<AssistantTurn
         const second = input.doc
             ? { type: 'text' as const, text: input.doc.text, cache_control: { type: 'ephemeral' as const } }
             : await catalogue.call('get_brief', {}).then((brief) => ({ type: 'text' as const, text: `Where he stands now (get_brief):\n${brief.isError ? '(the brief could not load)' : brief.text}` }));
-        const system = [{ type: 'text' as const, text: ASSISTANT_RULES, cache_control: { type: 'ephemeral' as const } }, second];
+        // B5 (BUDDY_MEMORY_PLAN §3.4): with his buddy on, Ask AI is the same buddy: its character and its notebook (the portrait is in the brief).
+        const buddy = input.doc ? null : await buddyVoice(userId);
+        const system = [{ type: 'text' as const, text: ASSISTANT_RULES, cache_control: { type: 'ephemeral' as const } }, ...(buddy ? [{ type: 'text' as const, text: buddy }] : []), second];
         const messages: MessageParam[] = [
             ...input.history.slice(-HISTORY_MESSAGES).map((m) => ({ role: m.role, content: m.text })),
             { role: 'user', content: input.text },

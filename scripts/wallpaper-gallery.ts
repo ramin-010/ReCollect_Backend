@@ -1,13 +1,18 @@
-// Draws the phone's two pictures (home: the sky of the day and its list; lock: the dial) in every
-// state and theme with sample days, for design checks:
-//   npx tsx scripts/wallpaper-gallery.ts <out dir> [width] [height]
-// Writes <state>-<theme>-<home|lock>.png (no database, no server: the drawing alone).
+// Draws the phone's two pictures (home: the sky of the day and its numbers; lock: the buddy's line,
+// B4) in every state and theme with sample days, for design checks:
+//   npx ts-node --transpile-only scripts/wallpaper-gallery.ts <out dir> [width] [height]
+// Writes <state>-<theme>-<home|lock>.png, and the lock picture without the day's arc (-lock-nomark)
+// and without a line (-lock-noline, the buddy off) for his pick (no database, no server).
 import fs from 'node:fs';
 import path from 'node:path';
-import { wallpaperPng, type Ambient, type AmbientItem } from '../src/services/ambient/ambient.service';
+import { WALLPAPER_FONTS, wallpaperPng, type Ambient, type AmbientItem } from '../src/services/ambient/ambient.service';
+import { drawLock, type WallpaperInput } from '../src/services/ambient/wallpaperArt';
+import { svgToPng } from '../src/services/docs/diagram/png';
+
+const input = (a: Ambient): WallpaperInput => ({ state: a.state, date: a.date, headline: a.headline, lines: a.lines, ...(a.week ? { week: a.week } : {}), ...(a.items ? { items: a.items } : {}), ...(a.counts ? { counts: a.counts } : {}), ...(a.goal !== undefined ? { goal: a.goal } : {}), line: a.line?.text ?? null });
 
 const out = process.argv[2];
-if (!out) throw new Error('usage: npx tsx scripts/wallpaper-gallery.ts <out dir> [width] [height]');
+if (!out) throw new Error('usage: npx ts-node --transpile-only scripts/wallpaper-gallery.ts <out dir> [width] [height]');
 const width = Number(process.argv[3] ?? 1080);
 const height = Number(process.argv[4] ?? 2340);
 fs.mkdirSync(out, { recursive: true });
@@ -33,20 +38,26 @@ const evening = [review('Monotonic stack', true), review('DP: 0/1 knapsack', tru
 const done = [review('Monotonic stack', true), review('DP: 0/1 knapsack', true), focus('Two sliding-window mediums before work', true), task('Mock interview with Arjun', '', true)];
 const rest = [review('Heaps: top-k with a min-heap')];
 
+// The buddy's lines (B4): what the lock picture's main words look like (invented, like the rest).
+const line = (text: string) => ({ line: { dayId: 'd1', slot: 'morning', text } });
 const samples: Ambient[] = [
-    { ...base, state: 'morning', headline: '3 reviews · about 21 min', lines: [], week: week('1101101'), ...day(morning, 21) },
-    { ...base, state: 'working', headline: 'Read DDIA chapter 5 (replication)', lines: [], week: week('1101101'), ...day(working, 8) },
-    { ...base, state: 'evening', headline: '2 reviews done today', lines: [], week: week('1101101'), ...day(evening, 5) },
+    { ...base, state: 'morning', headline: '3 reviews · about 21 min', lines: [], week: week('1101101'), ...day(morning, 21), ...line('One thing today: two sliding-window mediums before work.') },
+    { ...base, state: 'working', headline: 'Read DDIA chapter 5 (replication)', lines: [], week: week('1101101'), ...day(working, 8), ...line('From your notes: an honest hour every day beats a heroic weekend.') },
+    { ...base, state: 'evening', headline: '2 reviews done today', lines: [], week: week('1101101'), ...day(evening, 5), ...line('Stop before midnight tonight.') },
     { ...base, state: 'done', headline: '', lines: [], week: week('1101111'), ...day(done, 0) },
     { ...base, state: 'rest', mode: 'busy', headline: 'A light day', lines: [], week: week('1001001'), ...day(rest, 5) },
 ];
 
+const svgPng = (svg: string) => svgToPng(svg, width, height, 1, Math.max(width, height), WALLPAPER_FONTS).png;
 const started = Date.now();
 for (const theme of ['dark', 'light'] as const) {
     for (const a of samples) {
         for (const screen of ['home', 'lock'] as const) {
             fs.writeFileSync(path.join(out, `${a.state}-${theme}-${screen}.png`), wallpaperPng(a, width, height, theme, screen));
         }
+        // His pick (B4): the lock picture without the day's arc, and without a line (the buddy off).
+        fs.writeFileSync(path.join(out, `${a.state}-${theme}-lock-nomark.png`), svgPng(drawLock({ ...input(a), dayMark: 'none' }, width, height, theme)));
+        fs.writeFileSync(path.join(out, `${a.state}-${theme}-lock-noline.png`), svgPng(drawLock({ ...input(a), line: null }, width, height, theme)));
     }
 }
-console.log(`${samples.length * 4} pictures in ${out} (${width}x${height}), ${Date.now() - started} ms`);
+console.log(`${samples.length * 8} pictures in ${out} (${width}x${height}), ${Date.now() - started} ms`);

@@ -176,29 +176,27 @@ describe('the two pictures', () => {
     );
     const a = { ...ambientFor(brief({ planned: 2, est: 16, done: 1 }), 'normal', 17, date), ...day };
 
-    it('home: the sky over its hills, the day line and the list (an icon per kind, a tick on what is done)', () => {
+    it('home (B4): the sky over its hills and the day in numbers; no list on a phone', () => {
         const svg = wallpaperSvg(a, 1080, 2340, 'dark', 'home');
         expect(svg).toContain('id="hill0"');
         expect(svg).toContain('3 left today · about 16 min');
-        expect(svg).toContain('>Monotonic stack<');
-        expect(svg).toContain('>8 min<');
-        expect(svg).toContain('>Heaps<');
-        expect(svg.match(/<path d="M2 3h6a4 4 0 0 1 4 4v14/g)).toHaveLength(2); // two open reviews: the book icon
+        expect(svg).not.toContain('>Monotonic stack<');
+        expect(svg).not.toContain('>Heaps<');
     });
 
-    it('lock: the dial (one segment per thing, done ones lit), what is left inside, the counts, the next step, the goal; no hills', () => {
-        const svg = wallpaperSvg(a, 1080, 2340, 'dark', 'lock');
+    it('lock (B4): the buddy line is the main thing, the day in numbers and the goal days under it; no hills', () => {
+        const svg = wallpaperSvg({ ...a, line: { dayId: 'd1', slot: 'morning', text: 'Stop before midnight tonight' } }, 1080, 2340, 'dark', 'lock');
         expect(svg).not.toContain('id="hill0"');
-        expect(svg).toContain('id="dialGlow"');
-        const segments = [...svg.matchAll(/<path d="M[\d. ]+A[^"]*" fill="none" stroke="([^"]+)" stroke-width="26" stroke-linecap="round"\/>/g)];
-        expect(segments).toHaveLength(4);
-        expect(segments.filter((m) => m[1] === '#F7F5F2')).toHaveLength(1); // one done, lit
-        expect(svg).toMatch(/>3<\/text>/);
-        expect(svg).toContain('>left today<');
-        expect(svg).toContain('>1 of 3<'); // reviews
-        expect(svg).toContain('Next · Monotonic stack · 8 min');
-        expect(svg).toContain('>Backend SDE offer<');
-        expect(svg).toContain('182 days left · 1 of 6 milestones');
+        expect(svg).toContain('id="lineGlow"');
+        const said = [...svg.matchAll(/>([^<>]+)<\/text>/g)].map((m) => m[1]).join(' ');
+        expect(said).toContain('Stop before midnight tonight');
+        expect(svg).toContain('>2 left<'); // reviews
+        expect(svg).toContain('about 16 min');
+        expect(svg).toContain('182 days to Backend SDE offer');
+        expect(svg).not.toContain('Monotonic stack');
+        // Without a line it says the day in plain words, as the main words.
+        const plain = wallpaperSvg(a, 1080, 2340, 'dark', 'lock');
+        expect(plain).toContain('>3 left today · about 16 min<');
         // All of it between the clock and the fingerprint.
         const ys = [...svg.matchAll(/<text x="[\d.]+" y="([\d.]+)"/g)].map((m) => Number(m[1]));
         expect(Math.min(...ys)).toBeGreaterThan(2340 * 0.33);

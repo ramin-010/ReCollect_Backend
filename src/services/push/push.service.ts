@@ -3,6 +3,8 @@
 // next: Caching part 2"); nothing on an empty day. The day is claimed (lastPushDay) before sending,
 // like the email, so overlapping passes never send twice. A dead endpoint (404/410) is deleted.
 import { prisma } from '../../db/prisma';
+import { currentLine } from '../buddy/voice';
+import { buddySettings } from '../buddy/state.service';
 import { isNudgeDue, resolveTimeZone, today as todayIn } from '../learning';
 import { fromDbDayOrNull, toDbDay } from '../learningDb/common';
 import { buildMorningNudge } from '../learningDb/nudge.service';
@@ -86,13 +88,19 @@ export async function pushToUser(userId: string, message: PushMessage): Promise<
     return { sent, removed };
 }
 
-/** The morning line from the email's digest; null on a day with nothing planned. */
+/**
+ * The morning line: the buddy's morning line when it has one the lock check passed (a notification
+ * shows on the lock screen too; its private note never goes here), then the email's digest; null on
+ * a day with nothing to say.
+ */
 export async function morningLine(userId: string, now: Date = new Date()): Promise<PushMessage | null> {
-    const nudge = await buildMorningNudge(userId, now);
+    const [nudge, line, buddy] = await Promise.all([buildMorningNudge(userId, now), currentLine(userId, now), buddySettings(userId)]);
+    const said = buddy.enabled && !buddy.paused && line && line.lockOk && !line.fallback ? line.text : null;
+    const lead = nudge.heading === 'Busy week' || nudge.heading === 'Welcome back' ? `${nudge.heading}: ${nudge.intro}` : nudge.intro;
+    if (said) return { title: buddy.name ? `From ${buddy.name}` : 'From your buddy', body: nudge.items.length ? `${said} · ${lead}` : said, url: '/' };
     if (!nudge.items.length) return null;
     const next = nudge.items[0]?.title;
     const total = nudge.items.length + nudge.moreCount;
-    const lead = nudge.heading === 'Busy week' || nudge.heading === 'Welcome back' ? `${nudge.heading}: ${nudge.intro}` : nudge.intro;
     return { title: total === 1 ? 'One thing to revise today' : 'Today in Recollect', body: next ? `${lead} Next: ${next}.` : lead, url: '/' };
 }
 

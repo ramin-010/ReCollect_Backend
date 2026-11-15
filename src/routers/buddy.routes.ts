@@ -24,5 +24,11 @@ router.get('/export', cookieOnly, buddy.exportHandler);
 router.post('/words', requireScope('sessions:write'), buddy.wordsHandler);
 router.get('/note', requireScope('read'), buddy.noteHandler);
 router.get('/usage', cookieOnly, buddy.usageHandler);
+// B3: think now; the day's lines, note and follow-up.
+router.post('/think', cookieOnly, buddy.thinkHandler);
+router.get('/today', cookieOnly, buddy.todayHandler);
+// B4: his words straight in, his thumbs (the app; the phone app's ambient token too).
+router.post('/tell', requireScope('ambient'), buddy.tellHandler);
+router.post('/feedback', requireScope('ambient'), buddy.feedbackHandler);
 
 export default router;

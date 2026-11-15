@@ -162,6 +162,7 @@ model User {
   buddyChunks  BuddyChunk[]
   buddyDays    BuddyCaptureDay[]
   buddySteps   BuddyDay[]
+  buddyThumbs  BuddyFeedback[]
 
   @@index([googleId])
 }
@@ -1984,4 +1985,20 @@ model BuddyDay {
   createdAt DateTime      @default(now())
 
   @@index([userId, day])
+}
+
+/// His thumbs on what the buddy said (BUDDY_MEMORY_PLAN §3.5): "more like this" or "not this" on a
+/// line or the note. The night reads them beside what it said.
+model BuddyFeedback {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  buddyDayId String
+  /// morning | afternoon | evening | note
+  target     String   @db.VarChar(20)
+  /// more | less
+  verdict    String   @db.VarChar(10)
+  createdAt  DateTime @default(now())
+
+  @@index([userId, createdAt])
 }

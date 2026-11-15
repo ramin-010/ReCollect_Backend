@@ -3,6 +3,7 @@
 // the focus line while working, one line on the day in the evening, a clean picture when the day is
 // done, lighter in busy and comeback modes. Never red, never an overdue count as the headline.
 import { getBrief, type Brief } from '../brief/brief.service';
+import { currentLine } from '../buddy/voice';
 import { getToday } from '../learningDb/today.service';
 import type { PlanMode } from '../learning/plan';
 import { dayOf } from '../learning/time';
@@ -29,6 +30,11 @@ export interface Ambient {
     counts?: AmbientCounts;
     /** The nearest active goal (the lock picture's last line). */
     goal?: AmbientGoal | null;
+    /**
+     * The buddy's line for now (BUDDY_MEMORY_PLAN §3.4), only one the lock check passed (never with
+     * titles hidden): the lock picture's main words and the widget's line.
+     */
+    line?: { dayId: string; slot: string; text: string } | null;
     /** Changes whenever either picture would: the phone app fetches them again only then. */
     key?: string;
 }
@@ -123,7 +129,7 @@ export function dayItems(t: Pick<TodayPayload, 'plan' | 'focus' | 'tasks' | 'goa
 
 /** A short fingerprint of everything the pictures draw (FNV-1a over the words). */
 function pictureKey(a: Omit<Ambient, 'key' | 'updatedAt'>): string {
-    const text = JSON.stringify([a.state, a.date, a.headline, a.lines, a.mode, a.week, a.items, a.counts, a.goal]);
+    const text = JSON.stringify([a.state, a.date, a.headline, a.lines, a.mode, a.week, a.items, a.counts, a.goal, a.line?.text ?? null]);
     let h = 2166136261;
     for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 16777619);
     return (h >>> 0).toString(36);
@@ -184,12 +190,13 @@ function localClock(now: Date, timezone: string): { hour: number; date: string }
 }
 
 export async function getAmbient(userId: string, now: Date = new Date(), options: AmbientOptions = {}): Promise<Ambient> {
-    const [brief, today] = await Promise.all([getBrief(userId, {}, now), getToday(userId, now)]);
+    const [brief, today, line] = await Promise.all([getBrief(userId, {}, now), getToday(userId, now), options.titles === false ? Promise.resolve(null) : currentLine(userId, now)]);
     const { hour, date } = localClock(now, brief.now.timezone);
     const mode = (today.plan?.mode ?? 'normal') as PlanMode;
     const week = today.stats?.rhythm?.last7?.map((d) => ({ day: d.day, active: d.active }));
     const day = dayItems(today, now, options.titles !== false);
-    const a = { ...ambientFor(brief, mode, hour, date, now, options), ...(week?.length === 7 ? { week } : {}), ...day };
+    const buddyLine = line && line.lockOk && !line.fallback ? { dayId: line.dayId, slot: line.slot, text: line.text } : null;
+    const a = { ...ambientFor(brief, mode, hour, date, now, options), ...(week?.length === 7 ? { week } : {}), ...day, line: buddyLine };
     return { ...a, key: pictureKey(a) };
 }
 
@@ -211,6 +218,7 @@ export function wallpaperSvg(a: Ambient, width: number, height: number, theme: '
         ...(a.items ? { items: a.items } : {}),
         ...(a.counts ? { counts: a.counts } : {}),
         ...(a.goal !== undefined ? { goal: a.goal } : {}),
+        line: a.line?.text ?? null,
     };
     return screen === 'lock' ? drawLock(input, width, height, theme) : drawWallpaper(input, width, height, theme);
 }

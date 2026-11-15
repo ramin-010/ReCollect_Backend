@@ -15,6 +15,10 @@ import {
     createMemoryByUser,
     deleteMemory,
     exportBuddy,
+    FEEDBACK_TARGETS,
+    TELL_MAX,
+    feedback,
+    tellBuddy,
     listMemories,
     memoryCounts,
     rememberNotes,
@@ -23,7 +27,11 @@ import {
 import { BUDDY_NAME_MAX, BUDDY_TONES, MAX_BUDDY_CAP_USD, buddySettings, updateBuddySettings } from '../services/buddy/state.service';
 import { WORDS_PER_CHUNK, queueWords } from '../services/buddy/capture.service';
 import { buddyUsage } from '../services/buddy/spend';
-import { nextNoteFor } from '../services/buddy/voice';
+import { currentLine, latestStep, nextNoteFor } from '../services/buddy/voice';
+import { nightIfDue } from '../services/buddy/worker';
+import { buddyMaySpend } from '../services/buddy/spend';
+import { fromDbDay } from '../services/learningDb/common';
+import ErrorResponse from '../utils/errorResponse';
 import { handler, ok, param, parse } from './learning/common';
 
 const zKind = z.enum(MEMORY_KINDS);
@@ -170,6 +178,41 @@ export const noteHandler = handler(async (req, res) => {
 /** GET /api/buddy/usage → this month's spend and cap, and the last 30 days (counts and cost, never words) */
 export const usageHandler = handler(async (req, res) => {
     ok(res, await buddyUsage(requireUser(req).id));
+});
+
+/** POST /api/buddy/think (the app): think now (the night step again today). */
+export const thinkHandler = handler(async (req, res) => {
+    const userId = requireUser(req).id;
+    const may = await buddyMaySpend(userId);
+    if (may !== 'ok') throw new ErrorResponse(409, may === 'off' ? 'Turn your buddy on first' : may === 'paused' ? 'Your buddy is paused' : may === 'no_ai' ? 'The AI is not set up' : 'Your buddy has reached its monthly cap');
+    ok(res, await nightIfDue(userId, new Date(), { fresh: true }));
+});
+
+/** GET /api/buddy/today (the app): the current line, the day's three lines, the note and the follow-up. */
+export const todayHandler = handler(async (req, res) => {
+    const userId = requireUser(req).id;
+    const [step, line, settings] = await Promise.all([latestStep(userId), currentLine(userId), buddySettings(userId)]);
+    const row = step.row && !step.stale ? step.row : null;
+    ok(res, {
+        enabled: settings.enabled,
+        paused: settings.paused,
+        name: settings.name,
+        slot: step.slot,
+        line,
+        day: row ? { _id: row.id, day: fromDbDay(row.day), kind: row.kind, lines: row.lines, note: row.note, followUp: row.followUp, createdAt: row.createdAt.toISOString() } : null,
+    });
+});
+
+/** POST /api/buddy/tell {text} (the app, the phone app): straight in as a note for tonight */
+export const tellHandler = handler(async (req, res) => {
+    const input = parse(z.object({ text: z.string().trim().min(1).max(TELL_MAX) }).strict(), req.body);
+    ok(res, await tellBuddy(requireUser(req).id, input.text), 201);
+});
+
+/** POST /api/buddy/feedback {buddyDayId, target, verdict} (the app, the phone app): a thumb */
+export const feedbackHandler = handler(async (req, res) => {
+    const input = parse(z.object({ buddyDayId: z.string().trim().min(1).max(64), target: z.enum(FEEDBACK_TARGETS), verdict: z.enum(['more', 'less']) }).strict(), req.body);
+    ok(res, await feedback(requireUser(req).id, input), 201);
 });
 
 /** GET /api/buddy/export → everything as JSON (a file download) */

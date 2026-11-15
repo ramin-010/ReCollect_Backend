@@ -21,6 +21,13 @@ export interface WallpaperInput {
     items?: Array<{ kind: 'review' | 'focus' | 'task'; title: string; meta: string; done: boolean }>;
     counts?: { reviews: { done: number; total: number }; focus: { done: number; total: number }; tasks: { done: number; total: number }; minutesLeft: number };
     goal?: { title: string; daysLeft: number; done: number; total: number } | null;
+    /**
+     * The buddy's line for now (BUDDY_MEMORY_PLAN §3.4): the lock picture's main words. Only a line
+     * the lock check passed; without one the lock picture says the day in plain words.
+     */
+    line?: string | null;
+    /** The lock picture's day mark: a thin arc of the day over the line (default), or none. */
+    dayMark?: 'arc' | 'none';
 }
 
 // ── Tiny icons (24-unit paths in lucide's style: 2-unit strokes, round ends) ─────────────────
@@ -437,7 +444,7 @@ export function drawWallpaper(input: WallpaperInput, width: number, height: numb
     const week = input.week?.length === 7 ? input.week : null;
     const items = input.items;
 
-    // The headline: the day's line over a list, else the state's own headline; as large as fits.
+    // The headline: the day in numbers (no list: on a phone the number is enough), else the state's own headline.
     const headText = items ? dayLine(items, input.counts?.minutesLeft ?? 0) : input.state === 'done' ? '' : input.headline;
     const maxHead = items ? Math.round(W * 0.058) : Math.round(W * 0.068);
     const minHead = items ? Math.round(W * 0.05) : Math.round(W * 0.056);
@@ -458,19 +465,12 @@ export function drawWallpaper(input: WallpaperInput, width: number, height: numb
     const tagH = Math.round(tagSize * 2.1);
     const headLH = Math.round(headSize * 1.14);
     const bodyLH = Math.round(bodySize * 1.42);
-    const rowH = Math.round(W * 0.082);
     const weekH = week ? Math.round(W * 0.075) : 0;
     const gapAfterTag = Math.round(W * 0.045);
     const gapAfterHead = head.length && (body.length || items?.length) ? Math.round(W * 0.034) : 0;
     const gapBeforeWeek = week ? Math.round(W * 0.06) : 0;
     const fixedH = tagH + (head.length ? gapAfterTag + head.length * headLH : 0) + gapAfterHead + body.length * bodyLH + gapBeforeWeek + weekH;
-    // As many rows as fit (at most five; a "+ N more" line when some are left out).
-    const room = Math.round(H * 0.74) - Math.round(H * 0.34) - fixedH;
-    let rows = items ? Math.min(items.length, 5, Math.max(0, Math.floor(room / rowH))) : 0;
-    if (items && rows < items.length && rows * rowH + Math.round(rowH * 0.7) > room) rows = Math.max(0, rows - 1);
-    const more = items ? items.length - rows : 0;
-    const listH = rows * rowH + (more > 0 ? Math.round(rowH * 0.7) : 0);
-    let y = Math.round(H * 0.74 - fixedH - listH);
+    let y = Math.round(H * 0.74 - fixedH);
     y = Math.max(y, Math.round(H * 0.34));
 
     const words: string[] = [];
@@ -495,32 +495,6 @@ export function drawWallpaper(input: WallpaperInput, width: number, height: numb
         y += bodyLH;
         words.push(`<text x="${x}" y="${y - Math.round(bodyLH * 0.26)}" ${font} font-size="${bodySize}" font-weight="400" fill="${ink.body}">${esc(line)}</text>`);
     }
-    if (items && rows > 0) {
-        // The list: an icon for the kind (a tick once done), the title cut to fit, the meta at the right.
-        const iconSize = Math.round(W * 0.042);
-        const textX = x + Math.round(W * 0.068);
-        const metaSize = Math.round(W * 0.033);
-        for (const item of items.slice(0, rows)) {
-            const mid = y + rowH / 2;
-            if (item.done) words.push(doneMark(x + iconSize / 2, mid, iconSize * 0.5, ink.dotOn, theme === 'dark' ? '#14161C' : '#FFFFFF'));
-            else words.push(icon(item.kind, x, mid - iconSize / 2, iconSize, ink.body));
-            const metaW = item.meta ? textWidth(item.meta, metaSize, 500) : 0;
-            const titleW = usable - (textX - x) - (metaW ? metaW + W * 0.03 : 0);
-            const title = fit(item.title, bodySize, 400, titleW);
-            const titleBase = mid + bodySize * 0.36;
-            words.push(`<text x="${textX}" y="${r1(titleBase)}" ${font} font-size="${bodySize}" font-weight="400" fill="${item.done ? ink.meta : ink.head}">${esc(title)}</text>`);
-            if (item.done) {
-                const tw = textWidth(title, bodySize, 400);
-                words.push(`<line x1="${textX}" y1="${r1(mid + bodySize * 0.02)}" x2="${r1(textX + tw)}" y2="${r1(mid + bodySize * 0.02)}" stroke="${ink.meta}" stroke-width="${r1(W / 480)}"/>`);
-            }
-            if (item.meta) words.push(`<text x="${x + usable}" y="${r1(titleBase)}" text-anchor="end" ${font} font-size="${metaSize}" font-weight="500" fill="${ink.meta}">${esc(item.meta)}</text>`);
-            y += rowH;
-        }
-        if (more > 0) {
-            words.push(`<text x="${textX}" y="${r1(y + rowH * 0.45)}" ${font} font-size="${metaSize}" font-weight="500" fill="${ink.meta}">+ ${esc(plural(more, 'more', 'more'))}</text>`);
-            y += Math.round(rowH * 0.7);
-        }
-    }
     if (week) {
         y += gapBeforeWeek;
         words.push(...weekDots(week, x + W * 0.0105 * 1.75, y, W, ink));
@@ -539,13 +513,109 @@ function arc(cx: number, cy: number, r: number, a0: number, a1: number): string 
 }
 
 /**
- * The lock picture: the dial of the day. One centred composition in the calm band between the
- * clock (top ~30 %) and the fingerprint (bottom ~22 %): a ring made of today's things, each a
- * segment that lights up when it is done, with what is left inside it; under it the counts as tiny
- * icons, the next step, and the goal with its days left. The open sky behind it, no horizon: it reads
- * apart from the home picture at a glance.
+ * The lock picture (B4, BUDDY_MEMORY_PLAN §3.4): the buddy's line is the main thing, centred in the
+ * calm band between the clock and the fingerprint, as large as fits in three balanced lines; over it
+ * a thin arc of the day (lit as far as the day's things are done; or no mark); under it, small, the
+ * day in numbers with tiny icons and the goal's days. The open sky behind it, no horizon. Without a
+ * line it says the day in plain words.
  */
 export function drawLock(input: WallpaperInput, width: number, height: number, theme: Theme): string {
+    const W = width;
+    const H = height;
+    const sky = SKIES[input.state][theme];
+    const { defs, art, rand } = drawSky(input.state, input.date, W, H, theme, false, '|lock');
+    const ink = sky.ink;
+    const font = `font-family="Inter"`;
+    const cx = W / 2;
+    const items = input.items ?? [];
+    const open = items.filter((i) => !i.done);
+    const total = items.length;
+    const glow = sky.light?.halo ?? sky.glows[0]?.color ?? '#FFFFFF';
+    const cy = Math.round(H * 0.47);
+    defs.push(`<radialGradient id="lineGlow"><stop offset="0" stop-color="${glow}" stop-opacity="${theme === 'dark' ? 0.26 : 0.4}"/><stop offset="0.5" stop-color="${glow}" stop-opacity="${theme === 'dark' ? 0.1 : 0.16}"/><stop offset="1" stop-color="${glow}" stop-opacity="0"/></radialGradient>`);
+    art.push(`<ellipse cx="${cx}" cy="${cy}" rx="${r1(W * 0.62)}" ry="${r1(W * 0.5)}" fill="url(#lineGlow)"/>`);
+    grain(defs, art, W, H, sky.grain, Math.floor(rand() * 1000));
+
+    const words: string[] = [];
+    const minutes = input.counts?.minutesLeft ?? 0;
+    const plain = total === 0 ? 'A free day' : open.length === 0 ? 'Done for today' : `${open.length} left today${minutes ? ` · about ${minutes} min` : ''}`;
+    const main = (input.line ?? '').trim() || plain;
+
+    // The line: as large as fits in three balanced lines.
+    const usable = W * 0.8;
+    let size = Math.round(W * 0.066);
+    let lines: string[] = [];
+    for (; size >= Math.round(W * 0.046); size -= Math.max(1, Math.round(W * 0.003))) {
+        lines = wrapText(main, size, 600, usable, 99, -size * 0.015);
+        if (lines.length <= 3) break;
+    }
+    lines = lines.slice(0, 3);
+    const lh = Math.round(size * 1.2);
+    const blockH = lines.length * lh;
+    let y = cy - blockH / 2;
+
+    // The day's mark: a thin arc over the line, lit as far as the day's things are done.
+    if ((input.dayMark ?? 'arc') === 'arc' && total > 0) {
+        const r = W * 0.16;
+        // The arc's ends sit half a radius below its top: keep them clear of the first line.
+        const ay = y - r * 0.5 - W * 0.05;
+        const stroke = Math.max(3, Math.round(W * 0.008));
+        const a0 = -60;
+        const a1 = 60;
+        const share = (total - open.length) / total;
+        words.push(`<path d="${arc(cx, ay + r, r, a0, a1)}" fill="none" stroke="${ink.dotOff}" stroke-width="${stroke}" stroke-linecap="round"/>`);
+        if (share > 0) words.push(`<path d="${arc(cx, ay + r, r, a0, Math.max(a0 + 1, a0 + (a1 - a0) * share))}" fill="none" stroke="${ink.head}" stroke-width="${stroke}" stroke-linecap="round"/>`);
+    }
+    lines.forEach((line, i) => {
+        words.push(`<text x="${cx}" y="${r1(y + (i + 1) * lh - lh * 0.24)}" text-anchor="middle" ${font} font-size="${size}" font-weight="600" letter-spacing="${r1(-size * 0.015)}" fill="${ink.head}">${esc(line)}</text>`);
+    });
+    y += blockH + W * 0.075;
+
+    // Under it, small: the day in numbers with tiny icons (only when the line isn't already that).
+    const c = input.counts;
+    const chips = c && main !== plain
+        ? ([
+              ['review', c.reviews],
+              ['focus', c.focus],
+              ['task', c.tasks],
+          ] as const).filter(([, n]) => n.total > 0)
+        : [];
+    if (chips.length) {
+        const iconSize = Math.round(W * 0.036);
+        const textSize = Math.round(W * 0.031);
+        const inner = W * 0.016;
+        const between = W * 0.06;
+        const parts = chips.map(([kind, n]) => ({ kind, text: n.done === n.total ? 'done' : `${n.total - n.done} left`, all: n.done === n.total }));
+        if (minutes) parts.push({ kind: 'review' as const, text: `about ${minutes} min`, all: false });
+        const widths = parts.map((p, i) => (i === parts.length - 1 && minutes ? 0 : iconSize + inner) + textWidth(p.text, textSize, 500));
+        let x = cx - (widths.reduce((a, b) => a + b, 0) + between * (parts.length - 1)) / 2;
+        parts.forEach((p, i) => {
+            const isMinutes = i === parts.length - 1 && minutes > 0;
+            if (!isMinutes) words.push(icon(p.kind, x, y - iconSize / 2, iconSize, p.all ? ink.head : ink.body));
+            words.push(`<text x="${r1(x + (isMinutes ? 0 : iconSize + inner))}" y="${r1(y + textSize * 0.36)}" ${font} font-size="${textSize}" font-weight="500" fill="${p.all ? ink.head : ink.body}">${esc(p.text)}</text>`);
+            x += (widths[i] ?? 0) + between;
+        });
+        y += W * 0.075;
+    }
+
+    // The goal's days, quiet.
+    const g = input.goal;
+    if (g && y < H * 0.76) {
+        const size2 = Math.round(W * 0.029);
+        const flag = Math.round(W * 0.03);
+        const days = g.daysLeft >= 0 ? `${plural(g.daysLeft, 'day')} to ${g.title}` : `${g.title}: past its date`;
+        const text = fit(days, size2, 500, W * 0.74);
+        const tw = textWidth(text, size2, 500) + flag + W * 0.016;
+        const x0 = cx - tw / 2;
+        words.push(icon('goal', x0, y - flag * 0.78, flag, ink.meta));
+        words.push(`<text x="${r1(x0 + flag + W * 0.016)}" y="${r1(y)}" ${font} font-size="${size2}" font-weight="500" fill="${ink.meta}">${esc(text)}</text>`);
+    }
+
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><defs>${defs.join('')}</defs>${art.join('')}${words.join('')}</svg>`;
+}
+
+/** The dial of the day (11-15 night): kept for the gallery's comparison, not drawn for the phone any more. */
+export function drawDial(input: WallpaperInput, width: number, height: number, theme: Theme): string {
     const W = width;
     const H = height;
     const sky = SKIES[input.state][theme];

@@ -6,10 +6,12 @@ import cron from 'node-cron';
 import type { BuddyChunk } from '@prisma/client';
 import { prisma } from '../../db/prisma';
 import { isAiConfigured } from '../claude/client';
-import { loadLearningContext } from '../learningDb/common';
+import { loadLearningContext, toDbDay } from '../learningDb/common';
 import { bumpDay } from './capture.service';
 import { digestChunk } from './digest';
 import { buddyMaySpend } from './spend';
+import { runNight, type BuddyDayJson } from './think';
+import { pulseIfDue } from './pulse';
 
 export const CHUNK_MAX_AGE_MS = 48 * 3600_000;
 export const CHUNK_TRIES = 3;
@@ -73,7 +75,61 @@ export async function drainBuddyQueue(now: Date = new Date(), limit = PER_TICK):
     return result;
 }
 
+// ─── The nights ─────────────────────────────────────────────────────────────
+
+const NIGHT_HOUR = 4;
+const NIGHT_TRIES = 3;
+const nightTries = new Map<string, number>();
+
+const hourIn = (tz: string, now: Date) => Number(new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour: '2-digit', hour12: false }).format(now)) % 24;
+
+/**
+ * The night for one user when it is due: after 04:00 his time, once per local day (claimed first, so
+ * two passes never run it twice); `fresh` runs it again today (his button). Null when it isn't due
+ * or the buddy may not spend.
+ */
+export async function nightIfDue(userId: string, now: Date = new Date(), opts: { fresh?: boolean } = {}): Promise<BuddyDayJson | null> {
+    const ctx = await loadLearningContext(userId, now);
+    if (!opts.fresh && hourIn(ctx.tz, now) < NIGHT_HOUR) return null;
+    if ((await buddyMaySpend(userId, now)) !== 'ok') return null;
+    const day = toDbDay(ctx.today);
+    if (!opts.fresh) {
+        const claimed = await prisma.buddyState.updateMany({ where: { userId, OR: [{ lastNightDay: null }, { lastNightDay: { not: day } }] }, data: { lastNightDay: day } });
+        if (claimed.count === 0) return null;
+    }
+    const key = `${userId}:${ctx.today}`;
+    try {
+        const r = await runNight(userId, now);
+        nightTries.delete(key);
+        return r;
+    } catch (err) {
+        const tries = (nightTries.get(key) ?? 0) + 1;
+        nightTries.set(key, tries);
+        // A failed night may try again on the next pass, three times a day at most.
+        if (!opts.fresh && tries < NIGHT_TRIES) await prisma.buddyState.updateMany({ where: { userId, lastNightDay: day }, data: { lastNightDay: null } });
+        throw err;
+    }
+}
+
+/** Every user whose buddy is on gets the night when it is due, and the pulses at 12:00 and 18:00 when something new arrived. */
+export async function runDueNights(now: Date = new Date()): Promise<{ ran: number; failed: number }> {
+    const users = await prisma.buddyState.findMany({ where: { enabled: true, paused: false }, select: { userId: true } });
+    let ran = 0;
+    let failed = 0;
+    for (const { userId } of users) {
+        try {
+            if (await nightIfDue(userId, now)) ran++;
+            else if ((await buddyMaySpend(userId, now)) === 'ok' && (await pulseIfDue(userId, now)).ran) ran++;
+        } catch (err) {
+            failed++;
+            console.error(`[buddy] a step failed for a user: ${err instanceof Error ? err.message : String(err)}`);
+        }
+    }
+    return { ran, failed };
+}
+
 let running = false;
+let nightsRunning = false;
 
 /** Every minute (not in tests; BUDDY_WORKER=off turns it off). */
 export function startBuddyWorker(): void {
@@ -90,4 +146,18 @@ export function startBuddyWorker(): void {
             running = false;
         }
     });
+    // The nights: every 15 minutes, for whoever's 04:00 has passed (a laptop that was off catches up).
+    const nights = async () => {
+        if (nightsRunning || !isAiConfigured()) return;
+        nightsRunning = true;
+        try {
+            const r = await runDueNights();
+            if (r.ran || r.failed) console.log(`[buddy] nights: ${r.ran} ran, ${r.failed} failed`);
+        } catch (err) {
+            console.error('[buddy] nights pass failed:', err);
+        } finally {
+            nightsRunning = false;
+        }
+    };
+    cron.schedule('*/15 * * * *', () => void nights());
 }
