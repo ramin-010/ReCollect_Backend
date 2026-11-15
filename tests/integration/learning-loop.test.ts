@@ -271,6 +271,17 @@ describe('GET /api/today: plan', () => {
         expect(plan.doneToday.map((r: any) => r._id).sort()).toEqual([...ids].sort());
         expect(plan.doneToday[0]).toMatchObject({ status: 'done', canUndo: true, minutes: 8 });
     });
+
+    it('nextDue: the next day with something to revise after today and how much; null when nothing is scheduled', async () => {
+        const user = await createLearner('Asia/Kolkata', SEEN);
+        expect((await api(user).get('/api/today')).body.data.nextDue).toBeNull();
+        await item(user.id, inDays(3));
+        await item(user.id, inDays(3));
+        await item(user.id, inDays(5));
+        const today = (await api(user).get('/api/today')).body.data;
+        expect(today.plan.planned).toHaveLength(0);
+        expect(today.nextDue).toEqual({ day: inDays(3), count: 2 });
+    });
 });
 
 // ─── §3–5 focus, goals, rhythm in GET /api/today ───────────────────────

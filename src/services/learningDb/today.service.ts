@@ -30,6 +30,7 @@ import {
     planTriage,
     type Revision,
 } from '../learning';
+import type { DayString } from '../learning/time';
 import {
     serializeCapture,
     serializeDebrief,
@@ -279,7 +280,20 @@ export async function getToday(userId: string, now: Date = new Date()) {
         },
         quickNotes: quickNotes.map(serializeQuickNote),
         weeklyReview: { isReviewDay: reviewDay, goals: weeklyGoals.map(serializeTodo) },
+        nextDue: await nextDueAfter(userId, today),
     };
+}
+
+/** The next day with something to revise after today, and how much: Home's empty day says when it comes back. */
+async function nextDueAfter(userId: string, today: DayString): Promise<{ day: DayString; count: number } | null> {
+    const next = await prisma.revision.findFirst({
+        where: { userId, status: 'pending', scheduledFor: { gt: toDbDay(today) } },
+        orderBy: { scheduledFor: 'asc' },
+        select: { scheduledFor: true },
+    });
+    if (!next) return null;
+    const count = await prisma.revision.count({ where: { userId, status: 'pending', scheduledFor: next.scheduledFor } });
+    return { day: fromDbDay(next.scheduledFor), count };
 }
 
 /** Ids of done revisions that have a LATER cycle done too (their undo is blocked: LATER_CYCLE_DONE). */

@@ -90,8 +90,9 @@ function suggestionFor(
       if (lastWeek) return `${plural(remaining, 'milestone')} to go before the deadline.`;
       return `About ${milestoneRateText(required)} gets you there.`;
     case 'ahead':
-      if (lastWeek) return `Ahead of plan. ${plural(remaining, 'more milestone')} by the deadline keeps you on track.`;
-      return `Ahead of plan. ${milestoneRateText(required, true)} keeps you on track.`;
+      // The status already says "ahead": the suggestion is only the next step (it never repeats it).
+      if (lastWeek) return `${plural(remaining, 'more milestone')} by the deadline keeps you on track.`;
+      return `${milestoneRateText(required, true)} keeps you on track.`;
     case 'on_track':
     case 'behind':
     default:

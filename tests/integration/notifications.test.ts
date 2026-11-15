@@ -297,6 +297,26 @@ describe('POST /api/notifications/:id/accept', () => {
         expect(inbox.body.data[0]).toMatchObject({ type: 'workspace_join_approved', sender: { _id: admin.id, name: 'Admin One' } });
     });
 
+    it('workspace_join_request: only someone who is an admin now can approve (demoted or removed: 403, nothing changes)', async () => {
+        const owner = await createTestUser();
+        const former = await createTestUser();
+        const requester = await createTestUser();
+        const ws = await prisma.workspace.create({ data: { name: 'Demoted WS', ownerId: owner.id } });
+        await prisma.workspaceMember.create({ data: { workspaceId: ws.id, userId: former.id, role: 'admin' } });
+        const n = await notify(former.id, { senderId: requester.id, category: 'actionable', type: 'workspace_join_request', metadata: { workspaceId: ws.id } });
+        await prisma.workspaceMember.update({ where: { workspaceId_userId: { workspaceId: ws.id, userId: former.id } }, data: { role: 'member' } });
+
+        const res = await request(app).post(`/api/notifications/${n.id}/accept`).set('Cookie', authCookie(former));
+        expect(res.status).toBe(403);
+        expect(res.body).toEqual({ message: 'Only an admin of this workspace can approve a request to join.' });
+        expect(await prisma.workspaceMember.count({ where: { workspaceId: ws.id, userId: requester.id } })).toBe(0);
+        expect(await prisma.notification.findUniqueOrThrow({ where: { id: n.id } })).toMatchObject({ status: 'pending' });
+
+        // Removed from the workspace altogether: the same.
+        await prisma.workspaceMember.delete({ where: { workspaceId_userId: { workspaceId: ws.id, userId: former.id } } });
+        expect((await request(app).post(`/api/notifications/${n.id}/accept`).set('Cookie', authCookie(former))).status).toBe(403);
+    });
+
     it('workspace_join_request without a sender is 400', async () => {
         const admin = await createTestUser();
         const ws = await prisma.workspace.create({ data: { name: 'No sender WS', ownerId: admin.id } });

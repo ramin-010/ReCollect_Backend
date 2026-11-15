@@ -296,7 +296,7 @@ describe('PATCH /api/workspace-todos/:id', () => {
         expect(await prisma.reminder.count({ where: { todoId: todo.id } })).toBe(0);
     });
 
-    it('permissions: viewers and outsiders are refused; the creator can always edit', async () => {
+    it('permissions: viewers and outsiders are refused; the role decides, the creator included', async () => {
         const { workspace, owner, member, viewer, outsider } = await createRoleFixture();
         const todo = await createWorkspaceTodoRow(workspace, owner);
         const patch = (user: { id: string }, id = todo.id) =>
@@ -314,13 +314,19 @@ describe('PATCH /api/workspace-todos/:id', () => {
         expect(asOutsider.status).toBe(403);
         expect(asOutsider.body).toEqual({ message: "You don't have permission to update this workspace task" });
 
-        // The creator keeps edit rights even after being demoted to viewer (old rule).
+        // The creator edits while a member; demoted to viewer, no longer (the Mongo-era rule let a
+        // creator always edit; fixed 11-15); removed from the workspace, not either.
         const own = await createWorkspaceTodoRow(workspace, member);
+        expect((await patch(member, own.id)).status).toBe(200);
         await prisma.workspaceMember.update({
             where: { workspaceId_userId: { workspaceId: workspace.id, userId: member.id } },
             data: { role: 'viewer' },
         });
-        expect((await patch(member, own.id)).status).toBe(200);
+        const demoted = await patch(member, own.id);
+        expect(demoted.status).toBe(403);
+        expect(demoted.body).toEqual({ message: 'Viewers cannot edit tasks in this workspace' });
+        await prisma.workspaceMember.delete({ where: { workspaceId_userId: { workspaceId: workspace.id, userId: member.id } } });
+        expect((await patch(member, own.id)).status).toBe(403);
 
         const missing = await patch(owner, 'missing-task');
         expect(missing.status).toBe(404);

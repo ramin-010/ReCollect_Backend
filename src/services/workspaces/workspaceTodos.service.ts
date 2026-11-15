@@ -6,8 +6,9 @@
 // resolution and reminder rows.
 //
 // Behaviour kept from the Mongo controller:
-//   - who may edit: the task's creator, else workspace owner/admins/members (viewers get their own
-//     403 message); non-workspace tasks: creator or assignee. Delete: owner/admin/member for
+//   - who may edit: workspace owner/admins/members by their role now, the creator included (a
+//     demoted creator no longer edits; fixed 11-15; viewers get their own 403 message);
+//     non-workspace tasks: creator or assignee. Delete: owner/admin/member for
 //     workspace tasks, the creator otherwise.
 //   - create defaults: status 'pending', priority 'medium'; visibility is always 'workspace'.
 //   - update: only title, description, status, priority, dueDate, reminderDate, subtasks, tags,
@@ -287,9 +288,9 @@ export async function createWorkspaceTodo(actor: TaskActor, body: Body, files: u
 const NO_UPDATE_PERMISSION = "You don't have permission to update this workspace task";
 
 /**
- * PATCH /api/workspace-todos/:id. The creator can always edit; otherwise workspace owner/admins/
- * members (viewers: 'Viewers cannot edit tasks in this workspace'); for a non-workspace task, an
- * assignee. Note: any task id is accepted here, as before (not only visibility 'workspace').
+ * PATCH /api/workspace-todos/:id. A workspace task: its owner/admins/members, by their role now
+ * (viewers: 'Viewers cannot edit tasks in this workspace'; a demoted or removed creator too). A
+ * non-workspace task: its creator or an assignee. Any task id is accepted here, as before.
  */
 export async function updateWorkspaceTodo(
     actor: TaskActor,
@@ -319,14 +320,14 @@ export async function updateWorkspaceTodo(
 
         const existingAssignees = existing.assignees.map((a) => a.userId);
         const workspaceTask = isWorkspaceTask(existing);
-        if (existing.userId !== actor.id) {
-            if (workspaceTask) {
-                const access = workspaceTaskAccess(await roleInWorkspace(existing.workspaceId!, actor.id, tx));
-                if (access === 'viewer') throw new ErrorResponse(403, 'Viewers cannot edit tasks in this workspace');
-                if (access === 'denied') throw new ErrorResponse(403, NO_UPDATE_PERMISSION);
-            } else if (!existingAssignees.includes(actor.id)) {
-                throw new ErrorResponse(403, NO_UPDATE_PERMISSION);
-            }
+        if (workspaceTask) {
+            // The role decides, the creator's included: a creator made a viewer, or removed from the
+            // workspace, can no longer change the task (the Mongo handler let a creator always edit).
+            const access = workspaceTaskAccess(await roleInWorkspace(existing.workspaceId!, actor.id, tx));
+            if (access === 'viewer') throw new ErrorResponse(403, 'Viewers cannot edit tasks in this workspace');
+            if (access === 'denied') throw new ErrorResponse(403, NO_UPDATE_PERMISSION);
+        } else if (existing.userId !== actor.id && !existingAssignees.includes(actor.id)) {
+            throw new ErrorResponse(403, NO_UPDATE_PERMISSION);
         }
 
         // 1. Parse and validate everything before writing anything.

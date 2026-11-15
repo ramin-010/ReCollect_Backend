@@ -9,6 +9,7 @@ import { prisma, type DbClient } from '../../db/prisma';
 import { isRecordNotFound } from '../../db/errors';
 import { notificationSenderInclude } from '../../db/serializers/notification';
 import ErrorResponse from '../../utils/errorResponse';
+import { canManageInviteLinks, getWorkspaceRoleFromMembers } from '../workspaces/workspacePermissions';
 
 export const NOTIFICATION_PAGE_MAX = 50;
 export const NOTIFICATION_PAGE_DEFAULT = 20;
@@ -206,8 +207,16 @@ export async function acceptNotification(userId: string, notificationId: string,
                 const requesterId = notification.senderId;
                 if (!workspaceId || !requesterId) throw new ErrorResponse(400, 'Invalid notification data');
 
-                const workspace = await tx.workspace.findUnique({ where: { id: workspaceId }, select: { id: true, name: true } });
+                const workspace = await tx.workspace.findUnique({
+                    where: { id: workspaceId },
+                    select: { id: true, name: true, ownerId: true, members: { where: { userId }, select: { userId: true, role: true } } },
+                });
                 if (!workspace) throw new ErrorResponse(404, 'Workspace no longer exists');
+                // Still an admin now? The request went to the admins of its day; one demoted or
+                // removed since can't let anyone in (the Mongo handler didn't check).
+                if (!canManageInviteLinks(getWorkspaceRoleFromMembers(workspace.ownerId, workspace.members, userId))) {
+                    throw new ErrorResponse(403, 'Only an admin of this workspace can approve a request to join.');
+                }
 
                 if (await addWorkspaceMemberIfMissing(workspace.id, requesterId, 'member', now, tx)) {
                     await tx.activityLog.create({

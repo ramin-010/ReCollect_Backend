@@ -80,7 +80,7 @@ describe('goalForecast: status', () => {
   it('ahead: pace at least 1.25 × the required pace', () => {
     const f = goalForecast(input({ done: 4, total: 6, createdAgo: 14, daysLeft: 70 }));
     expect([f.status, f.pacePerWeek, f.requiredPerWeek]).toEqual(['ahead', 2, 0.2]);
-    expect(f.suggestion).toBe('Ahead of plan. 1 more milestone every 5 weeks keeps you on track.');
+    expect(f.suggestion).toBe('1 more milestone every 5 weeks keeps you on track.'); // the status says "ahead"; no repeat
   });
 
   it('the last week talks about the deadline, not a weekly rate', () => {
