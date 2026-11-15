@@ -201,13 +201,32 @@ function afterTools(messages: MessageParam[]): BetaMessage {
     return answer(parts.join('\n\n') || 'Done.');
 }
 
+async function fakeMessage(params: BetaCreateParams): Promise<BetaMessage> {
+    await new Promise((r) => setTimeout(r, DELAY_MS));
+    const { messages, system } = params as unknown as { messages: MessageParam[]; system?: unknown };
+    const last = messages[messages.length - 1];
+    const afterToolResults = Array.isArray(last?.content) && (last.content as Block[]).some((b) => b.type === 'tool_result');
+    return afterToolResults ? afterTools(messages) : firstStep(typeof last?.content === 'string' ? last.content : '', system);
+}
+
+/** The fake's words arrive one at a time, as the real model's do, so streaming and Stop are checked for free. */
+const WORD_MS = 45;
+
 const fakeClient: AiClient = {
-    async createMessage(params: BetaCreateParams): Promise<BetaMessage> {
-        await new Promise((r) => setTimeout(r, DELAY_MS));
-        const { messages, system } = params as unknown as { messages: MessageParam[]; system?: unknown };
-        const last = messages[messages.length - 1];
-        const afterToolResults = Array.isArray(last?.content) && (last.content as Block[]).some((b) => b.type === 'tool_result');
-        return afterToolResults ? afterTools(messages) : firstStep(typeof last?.content === 'string' ? last.content : '', system);
+    createMessage: fakeMessage,
+    async streamMessage(params, { onText, signal }) {
+        const whole = await fakeMessage(params);
+        if (signal?.aborted) throw new Error('Request was aborted.');
+        const text = whole.content.flatMap((b) => (b.type === 'text' ? [b.text] : [])).join('');
+        let sent = '';
+        for (const word of text.match(/\S+\s*/g) ?? []) {
+            await new Promise((r) => setTimeout(r, WORD_MS));
+            // Stopped part way: what had arrived, and no tool runs.
+            if (signal?.aborted) return { ...whole, content: sent ? [{ type: 'text', text: sent }] : [], stop_reason: 'end_turn' } as unknown as BetaMessage;
+            sent += word;
+            onText?.(word);
+        }
+        return whole;
     },
     createBatch: () => Promise.reject(new Error('The fake model has no batches')),
     retrieveBatch: () => Promise.reject(new Error('The fake model has no batches')),

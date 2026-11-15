@@ -39,14 +39,31 @@ const messageSchema = z.object({
 });
 
 /**
+ * The turns running now, by user and thread, so his Stop can reach them. One process holds them
+ * (the backend runs as a single instance: live docs and the jobs need that too).
+ */
+const running = new Map<string, AbortController>();
+const runKey = (userId: string, threadId: string) => `${userId}:${threadId}`;
+
+/** POST /api/assistant/threads/:id/stop -> { stopped }: ends that thread's running turn (its stream then sends `done` with stopped: "stopped"). */
+export const stopTurnHandler = handler(async (req, res) => {
+    const turn = running.get(runKey(requireUser(req).id, param(req, 'id')));
+    turn?.abort();
+    ok(res, { stopped: Boolean(turn) });
+});
+
+/**
  * POST /api/assistant/messages { threadId?, text, docId?, focus? }: his message, then the manager's
- * turn as a stream (text/event-stream): `thread` { _id, title, docId }, a `tool` per tool call as
- * it finishes ({ name, level, input, result, ok, editId }), then `done` { message, stopped, rounds },
+ * turn as a stream (text/event-stream): `thread` { _id, title, docId }, `delta` { text, round } as
+ * the model's words arrive (a new round starts its words again), a `tool` per tool call as it
+ * finishes ({ name, level, input, result, ok, editId }), then `done` { message, stopped, rounds },
  * or `error` { message } when something broke after the stream began. With a docId the doc (as it
  * is now) and his focus go to the model instead of the brief; a doc's thread stays on that doc.
+ * POST /threads/:id/stop ends the turn (stopped: "stopped"); leaving the page does not.
  */
 export const sendMessageHandler: RequestHandler = async (req, res, next) => {
     let streaming = false;
+    let key: string | null = null;
     // He may leave mid-turn: the turn still finishes and is kept; only the writes stop.
     const send = (event: string, data: unknown) => {
         if (!res.destroyed && !res.writableEnded) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
@@ -66,14 +83,19 @@ export const sendMessageHandler: RequestHandler = async (req, res, next) => {
         send('thread', { _id: thread._id, title: thread.title, docId: thread.docId });
         // The catalogue calls this same server back, at the port the request came in on.
         const baseUrl = `http://localhost:${req.socket.localPort}`;
-        // Each tool as it finishes, with its card's words when it left one waiting (sent in order).
+        // The words as they arrive, each tool as it finishes (with its card's words when it left one
+        // waiting): all in the order they happened.
         let sent = Promise.resolve();
         const onEvent = (e: AssistantEvent) => {
-            if (e.type !== 'tool') return;
-            sent = sent.then(async () => send('tool', (await toolsWithState(user.id, [e.tool]))[0]));
+            if (e.type === 'delta') sent = sent.then(() => send('delta', { text: e.text, round: e.round }));
+            else if (e.type === 'tool') sent = sent.then(async () => send('tool', (await toolsWithState(user.id, [e.tool]))[0]));
         };
         const doc = inDoc ? { docId: inDoc.docId, text: `${docRules(inDoc.docId)}\n\n${inDoc.text}` } : undefined;
-        const turn = await runAssistant({ userId: user.id, baseUrl, history, text, onEvent, ...(doc ? { doc } : {}) });
+        const stop = new AbortController();
+        key = runKey(user.id, thread._id);
+        running.get(key)?.abort();
+        running.set(key, stop);
+        const turn = await runAssistant({ userId: user.id, baseUrl, history, text, onEvent, signal: stop.signal, ...(doc ? { doc } : {}) });
         await sent;
         const message = await addMessage(user.id, thread._id, { role: 'assistant', text: turn.text, tools: turn.tools, usage: turn.usage, costUsd: turn.costUsd });
         send('done', { message, stopped: turn.stopped, rounds: turn.rounds });
@@ -82,5 +104,7 @@ export const sendMessageHandler: RequestHandler = async (req, res, next) => {
         if (!streaming) return next(err);
         send('error', { message: err instanceof Error ? err.message : 'Something went wrong' });
         res.end();
+    } finally {
+        if (key) running.delete(key);
     }
 };

@@ -20,10 +20,23 @@ export type BatchRequest = { custom_id: string; params: CreateParams };
 export type MessageBatch = Anthropic.Messages.Batches.MessageBatch;
 export type BatchResultLine = Anthropic.Messages.Batches.MessageBatchIndividualResponse;
 
+export interface StreamOptions {
+    /** Each piece of the answer's text as it arrives. */
+    onText?: (delta: string) => void;
+    /** His Stop: the call ends at once; what had arrived is kept. */
+    signal?: AbortSignal;
+}
+
 /** What the AI features need from the Claude API. */
 export interface AiClient {
     /** One Messages API call (beta surface: refusal fallbacks). */
     createMessage(params: BetaCreateParams): Promise<BetaMessage>;
+    /**
+     * The same call, streamed: text pieces go to `onText` as they arrive; resolves with the whole
+     * message. Stopped through `signal`, it resolves with what had arrived (its usage so far), or
+     * rejects when nothing had. Optional: a client without it is called with createMessage.
+     */
+    streamMessage?(params: BetaCreateParams, options: StreamOptions): Promise<BetaMessage>;
     createBatch(requests: BatchRequest[]): Promise<MessageBatch>;
     retrieveBatch(batchId: string): Promise<MessageBatch>;
     /** The results of an ended batch, in any order (match them by custom_id). */
@@ -48,6 +61,19 @@ function anthropicClient(apiKey: string): AiClient {
     const sdk = new Anthropic({ apiKey, maxRetries: 2, timeout: REQUEST_TIMEOUT_MS });
     return {
         createMessage: (params) => sdk.beta.messages.create(params),
+        // Tool inputs are not streamed eagerly: nothing shows a tool's input before it runs, so the
+        // API keeps buffering and checking each one (the claude-api skill's eager-input option is off).
+        streamMessage: async (params, { onText, signal }) => {
+            const stream = sdk.beta.messages.stream(params as never, signal ? { signal } : undefined);
+            if (onText) stream.on('text', (delta) => onText(delta));
+            try {
+                return await stream.finalMessage();
+            } catch (err) {
+                const partial = stream.currentMessage;
+                if (signal?.aborted && partial) return partial;
+                throw err;
+            }
+        },
         createBatch: (requests) => sdk.messages.batches.create({ requests }),
         retrieveBatch: (batchId) => sdk.messages.batches.retrieve(batchId),
         batchResults: (batchId) => sdk.messages.batches.results(batchId),
