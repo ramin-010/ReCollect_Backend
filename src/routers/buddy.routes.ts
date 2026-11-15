@@ -30,5 +30,7 @@ router.get('/today', cookieOnly, buddy.todayHandler);
 // B4: his words straight in, his thumbs (the app; the phone app's ambient token too).
 router.post('/tell', requireScope('ambient'), buddy.tellHandler);
 router.post('/feedback', requireScope('ambient'), buddy.feedbackHandler);
+// B6: a routine's switch.
+router.patch('/routines/:id', cookieOnly, buddy.routineHandler);
 
 export default router;

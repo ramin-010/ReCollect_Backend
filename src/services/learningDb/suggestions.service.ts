@@ -22,6 +22,7 @@ import { addWeekTarget, reviewDue, weekTargets, type WeekTargetInput } from './w
 import { createTask } from '../tasks/tasks.service';
 import { createCapture } from './items.service';
 import { createDecision } from './decisions.service';
+import { createRoutine, maybeOfferRoutine } from '../buddy/routines';
 
 export const SUGGESTION_KINDS = ['week_target', 'focus_line', 'profile_edit', 'action', 'task', 'note', 'decision', 'routine'] as const satisfies readonly SuggestionKind[];
 /** Pending suggestions one agent may have waiting at once. */
@@ -167,8 +168,11 @@ const ACCEPT: Record<SuggestionKind, Accept | null> = {
         await createDecision(userId, { title: String(p['title'] ?? ''), why: str(p['why']) ?? 'From your chat', lookAgain: '30d', project: str(p['project']) ?? null }, now);
         return 'Logged in your decisions (look again in 30 days)';
     },
-    // B6 (routines) gives it an action; until then it can't be accepted.
-    routine: null,
+    // B6: his standing yes makes a routine (listed on /you with a switch).
+    routine: async (userId, p) => {
+        await createRoutine(userId, String(p['routine'] ?? ''));
+        return 'It does this by itself now (About you lists it, with a switch)';
+    },
 };
 
 async function pendingOf(userId: string, id: string): Promise<Suggestion> {
@@ -186,6 +190,8 @@ export async function acceptSuggestion(userId: string, id: string, now: Date = n
     const result = await accept(userId, (s.payload ?? {}) as Record<string, unknown>, now);
     const { count } = await prisma.suggestion.updateMany({ where: { id, status: 'pending' }, data: { status: 'accepted', decidedAt: now } });
     if (count === 0) throw conflict('This suggestion was already decided', 'ALREADY_DECIDED');
+    // The buddy's third item of a kind in 30 days brings its offer to do it by itself (B6), once.
+    if (s.proposedBy === 'buddy') await maybeOfferRoutine(userId, s.kind, now);
     const json = serializeSuggestion(await prisma.suggestion.findUniqueOrThrow({ where: { id } }));
     return typeof result === 'string' ? { ...json, result } : json;
 }

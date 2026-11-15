@@ -20,6 +20,7 @@ import { LASTING_KINDS, MEMORY_KINDS, cleanNoteText, memoryKey, normalizeTags } 
 import { buddySignals, plainLine, type BuddySignals } from './signals';
 import { scrubSecrets } from './scrub';
 import { buddyDayOf } from './voice';
+import { runRoutines } from './routines';
 
 export const THINK_MODEL = process.env['BUDDY_THINK_MODEL'] || 'claude-opus-5-5';
 export const CHECK_MODEL = process.env['BUDDY_CHECK_MODEL'] || 'claude-haiku-5-5';
@@ -134,6 +135,8 @@ export interface NightInput {
     notebook: string | null;
     said: Array<{ day: string; what: string; text: string }>;
     timezone: string;
+    /** What his routines did by themselves just now (B6): the note names them. */
+    doneForHim?: string[];
 }
 
 export function nightTask(input: NightInput): string {
@@ -150,6 +153,7 @@ export function nightTask(input: NightInput): string {
         `<his_notes>\n${input.hisNotes.map((n) => `"${n.title}": ${n.text}`).join('\n') || 'none'}\n</his_notes>`,
         `<notebook>\n${input.notebook ?? 'empty: this is your first night'}\n</notebook>`,
         `<said>\n${input.said.map((x) => `${x.day} ${x.what}: ${x.text}`).join('\n') || 'nothing yet'}\n</said>`,
+        ...(input.doneForHim?.length ? [`<done_for_him>\nBy his standing yes you just: ${input.doneForHim.join('; ')}. Name it in the note.\n</done_for_him>`] : []),
         'Write tonight’s step.',
     ].join('\n\n');
 }
@@ -465,7 +469,9 @@ export interface BuddyDayJson {
 
 /** The night for one user (the caller has checked the buddy may spend and claimed the day). */
 export async function runNight(userId: string, now: Date = new Date()): Promise<BuddyDayJson> {
-    const input = await loadNightInput(userId, now);
+    // His routines run first, so the night can name what they did (B6).
+    const doneForHim = await runRoutines(userId, now);
+    const input = { ...(await loadNightInput(userId, now)), doneForHim };
     const { today } = input;
     let cost = 0;
     const message = await callClaude(withRefusalFallbacks(nightRequest(input)), 'buddy night');
@@ -589,6 +595,10 @@ const KIND_WEIGHT: Partial<Record<MemoryKind, number>> = { pattern: 1.2, thread:
 
 /** States quiet for 14 days and threads for 45 fade; past 120 working memories, the lowest scored fade. Never lasting, pinned or his own. */
 export async function fadeMemories(userId: string, today: DayString): Promise<number> {
+    // A working memory seen in three different months is lasting now (§3.2): never faded by time again.
+    const recurring = await prisma.memory.findMany({ where: { userId, status: 'active', lasting: false }, select: { id: true, monthsSeen: true } });
+    const promote = recurring.filter((m) => new Set(m.monthsSeen).size >= 3).map((m) => m.id);
+    if (promote.length) await prisma.memory.updateMany({ where: { id: { in: promote } }, data: { lasting: true } });
     const keep = { lasting: false, pinned: false, byUser: false } as const;
     const a = await prisma.memory.updateMany({ where: { userId, status: 'active', kind: 'state', lastSeenDay: { lt: toDbDay(addDays(today, -STATE_QUIET_DAYS)) }, ...keep }, data: { status: 'faded' } });
     const b = await prisma.memory.updateMany({ where: { userId, status: 'active', kind: 'thread', lastSeenDay: { lt: toDbDay(addDays(today, -THREAD_QUIET_DAYS)) }, ...keep }, data: { status: 'faded' } });

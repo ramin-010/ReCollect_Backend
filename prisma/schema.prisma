@@ -163,6 +163,7 @@ model User {
   buddyDays    BuddyCaptureDay[]
   buddySteps   BuddyDay[]
   buddyThumbs  BuddyFeedback[]
+  routines     Routine[]
 
   @@index([googleId])
 }
@@ -2001,4 +2002,22 @@ model BuddyFeedback {
   createdAt  DateTime @default(now())
 
   @@index([userId, createdAt])
+}
+
+/// Something the buddy does by itself after his standing yes (BUDDY_MEMORY_PLAN §3.6, B6): offered once
+/// after he accepted the same kind of item three times in 30 days; each run is an agent edit with Undo.
+model Routine {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// auto_task: the tasks he mentions with a day are added by themselves.
+  kind       String    @db.VarChar(40)
+  title      String    @db.VarChar(160)
+  params     Json      @default("{}")
+  enabled    Boolean   @default(true)
+  runs       Int       @default(0)
+  lastRunDay DateTime? @db.Date
+  createdAt  DateTime  @default(now())
+
+  @@unique([userId, kind])
 }

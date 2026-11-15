@@ -34,6 +34,15 @@ describe('the long run', () => {
         expect(await prisma.memory.count({ where: { userId: user.id, status: 'faded', seenCount: 5 } })).toBe(0);
     });
 
+    it('a working memory seen in three different months becomes lasting, and then never fades by time', async () => {
+        const user = await createTestUser();
+        const recurring = await prisma.memory.create({ data: { userId: user.id, text: 'Money worries come back every few weeks', kind: 'state', lasting: false, source: 'buddy', seenCount: 4, firstSeenDay: day('2026-08-03'), lastSeenDay: day('2026-10-20'), monthsSeen: ['2026-08', '2026-09', '2026-10'] } });
+        const once = await prisma.memory.create({ data: { userId: user.id, text: 'Tired this week', kind: 'state', lasting: false, source: 'buddy', seenCount: 1, firstSeenDay: day('2026-10-20'), lastSeenDay: day('2026-10-20'), monthsSeen: ['2026-10'] } });
+        await fadeMemories(user.id, '2026-11-16' as never);
+        expect(await prisma.memory.findUniqueOrThrow({ where: { id: recurring.id } })).toMatchObject({ lasting: true, status: 'active' });
+        expect(await prisma.memory.findUniqueOrThrow({ where: { id: once.id } })).toMatchObject({ lasting: false, status: 'faded' });
+    });
+
     it('a faded memory seen again is active, with its first day kept', async () => {
         const user = await createTestUser();
         const m = await prisma.memory.create({ data: { userId: user.id, text: 'Runs in the evenings', kind: 'pattern', lasting: false, status: 'faded', source: 'agent', seenCount: 2, firstSeenDay: day('2026-03-01'), lastSeenDay: day('2026-05-01') } });
