@@ -9,6 +9,7 @@ import { authOnce, cookieOnly, requireScope } from '../middlwares/scopes';
 import { idempotency } from '../middlwares/idempotency';
 import { requireUser } from '../middlwares/auth';
 import { docSharingForAgent } from '../services/docs/docSharing.service';
+import { docsFromAgents } from '../services/agent/agentEdits.service';
 import { handler, ok, param } from '../controllers/learning/common';
 import {
     appendToDoc,
@@ -55,6 +56,8 @@ router.patch('/docs/:id/blocks/:blockId', requireScope('docs:write'), idempotenc
 router.get('/docs/:id/sharing', requireScope('read'), handler(async (req, res) => ok(res, await docSharingForAgent(requireUser(req).id, param(req, 'id')))));
 
 router.get('/edits', requireScope('read'), listEdits);
+// The library's "From agents" view (cookie only): the docs agents wrote or changed, latest first.
+router.get('/doc-activity', cookieOnly, handler(async (req, res) => ok(res, await docsFromAgents(requireUser(req).id))));
 // Home only: an agent must not be able to hide ("seen") or revert its own work.
 router.post('/edits/seen', cookieOnly, markSeen);
 router.post('/markdown', cookieOnly, markdownToBlocksHandler);

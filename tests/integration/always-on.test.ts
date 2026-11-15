@@ -38,6 +38,11 @@ describe('the ambient phone (6.6)', () => {
         expect(widget.body.data.appUrl === null || typeof widget.body.data.appUrl === 'string').toBe(true);
         const png = await bearer('/api/ambient/wallpaper.png?w=540&h=1170&titles=0');
         expect([png.status, png.headers['content-type']]).toEqual([200, 'image/png']);
+        // The lock screen's own picture (the dial), and what the app compares to fetch again only on a change.
+        const lock = await bearer('/api/ambient/wallpaper.png?w=540&h=1170&titles=0&screen=lock');
+        expect([lock.status, lock.headers['content-type']]).toEqual([200, 'image/png']);
+        expect(Buffer.compare(lock.body as Buffer, png.body as Buffer)).not.toBe(0);
+        expect(widget.body.data).toMatchObject({ key: expect.any(String), items: expect.any(Array), counts: { reviews: { done: expect.any(Number), total: expect.any(Number) } } });
         // Nothing else: not today, not the docs, not the agent API.
         for (const path of ['/api/today', '/api/docs', '/api/agent/docs']) expect((await bearer(path)).status, path).toBe(403);
         // The addresses: cookie only; the last one is always USB (localhost).

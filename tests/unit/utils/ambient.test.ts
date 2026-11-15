@@ -1,6 +1,6 @@
 // The ambient phone's states (ALWAYS_ON_SPEC 6.6): what the wallpaper and widget say, by the hour and mode.
 import { describe, expect, it } from 'vitest';
-import { ambientFor, wallpaperSvg } from '../../../src/services/ambient/ambient.service';
+import { ambientFor, dayItems, wallpaperSvg } from '../../../src/services/ambient/ambient.service';
 import { textWidth, wrapText } from '../../../src/services/ambient/wallpaperArt';
 import type { Brief } from '../../../src/services/brief/brief.service';
 
@@ -104,5 +104,113 @@ describe('ambientFor', () => {
         const ys = [...svg.matchAll(/<text x="\d+" y="(\d+)"/g)].map((m) => Number(m[1]));
         expect(Math.min(...ys)).toBeGreaterThan(2340 * 0.3);
         expect(Math.max(...ys)).toBeLessThan(2340 * 0.8);
+    });
+});
+
+// ── The day's things, the home list and the lock dial (Ramin 11-15: "make it useful; the lock screen
+// very different from the home screen, centred") ─────────────────────────────────────────────────
+
+type DayInput = Parameters<typeof dayItems>[0];
+function todayLike(over: Partial<{ planned: Array<{ title: string; minutes: number }>; doneToday: string[]; focus: Array<{ text: string; done: boolean }>; tasks: Array<{ title: string; status: string; dueDate?: string; completedAt?: string }> }> = {}): DayInput {
+    return {
+        today: '2026-11-15',
+        timezone: 'Asia/Kolkata',
+        plan: { planned: over.planned ?? [], doneToday: (over.doneToday ?? []).map((title) => ({ title })), estMinutes: (over.planned ?? []).reduce((s, p) => s + p.minutes, 0) },
+        focus: { items: over.focus ?? [] },
+        tasks: over.tasks ?? [],
+        goals: [{ title: 'Backend SDE offer', daysLeft: 182, progress: { done: 1, total: 6 } }],
+    } as unknown as DayInput;
+}
+
+describe('dayItems', () => {
+    const now = new Date('2026-11-15T12:00:00Z'); // 17:30 in India
+    it('reviews, focus lines and the tasks due today or late (with those done today); open first, then done', () => {
+        const d = dayItems(
+            todayLike({
+                planned: [{ title: 'Monotonic stack', minutes: 8 }],
+                doneToday: ['Heaps'],
+                focus: [
+                    { text: 'Two mediums', done: true },
+                    { text: 'Read DDIA ch 5', done: false },
+                ],
+                tasks: [
+                    { title: 'Mock interview', status: 'pending', dueDate: '2026-11-15T13:30:00Z' }, // 19:00 today
+                    { title: 'Contest write-up', status: 'pending', dueDate: '2026-11-14T10:00:00Z' }, // yesterday
+                    { title: 'Next week', status: 'pending', dueDate: '2026-11-20T10:00:00Z' }, // not today
+                    { title: 'Booked the room', status: 'complete', completedAt: '2026-11-15T05:00:00Z' },
+                    { title: 'Done last week', status: 'complete', completedAt: '2026-11-08T05:00:00Z' },
+                ],
+            }),
+            now,
+        );
+        expect(d.items.map((i) => [i.kind, i.title, i.meta, i.done])).toEqual([
+            ['review', 'Monotonic stack', '8 min', false],
+            ['focus', 'Read DDIA ch 5', '', false],
+            ['task', 'Contest write-up', '1 day late', false],
+            ['task', 'Mock interview', '7 pm', false],
+            ['review', 'Heaps', '', true],
+            ['focus', 'Two mediums', '', true],
+            ['task', 'Booked the room', '', true],
+        ]);
+        expect(d.counts).toEqual({ reviews: { done: 1, total: 2 }, focus: { done: 1, total: 2 }, tasks: { done: 1, total: 3 }, minutesLeft: 8 });
+        expect(d.goal).toEqual({ title: 'Backend SDE offer', daysLeft: 182, done: 1, total: 6 });
+    });
+
+    it('"Hide titles": plain words for every title, the goal too', () => {
+        const d = dayItems(todayLike({ planned: [{ title: 'Secret topic', minutes: 5 }], focus: [{ text: 'Private focus', done: false }], tasks: [{ title: 'Private task', status: 'pending', dueDate: '2026-11-15T13:30:00Z' }] }), now, false);
+        expect(d.items.map((i) => i.title)).toEqual(['A review', 'A focus line', 'A task']);
+        expect(d.goal?.title).toBe('Your goal');
+        expect(JSON.stringify(d)).not.toMatch(/Secret|Private|Backend/);
+    });
+});
+
+describe('the two pictures', () => {
+    const now = new Date('2026-11-15T12:00:00Z');
+    const day = dayItems(
+        todayLike({
+            planned: [{ title: 'Monotonic stack', minutes: 8 }, { title: 'DP: 0/1 knapsack', minutes: 8 }],
+            doneToday: ['Heaps'],
+            focus: [{ text: 'Read DDIA ch 5', done: false }],
+        }),
+        now,
+    );
+    const a = { ...ambientFor(brief({ planned: 2, est: 16, done: 1 }), 'normal', 17, date), ...day };
+
+    it('home: the sky over its hills, the day line and the list (an icon per kind, a tick on what is done)', () => {
+        const svg = wallpaperSvg(a, 1080, 2340, 'dark', 'home');
+        expect(svg).toContain('id="hill0"');
+        expect(svg).toContain('3 left today · about 16 min');
+        expect(svg).toContain('>Monotonic stack<');
+        expect(svg).toContain('>8 min<');
+        expect(svg).toContain('>Heaps<');
+        expect(svg.match(/<path d="M2 3h6a4 4 0 0 1 4 4v14/g)).toHaveLength(2); // two open reviews: the book icon
+    });
+
+    it('lock: the dial (one segment per thing, done ones lit), what is left inside, the counts, the next step, the goal; no hills', () => {
+        const svg = wallpaperSvg(a, 1080, 2340, 'dark', 'lock');
+        expect(svg).not.toContain('id="hill0"');
+        expect(svg).toContain('id="dialGlow"');
+        const segments = [...svg.matchAll(/<path d="M[\d. ]+A[^"]*" fill="none" stroke="([^"]+)" stroke-width="26" stroke-linecap="round"\/>/g)];
+        expect(segments).toHaveLength(4);
+        expect(segments.filter((m) => m[1] === '#F7F5F2')).toHaveLength(1); // one done, lit
+        expect(svg).toMatch(/>3<\/text>/);
+        expect(svg).toContain('>left today<');
+        expect(svg).toContain('>1 of 3<'); // reviews
+        expect(svg).toContain('Next · Monotonic stack · 8 min');
+        expect(svg).toContain('>Backend SDE offer<');
+        expect(svg).toContain('182 days left · 1 of 6 milestones');
+        // All of it between the clock and the fingerprint.
+        const ys = [...svg.matchAll(/<text x="[\d.]+" y="([\d.]+)"/g)].map((m) => Number(m[1]));
+        expect(Math.min(...ys)).toBeGreaterThan(2340 * 0.33);
+        expect(Math.max(...ys)).toBeLessThan(2340 * 0.79);
+    });
+
+    it('lock: a done day is the whole dial lit with a tick; an empty day says so', () => {
+        const done = { ...a, ...dayItems(todayLike({ doneToday: ['Heaps', 'Tries'] }), now) };
+        const svg = wallpaperSvg(done, 1080, 2340, 'light', 'lock');
+        expect(svg).toContain('>Done for today<');
+        expect(svg).not.toContain('left today');
+        const free = wallpaperSvg({ ...a, ...dayItems(todayLike(), now) }, 1080, 2340, 'light', 'lock');
+        expect(free).toContain('>A free day<');
     });
 });

@@ -55,14 +55,16 @@ const size = (v: unknown, fallback: number, min: number, max: number) => {
     return v !== undefined && Number.isFinite(n) ? Math.min(max, Math.max(min, Math.round(n))) : fallback;
 };
 
-/** GET /api/ambient/wallpaper.png?w=1080&h=2340&theme=dark|light[&titles=0] */
+/** GET /api/ambient/wallpaper.png?w=1080&h=2340&theme=dark|light[&titles=0][&screen=lock|home] */
 export const ambientWallpaperHandler = handler(async (req, res) => {
     const width = size(req.query.w, 1080, 320, 2160);
     const height = size(req.query.h, 2340, 480, 4680);
     const theme = req.query.theme === 'light' ? 'light' : 'dark';
+    // The lock screen gets its own picture (the dial); the home screen, and an app that doesn't ask, the sky.
+    const screen = req.query.screen === 'lock' ? 'lock' : 'home';
     const ambient = await getAmbient(requireUser(req).id, new Date(), { titles: titlesFrom(req.query.titles) });
     res.setHeader('Content-Type', 'image/png');
     res.setHeader('Cache-Control', 'private, max-age=300');
     res.setHeader('X-Ambient-State', ambient.state);
-    res.send(wallpaperPng(ambient, width, height, theme));
+    res.send(wallpaperPng(ambient, width, height, theme, screen));
 });

@@ -275,6 +275,42 @@ export async function listCaptureCategories(userId: string): Promise<string[]> {
     return rows.map((r) => r.category).filter((c): c is string => !!c);
 }
 
+export interface ListCapturesInput {
+    /** Keeps the captures that hold every word (in the title, the text or the link), case-insensitive. */
+    q?: string | undefined;
+    /** Only the inbox: captures not on a revision schedule (Home's inbox). */
+    inbox?: boolean | undefined;
+    limit?: number | undefined;
+}
+
+export const CAPTURES_LIST_DEFAULT = 20;
+export const CAPTURES_LIST_MAX = 200;
+
+/**
+ * Ctrl K → Find and All notes › Inbox: the user's captures, pinned first, then newest. Find
+ * searches all of them (also the ones being revised); the inbox lists the ones not on a schedule.
+ */
+export async function listCaptures(userId: string, input: ListCapturesInput = {}) {
+    const terms = (input.q ?? '').trim().split(/\s+/).filter(Boolean).slice(0, 8);
+    const rows = await prisma.capture.findMany({
+        where: {
+            userId,
+            ...(input.inbox ? { revisions: { none: { status: 'pending' } } } : {}),
+            AND: terms.map((t) => ({
+                OR: [
+                    { title: { contains: t, mode: 'insensitive' as const } },
+                    { content: { contains: t, mode: 'insensitive' as const } },
+                    { url: { contains: t, mode: 'insensitive' as const } },
+                ],
+            })),
+        },
+        include: { subject: { select: subjectRefSelect } },
+        orderBy: [{ isPinned: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }],
+        take: Math.min(CAPTURES_LIST_MAX, Math.max(1, input.limit ?? CAPTURES_LIST_DEFAULT)),
+    });
+    return rows.map(({ subject, ...c }) => serializeCapture(c, subject));
+}
+
 /** '#Tag' / ' tag ' → 'Tag' / 'tag'; empty → null. */
 export function normalizeCategory(value: string | null | undefined): string | null {
     if (value === null || value === undefined) return null;

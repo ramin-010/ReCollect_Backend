@@ -201,6 +201,32 @@ describe('captures', () => {
         expect(await prisma.revision.count({ where: { captureId: c.id } })).toBe(0);
         expect(vi.mocked(batchDeleteFromCloud)).toHaveBeenCalledWith(['recollect-learning/a', 'legacy/one']);
     });
+
+    it('GET /api/captures: Find searches every capture by each word (title, text, link); ?inbox=1 lists the inbox; owner only', async () => {
+        const user = await createLearner();
+        const stranger = await createLearner();
+        const ago = (s: number) => new Date(Date.now() - s * 1000);
+        const link = await prisma.capture.create({ data: { userId: user.id, type: 'LINK', title: 'Kafka partitions', url: 'https://kafka.test/Rebalance', createdAt: ago(40) } });
+        const note = await prisma.capture.create({ data: { userId: user.id, content: 'Consumer groups rebalance when a member leaves', createdAt: ago(30) } });
+        const revised = await prisma.capture.create({ data: { userId: user.id, title: 'Rebalance storms', createdAt: ago(20) } });
+        await createChainRows(user.id, { captureId: revised.id }, todayIn(IST));
+        const pinned = await prisma.capture.create({ data: { userId: user.id, title: 'Pinned one', isPinned: true, createdAt: ago(50) } });
+        await prisma.capture.create({ data: { userId: stranger.id, title: 'Rebalance (not yours)' } });
+
+        const ids = (res: { body: { data: Array<{ _id: string }> } }) => res.body.data.map((c) => c._id);
+        // Every word, any field, any case; the one being revised is found too; pinned first, then newest.
+        expect(ids(await api(user).get('/api/captures?q=REBALANCE'))).toEqual([revised.id, note.id, link.id]);
+        expect(ids(await api(user).get('/api/captures?q=kafka%20rebalance'))).toEqual([link.id]);
+        expect(ids(await api(user).get('/api/captures?q=consumer%20kafka'))).toEqual([]);
+        // The inbox: not on a revision schedule; pinned first.
+        expect(ids(await api(user).get('/api/captures?inbox=1'))).toEqual([pinned.id, note.id, link.id]);
+        expect(ids(await api(user).get('/api/captures?limit=2'))).toEqual([pinned.id, revised.id]);
+        const one = (await api(user).get(`/api/captures?q=partitions`)).body.data[0];
+        expect(one).toMatchObject({ _id: link.id, type: 'LINK', title: 'Kafka partitions', url: 'https://kafka.test/Rebalance', subject: null });
+        expect((await api(user).get('/api/captures?limit=0')).status).toBe(400);
+        expect((await api(user).get('/api/captures?limit=500')).status).toBe(400);
+        expect((await api(user).get(`/api/captures?q=${'x'.repeat(201)}`)).status).toBe(400);
+    });
 });
 
 describe('POST /api/learning/uploads', () => {

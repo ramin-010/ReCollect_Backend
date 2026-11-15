@@ -11,7 +11,9 @@ import {
     deleteSubject,
     deleteTopic,
     ensureTopicDoc,
+    CAPTURES_LIST_MAX,
     listCaptureCategories,
+    listCaptures,
     listSubjects,
     pinQuickNote,
     putQuickNote,
@@ -107,6 +109,16 @@ const capturePatchSchema = z.object({
     subjectId: zId.nullable().optional(),
 });
 
+const captureListSchema = z.object({
+    q: text(200).optional(),
+    inbox: z.enum(['1', '0', 'true', 'false']).optional(),
+    limit: z.coerce.number().int().min(1).max(CAPTURES_LIST_MAX).optional(),
+});
+
+export const listCapturesHandler = handler(async (req, res) => {
+    const query = parse(captureListSchema, req.query);
+    ok(res, await listCaptures(requireUser(req).id, { q: query.q, inbox: query.inbox === '1' || query.inbox === 'true', limit: query.limit }));
+});
 export const captureCategoriesHandler = handler(async (req, res) => {
     ok(res, await listCaptureCategories(requireUser(req).id));
 });

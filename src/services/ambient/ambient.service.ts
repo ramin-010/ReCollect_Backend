@@ -5,9 +5,10 @@
 import { getBrief, type Brief } from '../brief/brief.service';
 import { getToday } from '../learningDb/today.service';
 import type { PlanMode } from '../learning/plan';
+import { dayOf } from '../learning/time';
 import path from 'node:path';
 import { svgToPng } from '../docs/diagram/png';
-import { drawWallpaper } from './wallpaperArt';
+import { drawLock, drawWallpaper } from './wallpaperArt';
 
 export type AmbientState = 'morning' | 'working' | 'evening' | 'done' | 'rest';
 
@@ -23,6 +24,109 @@ export interface Ambient {
     updatedAt: string;
     /** The last seven days, oldest first: studied or not (Home's rhythm). The wallpaper draws them as dots. */
     week?: Array<{ day: string; active: boolean }>;
+    /** Today's things, open first then done: the home picture's list and the lock picture's dial. */
+    items?: AmbientItem[];
+    counts?: AmbientCounts;
+    /** The nearest active goal (the lock picture's last line). */
+    goal?: AmbientGoal | null;
+    /** Changes whenever either picture would: the phone app fetches them again only then. */
+    key?: string;
+}
+
+export type AmbientItemKind = 'review' | 'focus' | 'task';
+
+export interface AmbientItem {
+    kind: AmbientItemKind;
+    /** The topic, focus line or task, or plain words when titles are hidden. */
+    title: string;
+    /** "8 min", "5 pm", "1 day late"; empty when there is nothing to add. */
+    meta: string;
+    done: boolean;
+}
+
+export interface AmbientCounts {
+    reviews: { done: number; total: number };
+    focus: { done: number; total: number };
+    tasks: { done: number; total: number };
+    /** About how long the open reviews take. */
+    minutesLeft: number;
+}
+
+export interface AmbientGoal {
+    title: string;
+    daysLeft: number;
+    /** Milestones done and planned. */
+    done: number;
+    total: number;
+}
+
+type TodayPayload = Awaited<ReturnType<typeof getToday>>;
+
+function clockWords(d: Date, tz: string): string {
+    const parts = new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour: 'numeric', minute: '2-digit', hour12: true }).formatToParts(d);
+    const hour = parts.find((p) => p.type === 'hour')?.value ?? '';
+    const minute = parts.find((p) => p.type === 'minute')?.value ?? '00';
+    const half = (parts.find((p) => p.type === 'dayPeriod')?.value ?? '').toLowerCase().replace(/\./g, '');
+    return minute === '00' ? `${hour} ${half}` : `${hour}:${minute} ${half}`;
+}
+
+/**
+ * Today's things for the phone pictures (pure): the reviews planned and done today, the focus lines,
+ * and the personal tasks due today or late (with those finished today), open first in their own
+ * order, then done. With titles hidden every title is plain words ("A review"), as on the widget.
+ */
+export function dayItems(t: Pick<TodayPayload, 'plan' | 'focus' | 'tasks' | 'goals' | 'timezone' | 'today'>, now: Date, titles = true): { items: AmbientItem[]; counts: AmbientCounts; goal: AmbientGoal | null } {
+    const tz = t.timezone;
+    const today = t.today;
+    const plan = t.plan;
+    const open: AmbientItem[] = [];
+    const done: AmbientItem[] = [];
+    for (const r of plan?.planned ?? []) open.push({ kind: 'review', title: titles ? r.title : 'A review', meta: r.minutes ? `${r.minutes} min` : '', done: false });
+    for (const r of plan?.doneToday ?? []) done.push({ kind: 'review', title: titles ? r.title : 'A review', meta: '', done: true });
+    const focus = t.focus?.items ?? [];
+    for (const f of focus) (f.done ? done : open).push({ kind: 'focus', title: titles ? f.text : 'A focus line', meta: '', done: f.done });
+
+    const tasks = (t.tasks ?? [])
+        .filter((x) => {
+            if (x.status === 'complete') return !!x.completedAt && dayOf(new Date(x.completedAt), tz) === today;
+            return !!x.dueDate && dayOf(new Date(x.dueDate), tz) <= today;
+        })
+        .sort((a, b) => new Date(a.dueDate ?? 0).getTime() - new Date(b.dueDate ?? 0).getTime());
+    let tasksDone = 0;
+    for (const x of tasks) {
+        const finished = x.status === 'complete';
+        if (finished) tasksDone++;
+        let meta = '';
+        if (!finished && x.dueDate) {
+            const due = new Date(x.dueDate);
+            const mins = Math.floor((now.getTime() - due.getTime()) / 60_000);
+            const dayDiff = Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${dayOf(due, tz)}T00:00:00Z`)) / 86_400_000);
+            if (dayDiff > 0) meta = `${dayDiff} ${dayDiff === 1 ? 'day' : 'days'} late`;
+            else if (mins > 0) meta = 'late';
+            else meta = clockWords(due, tz);
+        }
+        (finished ? done : open).push({ kind: 'task', title: titles ? x.title : 'A task', meta, done: finished });
+    }
+
+    const g = t.goals?.[0];
+    return {
+        items: [...open, ...done],
+        counts: {
+            reviews: { done: plan?.doneToday?.length ?? 0, total: (plan?.planned?.length ?? 0) + (plan?.doneToday?.length ?? 0) },
+            focus: { done: focus.filter((f) => f.done).length, total: focus.length },
+            tasks: { done: tasksDone, total: tasks.length },
+            minutesLeft: plan?.estMinutes ?? 0,
+        },
+        goal: g ? { title: titles ? g.title : 'Your goal', daysLeft: g.daysLeft, done: g.progress?.done ?? 0, total: g.progress?.total ?? 0 } : null,
+    };
+}
+
+/** A short fingerprint of everything the pictures draw (FNV-1a over the words). */
+function pictureKey(a: Omit<Ambient, 'key' | 'updatedAt'>): string {
+    const text = JSON.stringify([a.state, a.date, a.headline, a.lines, a.mode, a.week, a.items, a.counts, a.goal]);
+    let h = 2166136261;
+    for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 16777619);
+    return (h >>> 0).toString(36);
 }
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -84,7 +188,9 @@ export async function getAmbient(userId: string, now: Date = new Date(), options
     const { hour, date } = localClock(now, brief.now.timezone);
     const mode = (today.plan?.mode ?? 'normal') as PlanMode;
     const week = today.stats?.rhythm?.last7?.map((d) => ({ day: d.day, active: d.active }));
-    return { ...ambientFor(brief, mode, hour, date, now, options), ...(week?.length === 7 ? { week } : {}) };
+    const day = dayItems(today, now, options.titles !== false);
+    const a = { ...ambientFor(brief, mode, hour, date, now, options), ...(week?.length === 7 ? { week } : {}), ...day };
+    return { ...a, key: pictureKey(a) };
 }
 
 // ── The wallpaper ────────────────────────────────────────────────────────────────────────
@@ -92,12 +198,24 @@ export async function getAmbient(userId: string, now: Date = new Date(), options
 /** Inter (SIL OFL 1.1, assets/fonts): the picture looks the same on any server, with or without fonts of its own. */
 export const WALLPAPER_FONTS = ['Regular', 'Medium', 'SemiBold', 'Bold'].map((w) => path.resolve(__dirname, '..', '..', '..', 'assets', 'fonts', `Inter-${w}.ttf`));
 
-/** The wallpaper as SVG: the sky of the day (wallpaperArt.ts). */
-export function wallpaperSvg(a: Ambient, width: number, height: number, theme: 'light' | 'dark'): string {
-    return drawWallpaper({ state: a.state, date: a.date, headline: a.headline, lines: a.lines, ...(a.week ? { week: a.week } : {}) }, width, height, theme);
+export type WallpaperScreen = 'home' | 'lock';
+
+/** The wallpaper as SVG (wallpaperArt.ts): the home picture (the sky of the day and its list) or the lock picture (the dial). */
+export function wallpaperSvg(a: Ambient, width: number, height: number, theme: 'light' | 'dark', screen: WallpaperScreen = 'home'): string {
+    const input = {
+        state: a.state,
+        date: a.date,
+        headline: a.headline,
+        lines: a.lines,
+        ...(a.week ? { week: a.week } : {}),
+        ...(a.items ? { items: a.items } : {}),
+        ...(a.counts ? { counts: a.counts } : {}),
+        ...(a.goal !== undefined ? { goal: a.goal } : {}),
+    };
+    return screen === 'lock' ? drawLock(input, width, height, theme) : drawWallpaper(input, width, height, theme);
 }
 
 /** The wallpaper as a PNG, sized for the phone (pixels, not CSS px). */
-export function wallpaperPng(a: Ambient, width: number, height: number, theme: 'light' | 'dark'): Buffer {
-    return svgToPng(wallpaperSvg(a, width, height, theme), width, height, 1, Math.max(width, height), WALLPAPER_FONTS).png;
+export function wallpaperPng(a: Ambient, width: number, height: number, theme: 'light' | 'dark', screen: WallpaperScreen = 'home'): Buffer {
+    return svgToPng(wallpaperSvg(a, width, height, theme, screen), width, height, 1, Math.max(width, height), WALLPAPER_FONTS).png;
 }

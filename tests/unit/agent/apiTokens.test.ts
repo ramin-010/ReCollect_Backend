@@ -140,6 +140,7 @@ describe('which endpoints accept a token (tokenRoutes.ts)', () => {
         // Home's control over agent edits
         ['POST', '/api/agent/edits/e1/undo'],
         ['POST', '/api/agent/edits/seen'],
+        ['GET', '/api/agent/doc-activity'],
         // doc writes outside the agent API, sharing
         ['POST', '/api/docs'],
         ['POST', '/api/docs/abc123'],
@@ -161,6 +162,7 @@ describe('which endpoints accept a token (tokenRoutes.ts)', () => {
         ['POST', '/api/revisions/fresh-start'],
         ['POST', '/api/learning/ensure-today'],
         ['POST', '/api/captures'],
+        ['GET', '/api/captures'],
         // other modules
         ['GET', '/api/todos'],
         ['GET', '/api/workspaces'],

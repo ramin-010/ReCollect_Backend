@@ -29,6 +29,24 @@ import { undoDocChange, undoDocCreate, undoDocUpdate } from './agentDocs.service
 export const EDITS_LIMIT_DEFAULT = 20;
 export const EDITS_LIMIT_MAX = 100;
 
+/**
+ * GET /api/agent/doc-activity (the library's "From agents" view): each doc an agent wrote or
+ * changed and that change still stands (not undone; the edit log keeps 90 days), with its latest
+ * time and how many such changes. "You" (the app acting for him) doesn't count. Newest first.
+ */
+export async function docsFromAgents(userId: string): Promise<Array<{ docId: string; lastAt: Date; edits: number }>> {
+    const rows = await prisma.agentEdit.groupBy({
+        by: ['docId'],
+        where: { userId, docId: { not: null }, undoneAt: null, NOT: { agentName: 'You' } },
+        _max: { createdAt: true },
+        _count: { _all: true },
+    });
+    return rows
+        .filter((r): r is typeof r & { docId: string } => !!r.docId && !!r._max.createdAt)
+        .map((r) => ({ docId: r.docId, lastAt: r._max.createdAt!, edits: r._count._all }))
+        .sort((a, b) => b.lastAt.getTime() - a.lastAt.getTime());
+}
+
 /** GET /api/agent/edits?since=&unseen=&limit=: newest first. */
 export async function listAgentEdits(
     userId: string,

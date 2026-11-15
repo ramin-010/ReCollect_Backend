@@ -74,6 +74,7 @@ router.delete('/topics/:id', auth, items.deleteTopicHandler);
 router.post('/topics/:id/doc', auth, items.ensureTopicDocHandler);
 
 // #17–20 Captures (NOTE / LINK)
+router.get('/captures', auth, items.listCapturesHandler); // Ctrl K → Find; All notes › Inbox (?inbox=1)
 router.get('/captures/categories', auth, items.captureCategoriesHandler);
 router.post('/captures', auth, items.createCaptureHandler);
 router.patch('/captures/:id', auth, items.updateCaptureHandler);

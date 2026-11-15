@@ -443,4 +443,30 @@ describe('agents on the learning routes', () => {
         expect((await api(stranger).post('/api/agent/edits/seen', { ids: [viaAgent.body.data[0].id] })).body.data).toEqual({ updated: 0 });
         expect((await api(stranger).post(`/api/agent/edits/${viaAgent.body.data[0].id}/undo`)).status).toBe(404);
     });
+
+    it('GET /api/agent/doc-activity: the docs agents changed (still standing), latest first; cookie only, owner only', async () => {
+        const user = await createTestUser();
+        const { token } = await createTestToken(user);
+        const docA = await prisma.doc.create({ data: { userId: user.id, title: 'A' } });
+        const docB = await prisma.doc.create({ data: { userId: user.id, title: 'B' } });
+        const docC = await prisma.doc.create({ data: { userId: user.id, title: 'C' } });
+        const at = (s: number) => new Date(Date.now() - s * 1000);
+        const edit = (docId: string, agentName: string, createdAt: Date, undoneAt: Date | null = null) =>
+            prisma.agentEdit.create({ data: { userId: user.id, docId, kind: 'doc_append', agentName, summary: 'x', createdAt, undoneAt } });
+        await edit(docA.id, 'Claude Code', at(300));
+        await edit(docA.id, 'Claude Code', at(100));
+        await edit(docB.id, 'study-chat', at(200));
+        await edit(docC.id, 'Claude Code', at(50), at(40)); // undone: not from an agent any more
+        await edit(docC.id, 'You', at(30)); // the app acting for him
+
+        const res = await api(user).get('/api/agent/doc-activity');
+        expect(res.status).toBe(200);
+        expect(res.body.data.map((r: { docId: string; edits: number }) => [r.docId, r.edits])).toEqual([
+            [docA.id, 2],
+            [docB.id, 1],
+        ]);
+        expect(new Date(res.body.data[0].lastAt).getTime()).toBeGreaterThan(new Date(res.body.data[1].lastAt).getTime());
+        expect((await asAgent(token).get('/api/agent/doc-activity')).status).toBe(403);
+        expect((await api(await createTestUser()).get('/api/agent/doc-activity')).body.data).toEqual([]);
+    });
 });
