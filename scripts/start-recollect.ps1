@@ -91,8 +91,13 @@ function Start-One([string]$Name) {
     return $true
 }
 
+# The process ids -Restart stopped, per server, to prove after the start that the old one is gone.
+$stoppedIds = @{}
+
+# Stops a server; returns $true when its ports are free afterwards (a restart starts it only then).
 function Stop-One([string]$Name) {
     $svc = $services[$Name]
+    $ids = @()
     if ($Name -eq 'db') {
         if ((Get-Listeners $svc.Ports).Count -gt 0) {
             # A clean stop, with the same binaries the embedded server runs.
@@ -116,11 +121,20 @@ function Stop-One([string]$Name) {
             continue
         }
         Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
+        $ids += $procId
         Write-Log ('{0}: stopped process {1}' -f $Name, $procId)
     }
+    $script:stoppedIds[$Name] = $ids
+    $held = @()
     foreach ($port in $svc.Ports) {
-        if (-not (Wait-Port $port 15 $true)) { Write-Log ('{0}: port {1} is still held after 15 s' -f $Name, $port) }
+        if (-not (Wait-Port $port 15 $true)) { $held += $port }
     }
+    if ($held.Count -gt 0) {
+        Write-Log ('{0}: port {1} is still held after 15 s (see -Status)' -f $Name, ($held -join ', '))
+        return $false
+    }
+    if ($ids.Count -gt 0) { Write-Log ('{0}: port {1} free' -f $Name, ($svc.Ports -join ', ')) }
+    return $true
 }
 
 if ($Status) {
@@ -137,12 +151,20 @@ if ($Status) {
     return
 }
 
-foreach ($name in $Stop) { Stop-One $name }
+foreach ($name in $Stop) { $null = Stop-One $name }
 if ($Stop.Count -gt 0 -and $Restart.Count -eq 0) { return }
-foreach ($name in $Restart) { Stop-One $name }
+# A restart starts a server again only once its old process is gone and its ports are free; else
+# it says so (never "already running" with the old code still serving).
+$blocked = @{}
+foreach ($name in $Restart) {
+    if (-not (Stop-One $name)) {
+        $blocked[$name] = $true
+        Write-Log ('{0}: NOT restarted: its port is still held' -f $name)
+    }
+}
 
 $started = @{}
-$started['db'] = Start-One 'db'
+$started['db'] = if ($blocked['db']) { $false } else { Start-One 'db' }
 if ($started['db'] -and -not (Wait-Port 5433 $services['db'].WaitSec)) {
     Write-Log ('db: not listening after {0} s (see db.log)' -f $services['db'].WaitSec)
 }
@@ -153,13 +175,21 @@ if ((Get-Listeners @(5433)).Count -gt 0) {
     Start-Process -FilePath $env:ComSpec -ArgumentList $dumpArgs -WorkingDirectory $backendDir -WindowStyle Hidden | Out-Null
 }
 # The backend starts after the database: it runs a query at start.
-$started['backend'] = Start-One 'backend'
-$started['frontend'] = Start-One 'frontend'
+$started['backend'] = if ($blocked['backend']) { $false } else { Start-One 'backend' }
+$started['frontend'] = if ($blocked['frontend']) { $false } else { Start-One 'frontend' }
 foreach ($name in @('backend', 'frontend')) {
     if (-not $started[$name]) { continue }
     $port = $services[$name].Ports[0]
     if (Wait-Port $port $services[$name].WaitSec) {
-        Write-Log ('{0}: listening on {1}' -f $name, $port)
+        $now = @(Get-Listeners $services[$name].Ports)
+        $old = @($stoppedIds[$name] | Where-Object { $_ })
+        if ($old.Count -eq 0) {
+            Write-Log ('{0}: listening on {1}' -f $name, $port)
+        } elseif (@($now | Where-Object { $old -contains $_ }).Count -gt 0) {
+            Write-Log ('{0}: WARNING: the old process {1} still listens' -f $name, ($old -join ', '))
+        } else {
+            Write-Log ('{0}: listening on {1}: new process {2}, the old {3} is gone' -f $name, $port, ($now -join ', '), ($old -join ', '))
+        }
     } else {
         Write-Log ('{0}: not listening after {1} s (see {0}.log)' -f $name, $services[$name].WaitSec)
     }
