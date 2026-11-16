@@ -6,7 +6,8 @@ import { requireUser } from '../middlwares/auth';
 import { handler, ok } from './learning/common';
 import { aiBadRequest, aiNotConfigured } from '../services/claude/errors';
 import { isAiConfigured } from '../services/claude/client';
-import { aiUsageFor, MAX_MONTHLY_CAP_USD, setMonthlyCap } from '../services/claude/usage.service';
+import { aiUsageFor, setMonthlyCap } from '../services/claude/usage.service';
+import { aiMaxCapUsd } from '../config/aiAccess';
 import { ownerEmail } from '../config/owner';
 import { awakeSummary } from '../services/scheduler/awake';
 import { answerRecall, finishRecall, startRecall } from '../services/recall/recall.service';
@@ -67,10 +68,8 @@ export const usage = handler(async (req, res) => {
     ok(res, awake ? { ...usage, awake } : usage);
 });
 
-const settingsSchema = z.object({ capUsd: z.number().finite().min(0).max(MAX_MONTHLY_CAP_USD) });
-
-/** PATCH /api/ai/settings { capUsd } (0–1000) → AiUsage */
+/** PATCH /api/ai/settings { capUsd } (0 to AI_MAX_CAP_USD, default 1000; hosting P1-5) → AiUsage */
 export const settings = handler(async (req, res) => {
-    const { capUsd } = parse(settingsSchema, req.body);
+    const { capUsd } = parse(z.object({ capUsd: z.number().finite().min(0).max(aiMaxCapUsd()) }), req.body);
     ok(res, await setMonthlyCap(requireUser(req).id, capUsd));
 });

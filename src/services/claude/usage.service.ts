@@ -5,6 +5,7 @@
 import type { AiFeature } from '@prisma/client';
 import { prisma, type DbClient } from '../../db/prisma';
 import { poke } from '../scheduler/scheduler';
+import { aiAllowedFor, aiMaxCapUsd, assertAiAllowed } from '../../config/aiAccess';
 import { addDays, endOfMonth, resolveTimeZone, startOfDay, startOfMonth, today as todayIn } from '../learning';
 import { aiCapReached } from './errors';
 import { aiModel } from './client';
@@ -12,7 +13,8 @@ import { costOfCall, roundUsd, type CallUsage, type UsageTotals } from './pricin
 
 /** Ramin, 2026-11-14 night: $50 a month (Recall and the Ask AI manager). */
 export const DEFAULT_MONTHLY_CAP_USD = 50;
-export const MAX_MONTHLY_CAP_USD = 1000;
+// The bound on a self-set cap moved to src/config/aiAccess.ts (AI_MAX_CAP_USD, hosting P1-5).
+export { MAX_MONTHLY_CAP_USD } from '../../config/aiAccess';
 
 export const AI_FEATURES: readonly AiFeature[] = ['recall_questions', 'recall_grade', 'practice_note', 'weekly_coach'];
 
@@ -48,7 +50,8 @@ async function userZone(userId: string, db: DbClient): Promise<string> {
 
 export async function monthlyCapOf(userId: string, db: DbClient = prisma): Promise<number> {
     const row = await db.aiSettings.findUnique({ where: { userId }, select: { monthlyCapUsd: true } });
-    return row ? Number(row.monthlyCapUsd) : DEFAULT_MONTHLY_CAP_USD;
+    // AI_MAX_CAP_USD bounds every cap, one set earlier too (hosting P1-5).
+    return Math.min(row ? Number(row.monthlyCapUsd) : DEFAULT_MONTHLY_CAP_USD, aiMaxCapUsd());
 }
 
 /** This month's spend, call count and spend per feature. */
@@ -72,13 +75,15 @@ export async function monthSpend(userId: string, now: Date = new Date(), db: DbC
     return { month, spentUsd: roundUsd(spent), calls, byFeature };
 }
 
-/** 402 AI_CAP_REACHED when this month's spend has reached the cap. */
+/** 403 AI_NOT_ALLOWED for an account AI_ALLOWED_EMAILS leaves out (hosting P1-5); 402 AI_CAP_REACHED when this month's spend has reached the cap. */
 export async function assertUnderCap(userId: string, now: Date = new Date()): Promise<void> {
+    await assertAiAllowed(userId);
     const [{ spentUsd }, cap] = await Promise.all([monthSpend(userId, now), monthlyCapOf(userId)]);
     if (isOverCap(spentUsd, cap)) throw aiCapReached(spentUsd, cap);
 }
 
 export async function isUnderCap(userId: string, now: Date = new Date()): Promise<boolean> {
+    if (!(await aiAllowedFor(userId))) return false; // an account the AI is not for (hosting P1-5)
     const [{ spentUsd }, cap] = await Promise.all([monthSpend(userId, now), monthlyCapOf(userId)]);
     return !isOverCap(spentUsd, cap);
 }

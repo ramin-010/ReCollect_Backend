@@ -50,6 +50,7 @@
     "dotenv": "^17.2.3",
     "elkjs": "0.12.1",
     "express": "^5.1.0",
+    "express-rate-limit": "8.7.2",
     "google-auth-library": "^10.5.0",
     "jsonwebtoken": "^9.0.2",
     "mermaid": "11.17.2",
@@ -97,6 +98,9 @@
     "@tiptap/extension-strike": "3.32.2",
     "@tiptap/extension-text": "3.32.2",
     "@tiptap/extension-underline": "3.32.2",
-    "@tiptap/extensions": "3.32.2"
+    "@tiptap/extensions": "3.32.2",
+    "express-rate-limit": {
+      "ip-address": "10.7.5"
+    }
   }
 }

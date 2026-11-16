@@ -5,6 +5,7 @@ import crypto from 'crypto';
 import { prisma } from '../../db/prisma';
 import ErrorResponse from '../../utils/errorResponse';
 import { hashPassword, verifyPassword } from './password';
+import { assertSignupAllowed } from '../../config/signup';
 import { createAndSendOtp, deleteOtp, readSignupData, verifyOtp } from './otp.service';
 import type { GoogleIdentity } from './google.service';
 import {
@@ -19,6 +20,7 @@ import {
 
 /** POST /signup (no OTP). The email is used exactly as typed, as before. */
 export async function signupWithPassword(input: { name: string; email: string; password: string }): Promise<SafeUser> {
+    assertSignupAllowed(input.email); // SIGNUP_MODE (hosting P1-3)
     const existingUser = await findUserByEmail(input.email);
     if (existingUser) {
         throw new ErrorResponse(400, 'User already exists');
@@ -50,6 +52,7 @@ export async function startEmailSignup(input: {
     email: string;
     password: string;
 }): Promise<'otp-sent' | 'email-taken' | 'email-failed'> {
+    assertSignupAllowed(input.email); // a new account or a placeholder's claim (hosting P1-3)
     const existingUser = await findUserByEmail(input.email.toLowerCase());
     if (existingUser && !existingUser.isGhost) return 'email-taken';
 
@@ -66,6 +69,7 @@ export async function completeEmailSignup(
     email: string,
     code: string
 ): Promise<{ status: 'created'; user: SafeUser } | { status: 'missing-signup-data' }> {
+    assertSignupAllowed(email); // the mode may have changed since the code was sent (hosting P1-3)
     const storedOtp = await verifyOtp(email, code, 'signup');
     const signupData = readSignupData(storedOtp.signupData);
     if (!signupData) {
@@ -125,11 +129,15 @@ export async function loginWithGoogle(identity: GoogleIdentity): Promise<SafeUse
     const existing = await findUserByEmail(normalizedEmail);
 
     if (existing) {
-        if (existing.isGhost) console.log(`[auth] Ghost user claimed via Google: ${identity.email}`);
+        if (existing.isGhost) {
+            assertSignupAllowed(normalizedEmail); // claiming a placeholder is making an account (hosting P1-3)
+            console.log(`[auth] Ghost user claimed via Google: ${identity.email}`);
+        }
         return applyGoogleLogin(existing, { googleId: identity.googleId, picture: identity.picture });
     }
 
     // Create a new user (no password needed for Google auth)
+    assertSignupAllowed(normalizedEmail); // SIGNUP_MODE (hosting P1-3)
     return createUser({
         email: normalizedEmail,
         name: identity.name || 'Google User',

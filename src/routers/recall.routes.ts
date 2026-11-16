@@ -5,17 +5,18 @@
 // set up yet".
 import express from 'express';
 import { authOnce, cookieOnly } from '../middlwares/scopes';
+import { requireAiAccess } from '../config/aiAccess';
 import { answer, finish, requireAiConfigured, settings, start, usage } from '../controllers/recall.controller';
 import { coach, latestCoach, practiceNote } from '../controllers/aiNotes.controller';
 
 const recallRouter = express.Router();
-recallRouter.use(authOnce, cookieOnly, requireAiConfigured);
+recallRouter.use(authOnce, cookieOnly, requireAiConfigured, requireAiAccess); // AI_ALLOWED_EMAILS: 403 (hosting P1-5)
 recallRouter.post('/start', start);
 recallRouter.post('/sets/:id/answer', answer);
 recallRouter.post('/sets/:id/finish', finish);
 
 export const aiRouter = express.Router();
-aiRouter.use(authOnce, cookieOnly, requireAiConfigured);
+aiRouter.use(authOnce, cookieOnly, requireAiConfigured, requireAiAccess);
 aiRouter.get('/usage', usage);
 aiRouter.patch('/settings', settings);
 aiRouter.post('/practice-note', practiceNote);

@@ -5,6 +5,7 @@ import type { AiFeature } from '@prisma/client';
 import { prisma } from '../../db/prisma';
 import { isAiConfigured } from '../claude/client';
 import { isUnderCap, monthRange } from '../claude/usage.service';
+import { aiAllowedFor } from '../../config/aiAccess';
 import { addDays, dayOf, type DayString } from '../learning';
 import { fromDbDay, loadLearningContext, toDbDay } from '../learningDb/common';
 import { DEFAULT_BUDDY_CAP_USD } from './state.service';
@@ -20,11 +21,12 @@ export async function buddySpend(userId: string, now: Date = new Date()): Promis
     return Number(sum._sum.costUsd ?? 0);
 }
 
-export type BuddyGate = 'ok' | 'off' | 'paused' | 'no_ai' | 'buddy_cap' | 'account_cap';
+export type BuddyGate = 'ok' | 'off' | 'paused' | 'no_ai' | 'not_allowed' | 'buddy_cap' | 'account_cap';
 
 /** Whether the buddy may spend now: set up and on, not paused, under its own cap and the account's. */
 export async function buddyMaySpend(userId: string, now: Date = new Date()): Promise<BuddyGate> {
     if (!isAiConfigured()) return 'no_ai';
+    if (!(await aiAllowedFor(userId))) return 'not_allowed'; // AI_ALLOWED_EMAILS (hosting P1-5)
     const state = await prisma.buddyState.findUnique({ where: { userId }, select: { enabled: true, paused: true, capUsd: true } });
     if (!state?.enabled) return 'off';
     if (state.paused) return 'paused';

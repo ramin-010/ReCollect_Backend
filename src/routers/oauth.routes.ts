@@ -10,6 +10,7 @@
 // consentRouter (/api/oauth, his cookie only): what the consent page shows, and his answer.
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { authOnce, cookieOnly } from '../middlwares/scopes';
+import { doorLimit } from '../middlwares/rateLimit';
 import { requireUser } from '../middlwares/auth';
 import {
     answerConsent,
@@ -56,7 +57,7 @@ publicOAuthRouter.get('/.well-known/oauth-authorization-server', (_req, res) => 
     res.json(authorizationServerMetadata());
 });
 
-publicOAuthRouter.post('/oauth/register', async (req, res) => {
+publicOAuthRouter.post('/oauth/register', doorLimit('oauthRegister'), async (req, res) => {
     try {
         res.status(201).json(await registerClient(req.body));
     } catch (err) {
@@ -80,7 +81,7 @@ publicOAuthRouter.get('/oauth/authorize', async (req, res) => {
     }
 });
 
-publicOAuthRouter.post('/oauth/token', async (req, res) => {
+publicOAuthRouter.post('/oauth/token', doorLimit('oauthToken'), async (req, res) => {
     try {
         res.json(await token((req.body ?? {}) as Record<string, unknown>));
     } catch (err) {

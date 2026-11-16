@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "Otp" ADD COLUMN     "wrongTries" INTEGER NOT NULL DEFAULT 0;
+

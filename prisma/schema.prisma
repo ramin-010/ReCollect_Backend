@@ -187,6 +187,8 @@ model Otp {
   /// An OTP is valid for 180 s after createdAt. Mongo deleted it with a TTL index; here the
   /// OTP service checks the age explicitly and a cron deletes expired rows.
   createdAt  DateTime   @default(now())
+  /// Wrong codes tried against it; the code is deleted at the 5th (hosting P1-4).
+  wrongTries Int        @default(0)
 
   @@index([email])
   @@index([createdAt])

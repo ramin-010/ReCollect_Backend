@@ -50,7 +50,8 @@ export async function drainBuddyQueue(now: Date = new Date(), limit = PER_TICK):
             may = await buddyMaySpend(c.userId, now);
             mayCache.set(c.userId, may);
         }
-        if (may === 'paused') {
+        // Paused, or an account the AI is not for (AI_ALLOWED_EMAILS): its words are dropped, counted.
+        if (may === 'paused' || may === 'not_allowed') {
             await drop(c, now);
             result.dropped++;
             continue;

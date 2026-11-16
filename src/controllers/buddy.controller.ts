@@ -37,6 +37,7 @@ import { nightIfDue } from '../services/buddy/worker';
 import { buddyMaySpend } from '../services/buddy/spend';
 import { fromDbDay } from '../services/learningDb/common';
 import ErrorResponse from '../utils/errorResponse';
+import { aiNotAllowed } from '../config/aiAccess';
 import { handler, ok, param, parse } from './learning/common';
 import { LOG_LINES_MAX, WORK_KINDS, hideWorkLine, listWork, logWork } from '../services/buddy/work';
 
@@ -247,6 +248,7 @@ export const usageHandler = handler(async (req, res) => {
 export const thinkHandler = handler(async (req, res) => {
     const userId = requireUser(req).id;
     const may = await buddyMaySpend(userId);
+    if (may === 'not_allowed') throw aiNotAllowed(); // 403 (hosting P1-5)
     if (may !== 'ok') throw new ErrorResponse(409, may === 'off' ? 'Turn your buddy on first' : may === 'paused' ? 'Your buddy is paused' : may === 'no_ai' ? 'The AI is not set up' : 'Your buddy has reached its monthly cap');
     ok(res, await nightIfDue(userId, new Date(), { fresh: true }));
 });

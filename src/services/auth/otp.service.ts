@@ -25,6 +25,29 @@ export interface SignupOtpData {
 export const OTP_EXPIRED_MESSAGE = 'OTP has expired or does not exist. Please request a new one.';
 export const OTP_INVALID_MESSAGE = 'Invalid OTP. Please check and try again.';
 
+/** Hosting P1-4: a code dies at its 5th wrong try (the 6th fails even when right)... */
+export const OTP_MAX_WRONG_TRIES = 5;
+/** ...and an email gets at most 3 codes an hour (in memory: one process). The code stays 4 digits. */
+export const OTP_SENDS_PER_HOUR = 3;
+const HOUR_MS = 3_600_000;
+const sends = new Map<string, number[]>();
+
+/** Tests: forget the codes sent so far. */
+export function resetOtpSendLimits(): void {
+    sends.clear();
+}
+
+/** 429 when this email already had OTP_SENDS_PER_HOUR codes in the last hour; else counts this one. */
+function countOtpSend(email: string, now = Date.now()): void {
+    const recent = (sends.get(email) ?? []).filter((t) => now - t < HOUR_MS);
+    if (recent.length >= OTP_SENDS_PER_HOUR) {
+        const minutes = Math.max(1, Math.ceil((recent[0]! + HOUR_MS - now) / 60_000));
+        throw new ErrorResponse(429, `Too many codes for this email. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`);
+    }
+    recent.push(now);
+    sends.set(email, recent);
+}
+
 function toDbPurpose(purpose: OtpPurposeName): OtpPurpose {
     return purpose === 'password-reset' ? 'password_reset' : 'signup';
 }
@@ -58,6 +81,7 @@ export async function createAndSendOtp(
     db: DbClient = prisma
 ): Promise<boolean> {
     const normalizedEmail = email.toLowerCase();
+    countOtpSend(normalizedEmail);
     const code = generateOtpCode();
 
     await db.otp.deleteMany({ where: { email: normalizedEmail } });
@@ -96,6 +120,9 @@ export async function verifyOtp(
         throw new ErrorResponse(400, OTP_EXPIRED_MESSAGE);
     }
     if (stored.otp !== code) {
+        // Each wrong try counts on the code; at the 5th the code is gone (hosting P1-4).
+        const { wrongTries } = await db.otp.update({ where: { id: stored.id }, data: { wrongTries: { increment: 1 } }, select: { wrongTries: true } });
+        if (wrongTries >= OTP_MAX_WRONG_TRIES) await db.otp.deleteMany({ where: { id: stored.id } });
         throw new ErrorResponse(400, OTP_INVALID_MESSAGE);
     }
     return stored;

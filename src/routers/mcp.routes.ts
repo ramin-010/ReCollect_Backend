@@ -7,6 +7,7 @@ import express, { type Request, type Response } from 'express';
 import { findApiToken, isApiTokenFormat } from '../services/apiTokens/apiTokens.service';
 import { serveMcpHttp } from '../services/assistant/catalogue';
 import { selfUrl, wwwAuthenticate } from '../services/oauth/oauth.service';
+import { doorLimit } from '../middlwares/rateLimit';
 
 const router = express.Router();
 
@@ -21,7 +22,8 @@ function unauthorized(res: Response, message: string, invalid = false): void {
     res.status(401).json({ jsonrpc: '2.0', error: { code: -32001, message }, id: null });
 }
 
-router.post('/mcp', express.json({ limit: '2mb' }), async (req: Request, res: Response) => {
+// Hosting P1-4: knocking without a valid token is limited per address (the refusals count; a valid token passes freely).
+router.post('/mcp', doorLimit('mcp'), express.json({ limit: '2mb' }), async (req: Request, res: Response) => {
     const token = bearer(req);
     if (!token || !isApiTokenFormat(token)) return unauthorized(res, 'Add a Recollect token: Authorization: Bearer rcl_… (Settings → Agents).');
     const row = await findApiToken(token);
