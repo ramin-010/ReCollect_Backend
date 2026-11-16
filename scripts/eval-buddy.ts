@@ -1,8 +1,10 @@
 // The night step's test set (BUDDY_MEMORY_PLAN B3): invented days (no account touched), each sent to
-// the real model through the real request, then graded by code: the answer's shape; exactly three
-// lines of at most 90 characters; no lock-screen line naming the planted private thing; every number
-// one it was given; no line repeating what it said lately; valid ops only (never on his own memory);
-// silence allowed on the quiet day; the Sunday note on Sunday. Writes evals/results/buddy-<time>.json.
+// the real model through the real request, then graded by code: the answer's shape; a line per slot
+// or silence (11-16: never a forced line), each at most 90 characters, and at least one on the heavy
+// day; the home screen's thought, when written, short, fit for anyone and not a line's words; no
+// lock-screen line naming the planted private thing; every number one it was given; no line repeating
+// what it said lately; valid ops only (never on his own memory); silence allowed on the quiet day; the
+// Sunday note on Sunday. Writes evals/results/buddy-<time>.json.
 //
 //   npx tsx scripts/eval-buddy.ts            real model (about 8 cents a case)
 //   npx tsx scripts/eval-buddy.ts --fake     the requests only: sizes, no calls
@@ -12,7 +14,7 @@ import { getAiClient } from '../src/services/claude/client';
 import { costOfCall } from '../src/services/claude/pricing';
 import { parseJson, responseText } from '../src/services/recall/output';
 import { withRefusalFallbacks } from '../src/services/recall/prompts';
-import { checkOps, guardLines, nightRequest, parseNight, strayNumbers, type NightInput, type NightMemoryRow } from '../src/services/buddy/think';
+import { INSIGHT_MAX, checkOps, guardInsight, guardLines, nightRequest, parseNight, strayNumbers, type Dropped, type NightInput, type NightMemoryRow } from '../src/services/buddy/think';
 import type { BuddySignals } from '../src/services/buddy/signals';
 
 const fake = process.argv.includes('--fake');
@@ -71,10 +73,11 @@ const base = (over: Partial<NightInput> = {}): NightInput => ({
     ...over,
 });
 
-const CASES: Array<{ id: string; input: NightInput; quietOk?: boolean; sunday?: boolean }> = [
+const CASES: Array<{ id: string; input: NightInput; quietOk?: boolean; sunday?: boolean; speaks?: boolean }> = [
     { id: 'first-night', input: base({ memories: [], notes: [{ id: 'n1', kind: 'fact', private: false, source: 'hook', text: 'Works 10 to 7, studies after 9 pm' }] }) },
     {
         id: 'heavy-build-skipped-reviews',
+        speaks: true,
         input: base({
             notes: [
                 { id: 'n1', kind: 'pattern', private: false, source: 'hook', text: 'Built 7 hours straight on the buddy and skipped his reviews' },
@@ -117,11 +120,23 @@ const CASES: Array<{ id: string; input: NightInput; quietOk?: boolean; sunday?: 
             cost = costOfCall(msg.usage as never, msg.model, false).costUsd;
             const out = parseNight(parseJson(responseText(msg)));
             const sources = [JSON.stringify(c.input.signals), ...c.input.memories.map((m) => m.text), ...c.input.notes.map((n) => n.text), ...c.input.candidates.map((x) => `${x.text} ${x.due}`), ...c.input.hisNotes.map((n) => `${n.title} ${n.text}`)].join('\n');
-            const g = guardLines(out.lines, { sources, recent: c.input.said.map((s) => s.text), plain: 'plain' });
-            checks.push(['three lines, each at most 90 characters', out.lines.length === 3 && out.lines.every((l) => l.text.length <= 90), out.lines.map((l) => l.text.length).join(',')]);
-            checks.push(['no lock-screen line names the private thing', out.lines.filter((l) => l.lockOk).every((l) => !l.text.includes(PRIVATE_WORD) && !/bill|hospital|sister/i.test(l.text))]);
+            const recent = c.input.said.map((s) => s.text);
+            const g = guardLines(out.lines, { sources, recent });
+            const spoken = out.lines.filter((l) => l.text.trim());
+            const slotsOnce = new Set(out.lines.map((l) => l.slot)).size === out.lines.length;
+            checks.push(['a line per slot or silence, each at most 90 characters', out.lines.length <= 3 && slotsOnce && spoken.every((l) => l.text.length <= 90), out.lines.map((l) => l.text.length).join(',')]);
+            if (c.speaks) checks.push(['speaks when the day calls for it (a line at least)', spoken.length > 0, `${spoken.length} spoken`]);
+            checks.push(['no lock-screen line names the private thing', spoken.filter((l) => l.lockOk).every((l) => !l.text.includes(PRIVATE_WORD) && !/bill|hospital|sister/i.test(l.text))]);
             checks.push(['every number was given', g.dropped.filter((d) => d.why.includes('number')).length === 0 && !strayNumbers(`${out.note} ${out.now}`, sources).length, g.dropped.map((d) => d.why).join(',')]);
             checks.push(['no line repeats what it said lately', g.dropped.filter((d) => d.why === 'said lately').length === 0]);
+            // The home screen's thought: optional; when written it passes the guards and names nothing private.
+            const insightDropped: Dropped[] = [];
+            const insight = guardInsight(out.insight, { sources, recent, lines: g.lines }, insightDropped);
+            checks.push([
+                `the home thought, if any: at most ${INSIGHT_MAX} characters, its own words, nothing private`,
+                !out.insight.trim() || (!!insight && !insight.includes(PRIVATE_WORD) && !/bill|hospital|sister/i.test(insight)),
+                out.insight.trim() ? `${out.insight.length} chars${insightDropped.length ? `, ${insightDropped.map((d) => d.why).join(',')}` : ''}` : 'none',
+            ]);
             const ops = checkOps(out.memory, { memories: new Map(c.input.memories.map((m) => [m.id, { id: m.id, status: 'active' as const, byUser: m.byUser }])), noteIds: new Set(c.input.notes.map((n) => n.id)) });
             checks.push(['every op is valid (never on his own memory)', ops.dropped.length === 0, ops.dropped.map((d) => d.why).join(',')]);
             if (c.input.notes.length) checks.push(['the new notes were used', out.memory.some((o) => o.from.length > 0 || o.op === 'add'), `${out.memory.length} ops`]);
@@ -129,7 +144,7 @@ const CASES: Array<{ id: string; input: NightInput; quietOk?: boolean; sunday?: 
             else checks.push(['no Sunday note on a weekday', !out.weekly.use]);
             if (c.quietOk) checks.push(['a quiet day may be silent (no forced note)', true, out.note ? 'wrote a note' : 'silent']);
             checks.push(['a notebook for tomorrow', out.notebook.trim().length > 20 && out.notebook.length <= 1500]);
-            results.push({ id: c.id, cost, checks, lines: out.lines.map((l) => ({ slot: l.slot, text: l.text, lockOk: l.lockOk, form: l.form })), note: out.note, ops: out.memory.map((o) => o.op) });
+            results.push({ id: c.id, cost, checks, lines: out.lines.map((l) => ({ slot: l.slot, text: l.text, lockOk: l.lockOk, form: l.form })), insight: out.insight, note: out.note, ops: out.memory.map((o) => o.op) });
         } catch (err) {
             checks.push(['answered in the right shape', false, String(err).slice(0, 200)]);
             results.push({ id: c.id, checks });

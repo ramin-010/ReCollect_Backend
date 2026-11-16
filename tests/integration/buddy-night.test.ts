@@ -1,11 +1,11 @@
 // The night step (BUDDY_MEMORY_PLAN B3) on a fake Claude: ops checked then applied (his own memories
 // untouchable), notes folded, the portrait and notebook kept, the lines guarded (a number it wasn't
-// given, a repeat, too long → the plain line), the lock check failing closed, the picked items shown,
+// given, a repeat, too long → silence), the home screen's thought, the lock check failing closed, the picked items shown,
 // the note reaching the brief and the hooks; once a day after 04:00; working memories fade by rule.
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { prisma } from '../../src/db/prisma';
 import { setAiClientForTests } from '../../src/services/claude/client';
-import { NIGHT_SCHEMA, LOCK_SCHEMA, fadeMemories, guardLines, tooClose } from '../../src/services/buddy/think';
+import { NIGHT_SCHEMA, LOCK_SCHEMA, fadeMemories, guardInsight, guardLines, tooClose } from '../../src/services/buddy/think';
 import { nightIfDue } from '../../src/services/buddy/worker';
 import { FakeClaude, fakeMessage } from '../helpers/claude';
 import { createTestUser } from '../helpers/auth';
@@ -140,15 +140,29 @@ describe('the night step', () => {
         expect(await nightIfDue(user.id, new Date(Date.UTC(2026, 10, 17, 23, 30)))).toBeNull();
     });
 
-    it('the guards: a number it was not given, a line said lately, too long → the plain line', () => {
+    it('the guards: a number it was not given, a line said lately, too long → silence (never a forced line); a silent slot stays silent', () => {
         const lines = [
             { slot: 'morning' as const, text: 'You did 7 hours yesterday', form: 'observation' as const, lockOk: true, sourceId: '' },
             { slot: 'afternoon' as const, text: 'Start with the reviews, then build', form: 'push' as const, lockOk: true, sourceId: '' },
             { slot: 'evening' as const, text: 'x'.repeat(95), form: 'plain' as const, lockOk: true, sourceId: '' },
         ];
-        const g = guardLines(lines, { sources: '{"minutes":120}', recent: ['Start with your reviews, then build'], plain: '3 reviews left today' });
-        expect(g.lines.map((l) => l.text)).toEqual(['3 reviews left today', '3 reviews left today', '3 reviews left today']);
+        const g = guardLines(lines, { sources: '{"minutes":120}', recent: ['Start with your reviews, then build'] });
+        expect(g.lines).toEqual([]);
         expect(g.dropped.map((d) => d.why)).toEqual(['a number it was not given', 'said lately', 'too long']);
+        // Silence by choice ("" or a slot left out) is not a failure: nothing dropped, nothing put in its place.
+        const quiet = guardLines([{ slot: 'morning', text: 'Graphs first today', form: 'push', lockOk: true, sourceId: '' }, { slot: 'evening', text: '  ', form: 'plain', lockOk: true, sourceId: '' }], { sources: '', recent: [] });
+        expect(quiet.lines.map((l) => [l.slot, l.text])).toEqual([['morning', 'Graphs first today']]);
+        expect(quiet.dropped).toEqual([]);
+        // The home screen's thought: its own length, never a line's words, nothing it said lately.
+        const dropped: Array<{ what: string; why: string }> = [];
+        const ctx = { sources: '', recent: ['Two quiet days: one easy review gets you moving'], lines: quiet.lines };
+        expect(guardInsight('Your sharpest hours are before noon, so keep the hard topic there', ctx, dropped)).toBe('Your sharpest hours are before noon, so keep the hard topic there');
+        expect(guardInsight('  ', ctx, dropped)).toBeNull();
+        expect(guardInsight('y'.repeat(101), ctx, dropped)).toBeNull();
+        expect(guardInsight('Graphs first today!', ctx, dropped)).toBeNull();
+        expect(guardInsight('Two quiet days: one easy review gets you moving', ctx, dropped)).toBeNull();
+        expect(guardInsight('Keep it to 3 problems', ctx, dropped)).toBeNull();
+        expect(dropped.map((d) => d.why)).toEqual(['too long', 'a line says it', 'said lately', 'a number it was not given']);
         expect(tooClose('Pick a day for the mock interview', 'Pick a day for your mock interview?')).toBe(true);
         expect(tooClose('Pick a day for the mock interview', 'Sleep before midnight')).toBe(false);
     });

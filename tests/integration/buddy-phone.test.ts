@@ -10,7 +10,7 @@ import { LOCK_SCHEMA, NIGHT_SCHEMA } from '../../src/services/buddy/think';
 import { nightIfDue } from '../../src/services/buddy/worker';
 import { buddyDayOf, phoneBuddy } from '../../src/services/buddy/voice';
 import { loadLearningContext } from '../../src/services/learningDb/common';
-import { dayNumbers } from '../../src/services/ambient/ambient.service';
+import { dayNumbers, getAmbient, wallpaperSvg } from '../../src/services/ambient/ambient.service';
 import { FakeClaude, fakeMessage } from '../helpers/claude';
 import { createTestUser } from '../helpers/auth';
 import { api } from '../helpers/learning';
@@ -96,6 +96,42 @@ describe("the phone app's buddy", () => {
         expect((third.lines as Array<{ lockOk: boolean }>).every((l) => !l.lockOk)).toBe(true);
     });
 
+    it("silence and the home screen's thought: a silent hour shows no line (the lock picture is the dial); the thought is lock-checked, then in the widget JSON and the home picture, never with titles hidden or when it reveals", async () => {
+        const { user } = await setup();
+        const thought = 'Your sharpest hours are before noon, so keep the hard topic there';
+        fake.push(
+            fakeMessage(night('A good start to the week.', { lines: [{ slot: 'morning', text: 'Start with the reviews, then build', form: 'push', lockOk: true, sourceId: '' }, { slot: 'afternoon', text: '', form: 'plain', lockOk: true, sourceId: '' }], insight: thought })),
+            fakeMessage({ lines: [], note: false, insight: false }, { model: 'claude-sonnet-5-5' })
+        );
+        await nightIfDue(user.id, AT);
+        expect(JSON.stringify(fake.calls[1]!.messages)).toContain(`<home>\\n${thought}`);
+        const step = await prisma.buddyDay.findFirstOrThrow({ where: { userId: user.id } });
+        expect(step).toMatchObject({ insight: thought, insightLockOk: true });
+        expect((step.lines as Array<{ slot: string }>).map((l) => l.slot)).toEqual(['morning']);
+
+        const morning = await getAmbient(user.id, AT);
+        expect(morning.line?.text).toBe('Start with the reviews, then build');
+        const noon = await getAmbient(user.id, NOON);
+        expect(noon.line).toBeNull();
+        expect(noon.insight).toBe(thought);
+        expect(wallpaperSvg(noon, 1080, 2340, 'dark', 'home')).toContain('>Your sharpest hours');
+        expect(wallpaperSvg(noon, 1080, 2340, 'dark', 'lock')).not.toContain('sharpest');
+        expect((await getAmbient(user.id, NOON, { titles: false })).insight).toBeUndefined();
+        // Without the check's yes: not on the phone, and the pictures change (their key).
+        await prisma.buddyDay.update({ where: { id: step.id }, data: { insightLockOk: false } });
+        const without = await getAmbient(user.id, NOON);
+        expect(without.insight).toBeUndefined();
+        expect(without.key).not.toBe(noon.key);
+
+        // A thought that reveals stays off the home screen.
+        fake.reset();
+        fake.push(fakeMessage(night('Tuesday.', { ...fresh('Tuesday'), insight: 'Money is tight, so the paid course can wait' })), fakeMessage({ lines: [], note: false, insight: true }, { model: 'claude-sonnet-5-5' }));
+        const tuesday = new Date(AT.getTime() + 86_400_000);
+        const r = (await nightIfDue(user.id, tuesday))!;
+        expect(r.dropped).toContainEqual({ what: 'lock insight', why: 'names a private thing' });
+        expect((await getAmbient(user.id, new Date(tuesday.getTime() + 8 * 3600_000))).insight).toBeUndefined();
+    });
+
     it('the widget JSON: the note, the lines said so far, thumbs from the phone, the day in numbers; tell; nothing more for its token', async () => {
         const { user, phone } = await setup();
         fake.push(fakeMessage(night('Two good days in a row. Keep the morning reviews first.')), lock(false));
@@ -116,7 +152,7 @@ describe("the phone app's buddy", () => {
         const tuesday = new Date(AT.getTime() + 86_400_000);
         await nightIfDue(user.id, tuesday);
         const next = (await phoneBuddy(user.id, new Date(tuesday.getTime() + 8 * 3600_000)))!;
-        // Tuesday's afternoon and Monday's evening are the code's plain lines: left out.
+        // Tuesday's afternoon is silent (no line written) and Monday's evening an old step's plain line: left out.
         expect(next.lines.map((l) => l.when)).toEqual(['This morning', 'Yesterday afternoon', 'Yesterday morning']);
         expect(next.lines.every((l) => !l.current)).toBe(true);
 
@@ -177,7 +213,7 @@ describe("the phone app's buddy", () => {
         });
         // The phone app's screen: the lines said so far (newest first; the morning's is the oldest).
         const b = (await phoneBuddy(user.id, now))!;
-        expect(b.lines.at(-1)?.text).toBe('LC 981, could you still write it cold?');
+        expect(b.lines[b.lines.length - 1]?.text).toBe('LC 981, could you still write it cold?');
         for (const l of b.lines) expect(l.text).not.toMatch(/^(From your notes|Reminder)/);
         expect(b.note?.text).toBe('Two good days in a row.');
         // Home's card reads the same way.

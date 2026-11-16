@@ -35,14 +35,27 @@ export async function latestStep(userId: string, now: Date = new Date()) {
     return { row, day, slot: slotAt(hour), stale: !!row && fromDbDay(row.day) !== day };
 }
 
-/** The line for now: the current slot's, or null (then the picture says the day in plain words). */
+/**
+ * The line for now: the current slot's, or null when the buddy is silent for these hours (then the lock
+ * picture is the dial of the day). An old step's plain line (written by code in its place) counts as silence.
+ */
 export async function currentLine(userId: string, now: Date = new Date()): Promise<(Line & { dayId: string }) | null> {
     const { row, slot, stale } = await latestStep(userId, now);
     if (!row || stale) return null;
     const lines = (Array.isArray(row.lines) ? row.lines : []) as unknown as Line[];
     const line = lines.find((l) => l.slot === slot);
     // Read through unlabel too: lines saved before the voice fix (11-16) still had "From your notes:".
-    return line ? { ...line, text: unlabel(line.text), dayId: row.id } : null;
+    return line && line.text && !line.fallback ? { ...line, text: unlabel(line.text), dayId: row.id } : null;
+}
+
+/**
+ * The thought for his home screen today (Ramin 11-16: the home screen shows what matters, reminders or
+ * a suggestion or insight from the buddy, never the lock screen's line): only one the lock check passed.
+ */
+export async function currentInsight(userId: string, now: Date = new Date()): Promise<{ dayId: string; text: string } | null> {
+    const { row, stale } = await latestStep(userId, now);
+    if (!row || stale || !row.insight || !row.insightLockOk) return null;
+    return { dayId: row.id, text: unlabel(row.insight) };
 }
 
 /** The newest note or follow-up of his buddy day not yet given to this caller (`after` = the last id it showed), or null. */

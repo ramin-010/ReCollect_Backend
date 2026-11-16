@@ -46,6 +46,8 @@ export interface WallpaperInput {
     iconSlot?: boolean;
     /** Today's reminders still to come (the home picture lists them under the day's number; none: nothing). */
     reminders?: Array<{ at: string; text: string }>;
+    /** The buddy's thought for the home screen today (under the reminders; none: nothing). Never the lock screen's line. */
+    insight?: string | null;
 }
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -596,6 +598,42 @@ function reminderRows(list: ReadonlyArray<{ at: string; text: string }>, W: numb
     };
 }
 
+/** A message bubble (lucide's message-circle): the buddy's mark. Its box at (x, top), `size` square. */
+function bubble(x: number, top: number, size: number, color: string): string {
+    return `<g transform="translate(${r1(x)} ${r1(top)}) scale(${r1((size / 24) * 1000) / 1000})" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></g>`;
+}
+
+/**
+ * The buddy's thought for the home screen (Ramin 11-16: "reminders or a suggestion or an insight from
+ * the buddy… helpful, meaningful and mindful"): its mark in the reminders' icon column and the words
+ * wrapped after it (three balanced lines at most; the quiet size only if three won't hold them). The
+ * block's height counts its gap above: a step after the reminders, the reminders' own gap after the day.
+ */
+function insightRows(insight: string, W: number, x: number, usable: number, ink: Sky['ink'], afterRows: boolean): Block {
+    const text0 = insight.replace(/\s+/g, ' ').trim();
+    if (!text0) return { h: 0, draw: () => [] };
+    const u = W / 100;
+    const icon = W * TYPE.secondary * 0.92;
+    const tx = x + icon + 2.4 * u;
+    const room = x + usable - tx;
+    let size = W * TYPE.secondary;
+    let lines = wrapText(text0, size, 400, room, 4);
+    if (lines.length > 3) {
+        size = W * TYPE.quiet;
+        lines = wrapText(text0, size, 400, room, 4);
+    }
+    if (lines.length > 3) lines = [...lines.slice(0, 2), fit(lines.slice(2).join(' '), size, 400, room)];
+    const lh = size * 1.42;
+    const gap = (afterRows ? 5 : 7) * u;
+    return {
+        h: gap + size * CAP + (lines.length - 1) * lh,
+        draw: (top) => {
+            const base = top + gap + size * CAP;
+            return [bubble(x, base - size * CAP - (icon - size * CAP) / 2, icon, ink.body), ...lines.map((l, i) => text(tx, base + i * lh, l, size, 400, ink.head))];
+        },
+    };
+}
+
 /**
  * Two lines beside a numeral or a tick (x at their left edge), centred on its caps: the first in the
  * secondary size, the second quieter.
@@ -665,8 +703,9 @@ function homeHero(input: WallpaperInput, W: number, x: number, usable: number, i
 /**
  * The home picture: the backdrop (the sky of the day over its hills, or a style), and one block at
  * the left, above the dock: the date as a small eyebrow, the day's number with "left today" and the
- * time beside it, then the week's dots. Laid out in what the phone shows (its zoom), its bottom at
- * 74 % of the height. No list (Ramin 11-16: on a phone the number is enough).
+ * time beside it, today's reminders still to come and the buddy's thought when there are any, then the
+ * week's dots. Laid out in what the phone shows (its zoom), its bottom at 74 % of the height. No list
+ * of the day's things (Ramin 11-16: on a phone the number is enough) and never the lock screen's line.
  */
 export function drawWallpaper(input: WallpaperInput, width: number, height: number, theme: Theme): string {
     const W = width;
@@ -684,7 +723,8 @@ export function drawWallpaper(input: WallpaperInput, width: number, height: numb
     const hero = homeHero(input, W, x, usable, ink);
     const weekH = week ? weekHeight(W) : 0;
     const rem = reminderRows(input.reminders ?? [], W, x, usable, ink);
-    let heroTop = H * 0.74 - weekH - (week ? 8 * u : 0) - rem.h - hero.h;
+    const thought = insightRows(input.insight ?? '', W, x, usable, ink, rem.h > 0);
+    let heroTop = H * 0.74 - weekH - (week ? 8 * u : 0) - thought.h - rem.h - hero.h;
     // Never up into the clock and the search bar.
     heroTop = Math.max(heroTop, H * 0.36);
 
@@ -693,7 +733,8 @@ export function drawWallpaper(input: WallpaperInput, width: number, height: numb
     words.push(text(x, heroTop - 5 * u, fit(eyebrow, quiet, 500, usable, ls), quiet, 500, ink.meta, { track: TRACK.caps }));
     words.push(...hero.draw(heroTop));
     words.push(...rem.draw(heroTop + hero.h));
-    if (week) words.push(...weekDots(week, x, heroTop + hero.h + rem.h + 8 * u, W, ink));
+    words.push(...thought.draw(heroTop + hero.h + rem.h));
+    if (week) words.push(...weekDots(week, x, heroTop + hero.h + rem.h + thought.h + 8 * u, W, ink));
     return picture(W, H, defs, art, words, input.zoom);
 }
 

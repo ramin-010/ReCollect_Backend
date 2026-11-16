@@ -1978,26 +1978,31 @@ enum BuddyStepKind {
 /// What one thinking step wrote (BUDDY_MEMORY_PLAN §3.3): the day's three lines for the phone and
 /// Home, its note (or its silence), a follow-up for his next chat, and what the guards threw out.
 model BuddyDay {
-  id         String        @id @default(cuid())
-  userId     String
-  user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id            String        @id @default(cuid())
+  userId        String
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   /// His local day the step ran for.
-  day        DateTime      @db.Date
-  kind       BuddyStepKind
+  day           DateTime      @db.Date
+  kind          BuddyStepKind
   /// [{ slot: morning|afternoon|evening, text, form, lockOk, sourceId?, fallback? }]
-  lines      Json
-  note       String?       @db.VarChar(800)
+  lines         Json
+  note          String?       @db.VarChar(800)
   /// The lock check passed the note: the phone app may show its words in a notification (which the
   /// lock screen shows too). False when it named a private thing, wasn't checked, or the check failed.
-  noteLockOk Boolean       @default(false)
-  followUp   String?       @db.VarChar(300)
+  noteLockOk    Boolean       @default(false)
+  followUp      String?       @db.VarChar(300)
+  /// One thought for his home screen today (Ramin 11-16: the home screen lists what matters, such as
+  /// reminders or a suggestion or insight from the buddy, never the lock screen's line), or none.
+  insight       String?       @db.VarChar(200)
+  /// The lock check passed the thought: the home picture may show it (others see a home screen too).
+  insightLockOk Boolean       @default(false)
   /// The memory changes applied (an audit, and what an Undo of the night would take back).
-  ops        Json          @default("[]")
+  ops           Json          @default("[]")
   /// What the op check and the guards threw out, and why (never his words).
-  dropped    Json          @default("[]")
-  model      String        @db.VarChar(100)
-  costUsd    Decimal       @default(0) @db.Decimal(10, 6)
-  createdAt  DateTime      @default(now())
+  dropped       Json          @default("[]")
+  model         String        @db.VarChar(100)
+  costUsd       Decimal       @default(0) @db.Decimal(10, 6)
+  createdAt     DateTime      @default(now())
 
   @@index([userId, day])
 }

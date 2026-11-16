@@ -214,6 +214,31 @@ describe('the two pictures', () => {
         expect(eyebrowY(svg)).toBeLessThan(eyebrowY(plain));
     });
 
+    it("home: the buddy's thought under the reminders (its mark, the words wrapped, three lines at most); none: the picture as before", () => {
+        const plain = wallpaperSvg(a, 1080, 2340, 'dark', 'home');
+        expect(wallpaperSvg({ ...a, insight: '' }, 1080, 2340, 'dark', 'home')).toBe(plain);
+        const insight = 'Your sharpest hours are before noon, so keep the monotonic stack review there tomorrow';
+        const svg = wallpaperSvg({ ...a, insight }, 1080, 2340, 'dark', 'home');
+        expect(svg).toContain('M7.9 20A9 9 0 1 0 4 16.1L2 22Z'); // the message mark
+        const rows = [...svg.matchAll(/<text x="([\d.]+)" y="([\d.]+)" font-family="Inter" font-size="([\d.]+)" font-weight="400"[^>]*>([^<]+)</g)].filter((m) => insight.includes(m[4]!));
+        expect(rows.length).toBeGreaterThanOrEqual(2);
+        expect(rows.length).toBeLessThanOrEqual(3);
+        expect(rows.map((m) => m[4]).join(' ')).toBe(insight);
+        expect(new Set(rows.map((m) => m[1])).size).toBe(1); // one left edge, after the mark
+        expect(Number(rows[0]![3])).toBeCloseTo(1080 * 0.039, 0); // the reminders' size
+        // After the reminders (whose words start in the same column), and the block grew upward.
+        const both = wallpaperSvg({ ...a, reminders: [{ at: '9 pm', text: 'Write up the contest' }], insight }, 1080, 2340, 'dark', 'home');
+        const yOf = (s: string, words: string) => Number(new RegExp(`<text x="[\\d.]+" y="([\\d.]+)"[^>]*>${words}<`).exec(s)?.[1]);
+        const first = rows[0]![4]!;
+        expect(yOf(both, first)).toBeGreaterThan(yOf(both, 'Write up the contest'));
+        expect(yOf(both, 'SUNDAY 15 NOVEMBER')).toBeLessThan(yOf(svg, 'SUNDAY 15 NOVEMBER'));
+        // Never a fourth line: a long one steps down to the quiet size, then ends with "…".
+        const long = wallpaperSvg({ ...a, insight: `${insight} and then ${insight} and once more ${insight}` }, 1080, 2340, 'dark', 'home');
+        const longRows = [...long.matchAll(/font-weight="400"[^>]*>([^<]+)</g)].filter((m) => m[1]!.length > 10 && !/^(about|left|Nothing)/.test(m[1]!));
+        expect(longRows.length).toBeLessThanOrEqual(3);
+        for (const m of long.matchAll(/font-size="([\d.]+)"/g)) expect(Number(m[1])).toBeGreaterThanOrEqual(1080 * 0.031 - 0.1);
+    });
+
     it('home (B8): drawn for the zoom the phone shows it at: the words smaller about the centre, the backdrop whole', () => {
         const flat = wallpaperSvg(a, 1080, 2340, 'dark', 'home');
         const zoomed = wallpaperSvg(a, 1080, 2340, 'dark', 'home', { zoom: 1.1 });

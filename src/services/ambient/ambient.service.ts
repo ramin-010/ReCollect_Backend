@@ -3,7 +3,7 @@
 // the focus line while working, one line on the day in the evening, a clean picture when the day is
 // done, lighter in busy and comeback modes. Never red, never an overdue count as the headline.
 import { getBrief, type Brief } from '../brief/brief.service';
-import { currentLine } from '../buddy/voice';
+import { currentInsight, currentLine } from '../buddy/voice';
 import { getToday } from '../learningDb/today.service';
 import type { PlanMode } from '../learning/plan';
 import { dayOf } from '../learning/time';
@@ -41,6 +41,12 @@ export interface Ambient {
      * are none it stays clean"), soonest first, three at most; with titles hidden, plain words.
      */
     reminders?: AmbientReminder[];
+    /**
+     * The buddy's thought for the home screen today (Ramin 11-16: the home screen lists what matters,
+     * reminders or a suggestion or insight from the buddy; the lock screen keeps the line): only one the
+     * lock check passed, never with titles hidden; none: the picture stays as it is.
+     */
+    insight?: string;
     /** Changes whenever either picture would: the phone app fetches them again only then. */
     key?: string;
 }
@@ -163,7 +169,7 @@ const DRAWING = 'type-2';
 /** A short fingerprint of everything the pictures draw (FNV-1a over the words). */
 function pictureKey(a: Omit<Ambient, 'key' | 'updatedAt'>): string {
     // DRAWING: bumped when the drawing itself changes, so every phone fetches the new pictures.
-    const text = JSON.stringify([DRAWING, a.state, a.date, a.headline, a.lines, a.mode, a.week, a.items, a.counts, a.goal, a.line?.text ?? null, ...(a.reminders?.length ? [a.reminders] : [])]);
+    const text = JSON.stringify([DRAWING, a.state, a.date, a.headline, a.lines, a.mode, a.week, a.items, a.counts, a.goal, a.line?.text ?? null, ...(a.reminders?.length ? [a.reminders] : []), ...(a.insight ? [{ insight: a.insight }] : [])]);
     let h = 2166136261;
     for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 16777619);
     return (h >>> 0).toString(36);
@@ -239,14 +245,20 @@ export async function todayReminders(userId: string, now: Date, tz: string, titl
 }
 
 export async function getAmbient(userId: string, now: Date = new Date(), options: AmbientOptions = {}): Promise<Ambient> {
-    const [brief, today, line] = await Promise.all([getBrief(userId, {}, now), getToday(userId, now), options.titles === false ? Promise.resolve(null) : currentLine(userId, now)]);
-    const reminders = await todayReminders(userId, now, brief.now.timezone, options.titles !== false);
+    const titles = options.titles !== false;
+    const [brief, today, line, insight] = await Promise.all([
+        getBrief(userId, {}, now),
+        getToday(userId, now),
+        titles ? currentLine(userId, now) : Promise.resolve(null),
+        titles ? currentInsight(userId, now) : Promise.resolve(null),
+    ]);
+    const reminders = await todayReminders(userId, now, brief.now.timezone, titles);
     const { hour, date } = localClock(now, brief.now.timezone);
     const mode = (today.plan?.mode ?? 'normal') as PlanMode;
     const week = today.stats?.rhythm?.last7?.map((d) => ({ day: d.day, active: d.active }));
-    const day = dayItems(today, now, options.titles !== false);
+    const day = dayItems(today, now, titles);
     const buddyLine = line && line.lockOk && !line.fallback ? { dayId: line.dayId, slot: line.slot, text: line.text } : null;
-    const a = { ...ambientFor(brief, mode, hour, date, now, options), ...(week?.length === 7 ? { week } : {}), ...day, line: buddyLine, ...(reminders.length ? { reminders } : {}) };
+    const a = { ...ambientFor(brief, mode, hour, date, now, options), ...(week?.length === 7 ? { week } : {}), ...day, line: buddyLine, ...(reminders.length ? { reminders } : {}), ...(insight ? { insight: insight.text } : {}) };
     return { ...a, key: pictureKey(a) };
 }
 
@@ -283,6 +295,7 @@ export function wallpaperSvg(a: Ambient, width: number, height: number, theme: '
         ...(a.goal !== undefined ? { goal: a.goal } : {}),
         line: a.line?.text ?? null,
         ...(a.reminders?.length ? { reminders: a.reminders } : {}),
+        ...(a.insight ? { insight: a.insight } : {}),
     };
     return screen === 'lock' ? drawLock(input, width, height, theme) : drawWallpaper(input, width, height, theme);
 }
