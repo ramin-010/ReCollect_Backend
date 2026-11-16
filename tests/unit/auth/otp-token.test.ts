@@ -9,8 +9,8 @@ afterEach(() => {
 });
 
 describe('OTP rules', () => {
-    it('codes are 4 digits', () => {
-        for (let i = 0; i < 200; i += 1) expect(generateOtpCode()).toMatch(/^[1-9]\d{3}$/);
+    it('codes are 6 digits (hosting review A3)', () => {
+        for (let i = 0; i < 200; i += 1) expect(generateOtpCode()).toMatch(/^[1-9]\d{5}$/);
     });
 
     it(`expires exactly ${OTP_TTL_SECONDS} s after creation`, () => {

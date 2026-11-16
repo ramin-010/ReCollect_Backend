@@ -228,3 +228,4 @@ The migration folders of 14 Nov carry hand-picked names (`20261114180000_…` to
 1. Change `schema.prisma`, then `npx prisma format`.
 2. `mkdir prisma/migrations/<the last name + 1>_<what>` and write the SQL with `npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script > …/migration.sql`.
 3. Read the SQL (only your change in it), then `npm run db:deploy` and `npx prisma generate`.
+4. **Expand, then contract** (hosting review, 11-16): a release's migration must keep the *previous* release working on the new schema (add columns with defaults, add tables, add indexes; never rename or drop in the same release as the code that stops using it: drop in a later release). Then rolling back the code never needs a data restore, which would lose the rows written since the migration. The three migrations of 11-16 (`20261116100000_buddy_work_agent`, `20261116110000_reminder_phone`, `20261116120000_otp_tries`) only add.

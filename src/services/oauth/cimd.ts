@@ -90,8 +90,29 @@ function cacheSeconds(header: string | null): number {
     return Math.min(Math.max(s, MIN_CACHE_S), MAX_CACHE_S);
 }
 
+/**
+ * OAUTH_CIMD_HOSTS (hosting review A1): the hosts whose client metadata the server may fetch,
+ * comma-separated (production: claude.ai). Unset: any public https host, as before (dev). A URL on
+ * another host is refused before any request leaves the server: /oauth/authorize runs before login.
+ */
+export function cimdHosts(env: NodeJS.ProcessEnv = process.env): string[] | null {
+    const list = (env['OAUTH_CIMD_HOSTS'] ?? '').split(',').map((h) => h.trim().toLowerCase()).filter(Boolean);
+    return list.length ? list : null;
+}
+
+export function cimdHostAllowed(url: string, env: NodeJS.ProcessEnv = process.env): boolean {
+    const hosts = cimdHosts(env);
+    if (!hosts) return true;
+    try {
+        return hosts.includes(new URL(url).hostname.toLowerCase());
+    } catch {
+        return false;
+    }
+}
+
 /** The client a metadata URL names, checked (CimdError when it can't be used). */
 export async function clientFromMetadataUrl(url: string, now: number = Date.now()): Promise<ClientMetadata> {
+    if (!cimdHostAllowed(url)) throw new CimdError('Client metadata is read only from the hosts this server lists');
     const hit = cache.get(url);
     if (hit && hit.until > now) return hit.value;
     let res: Awaited<ReturnType<Fetcher>>;

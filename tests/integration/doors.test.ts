@@ -46,7 +46,7 @@ describe('signup closed or by list (P1-3)', () => {
             expect(res.status, path).toBe(403);
             expect(res.body.message).toBe('New accounts are closed on this server.');
         }
-        expect((await request(app).post('/api/verify-signup').send({ email: 'stranger@example.org', otp: '1234' })).status).toBe(403);
+        expect((await request(app).post('/api/verify-signup').send({ email: 'stranger@example.org', otp: '123456' })).status).toBe(403);
         google('stranger@example.org');
         expect((await request(app).post('/api/auth/google').send({ accessToken: 'fake' })).status).toBe(403);
         expect(await prisma.user.count({ where: { email: 'stranger@example.org' } })).toBe(0);
@@ -80,7 +80,7 @@ describe('codes (P1-4)', () => {
         const email = 'codes@example.org';
         expect((await request(app).post('/api/otp/generate').send({ email })).status).toBe(200);
         const code = lastOtpSentTo(email)!;
-        const wrong = code === '1111' ? '2222' : '1111';
+        const wrong = code === '111111' ? '222222' : '111111';
         for (let i = 0; i < 5; i++) {
             const res = await request(app).post('/api/otp/verify').send({ email, otp: wrong });
             expect(res.status).toBe(400);
@@ -95,7 +95,7 @@ describe('codes (P1-4)', () => {
         const email = 'four-wrong@example.org';
         await request(app).post('/api/otp/generate').send({ email });
         const code = lastOtpSentTo(email)!;
-        const wrong = code === '1111' ? '2222' : '1111';
+        const wrong = code === '111111' ? '222222' : '111111';
         for (let i = 0; i < 4; i++) await request(app).post('/api/otp/verify').send({ email, otp: wrong });
         expect((await request(app).post('/api/otp/verify').send({ email, otp: code })).status).toBe(200);
     });

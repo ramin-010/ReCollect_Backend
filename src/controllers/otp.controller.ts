@@ -10,7 +10,7 @@ const generateOtpSchema = z.object({
 
 const verifyOtpSchema = z.object({
     email: z.string().email({ message: 'Please provide a valid email address' }),
-    otp: z.string().length(4, { message: 'OTP must be exactly 4 digits' })
+    otp: z.string().length(6, { message: 'The code is 6 digits' })
 });
 
 export const generateOtp = async (req: Request, res: Response, next: NextFunction): Promise<any> => {

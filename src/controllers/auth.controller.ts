@@ -139,7 +139,7 @@ export const preSignup = async (req: Request, res: Response, next: NextFunction)
 
 const verifySignupSchema = z.object({
     email: z.string().email({ message: 'Email is not valid' }),
-    otp: z.string().length(4, { message: 'OTP must be exactly 4 digits' })
+    otp: z.string().length(6, { message: 'The code is 6 digits' })
 });
 
 export const verifySignup = async (req: Request, res: Response, next: NextFunction): Promise<any> => {
@@ -209,7 +209,7 @@ export const forgotPassword = async (req: Request, res: Response, next: NextFunc
 
 const resetPasswordSchema = z.object({
     email: z.string().email({ message: 'Email is not valid' }),
-    otp: z.string().length(4, { message: 'OTP must be exactly 4 digits' }),
+    otp: z.string().length(6, { message: 'The code is 6 digits' }),
     newPassword: z.string().min(8, { message: 'Password must be at least 8 characters long' })
 });
 

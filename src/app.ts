@@ -5,7 +5,7 @@
 // Order matters: userRoutes is mounted on '/api' with router.use(authMiddleware), so every
 // '/api/*' request that reaches it (all routers mounted after it) goes through auth first.
 import 'dotenv/config';
-import express, { Application } from 'express'
+import express, { Application, type NextFunction, type Request, type RequestHandler, type Response } from 'express'
 import morgan from 'morgan';
 import cors from 'cors'
 import cookieParser from 'cookie-parser';
@@ -39,6 +39,29 @@ import buddyRoutes from './routers/buddy.routes';
 import { consentRouter, publicOAuthRouter } from './routers/oauth.routes';
 import { healthDbRouter, healthzRouter } from './routers/health.routes';
 import { allowedOrigins } from './config/origins';
+import { authOnce } from './middlwares/scopes';
+
+/**
+ * Hosting review A2: request bodies up to 2 MB, read before any login check. Docs, agent writes and
+ * canvas boards may send up to 10 MB, read only after the login check (a stranger can't make the
+ * server hold 10 MB). A larger body answers 413.
+ */
+export const BODY_LIMIT = '2mb';
+export const LARGE_BODY_LIMIT = '10mb';
+export const LARGE_BODY_PATHS = ['/api/docs', '/api/agent', '/api/canvas'];
+const isLargeBodyPath = (path: string) => LARGE_BODY_PATHS.some((p) => path === p || path.startsWith(`${p}/`));
+const BODYLESS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+/** Runs the handlers one after another, as one middleware. */
+function chain(handlers: RequestHandler[], req: Request, res: Response, next: NextFunction): void {
+    let i = 0;
+    const step = (err?: unknown) => {
+        const h = handlers[i++];
+        if (err || !h) return next(err);
+        h(req, res, step);
+    };
+    step();
+}
 
 // Cut on the pg-migration branch (files in backend/_archive): content, dashboards (dash),
 // expenses, slides + slide AI, livekit, email (Gmail). Whiteboard (drawings + drawing AI): backend/_archive/drawing.
@@ -47,8 +70,9 @@ import { allowedOrigins } from './config/origins';
 export function createApp(): Application {
     const app: Application = express();
 
-    app.use(express.json({ limit: '50mb' }));
-    app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+    const smallBodies = [express.json({ limit: BODY_LIMIT }), express.urlencoded({ extended: true, limit: BODY_LIMIT })];
+    const largeBodies = [express.json({ limit: LARGE_BODY_LIMIT }), express.urlencoded({ extended: true, limit: LARGE_BODY_LIMIT })];
+    app.use((req, res, next) => (isLargeBodyPath(req.path) ? next() : chain(smallBodies, req, res, next)));
     if (process.env.NODE_ENV === 'production') {
         // Hosting P1-7: method, path without its query, status, milliseconds. No query, body or name.
         app.use(morgan((tokens, req, res) => `${tokens.method?.(req, res)} ${(req.originalUrl || req.url || '').split('?')[0]} ${tokens.status?.(req, res)} ${tokens['response-time']?.(req, res)} ms`));
@@ -83,6 +107,9 @@ export function createApp(): Application {
         methods: ['GET', "POST", "PUT", "DELETE", "PATCH"],
         allowedHeaders: ['Content-Type', "Authorization"]
     }))
+
+    // The named large routes: the login first, then the body (up to LARGE_BODY_LIMIT).
+    app.use(LARGE_BODY_PATHS, (req, res, next) => (BODYLESS.has(req.method) ? next() : chain([authOnce, ...largeBodies], req, res, next)));
 
     // Public workspace routes (no auth) must be mounted BEFORE the protected ones
     app.use('/api/workspaces', publicWorkspaceRouter);

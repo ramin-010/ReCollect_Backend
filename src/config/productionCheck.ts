@@ -71,6 +71,12 @@ export function productionProblems(env: NodeJS.ProcessEnv = process.env): string
 
     if (env['ASSISTANT_FAKE']?.trim()) problems.push("ASSISTANT_FAKE must be unset (it swaps Ask AI's model for a scripted stand-in)");
 
+    // Hosting review A8: TLS checks switched off for the whole process (the database, the AI, email).
+    if (env['NODE_TLS_REJECT_UNAUTHORIZED']?.trim() === '0') problems.push('NODE_TLS_REJECT_UNAUTHORIZED=0 must be removed (it switches off every TLS check)');
+
+    // Hosting review A1: /oauth/authorize reads client metadata before login: only from listed hosts.
+    if (!env['OAUTH_CIMD_HOSTS']?.split(',').some((h) => h.trim())) problems.push('OAUTH_CIMD_HOSTS must list the hosts whose client metadata may be read (claude.ai)');
+
     const db = databaseProblem(env['DATABASE_URL']);
     if (db) problems.push(db);
 

@@ -55,6 +55,7 @@ describe('production mode', () => {
                 JWT_SECRET: SECRET,
                 ALLOWED_ORIGINS: 'https://re-collect.example',
                 RECOLLECT_SELF_URL: 'https://api.recollect.example',
+                OAUTH_CIMD_HOSTS: 'claude.ai',
                 SCHEDULER_MODE: 'quiet',
                 BUDDY_WORKER: 'off',
                 RECOLLECT_STATE_DIR: path.join(os.tmpdir(), `recollect-state-${process.pid}`),
@@ -88,7 +89,7 @@ describe('production mode', () => {
         const document = new Y.Doc();
         class CookieSocket extends WebSocket {
             constructor(url: string) {
-                super(url, { headers: { Cookie: cookie } } as unknown as string[]);
+                super(url, { headers: { Cookie: cookie, Origin: 'https://re-collect.example' } } as unknown as string[]);
             }
         }
         const socket = new HocuspocusProviderWebsocket({ url: `ws://127.0.0.1:${port}/collab`, WebSocketPolyfill: CookieSocket });

@@ -132,7 +132,8 @@ describe('the capture queue', () => {
 
         await api(user).patch('/api/buddy/settings', { enabled: true });
         await words(hook, 2, ['another thing']);
-        fake.push(new Error('boom'), new Error('boom'), new Error('boom'));
+        // A failure of the piece itself (the model answered in a shape the gate can't read) counts toward its 3 tries.
+        fake.push(fakeMessage('not json'), fakeMessage('not json'), fakeMessage('not json'));
         for (let i = 0; i < 3; i++) expect((await drainBuddyQueue()).failed).toBe(1);
         expect(await drainBuddyQueue()).toMatchObject({ dropped: 1 });
         const day = await prisma.buddyCaptureDay.findFirstOrThrow({ where: { userId: user.id } });

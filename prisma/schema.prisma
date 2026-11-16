@@ -179,7 +179,7 @@ model Otp {
   id         String     @id @default(cuid())
   /// Stored lowercased.
   email      String
-  /// 4 digits.
+  /// 6 digits (4 before the hosting review, 11-16).
   otp        String
   /// Signup only: { name, passwordHash }. The password is hashed before it is stored.
   signupData Json?

@@ -45,7 +45,7 @@ async function startServer(port: number): Promise<{ child: ChildProcess; output:
 const withCookie = (userId: string) =>
     class CookieSocket extends WebSocket {
         constructor(url: string) {
-            super(url, { headers: { Cookie: `${AUTH_COOKIE_NAME}=${signAuthToken(userId)}` } } as unknown as string[]);
+            super(url, { headers: { Cookie: `${AUTH_COOKIE_NAME}=${signAuthToken(userId)}`, Origin: 'http://localhost:3005' } } as unknown as string[]);
         }
     };
 

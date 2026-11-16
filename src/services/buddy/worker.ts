@@ -16,6 +16,22 @@ import { PULSE_HOURS, pulseDue, pulseIfDue } from './pulse';
 import { chapterIfDue, yearIfDue } from './chapter';
 
 export const CHUNK_MAX_AGE_MS = 48 * 3600_000;
+
+/**
+ * A failure that says nothing about the piece: the model is overloaded or rate-limited, the account
+ * is out of credit, the server or the network failed, a timeout. Such a piece waits for the next pass.
+ */
+export function isTransientAiError(err: unknown): boolean {
+    const e = err as { status?: unknown; statusCode?: unknown; code?: unknown; name?: unknown; message?: unknown } | null;
+    const status = typeof e?.status === 'number' ? e.status : typeof e?.statusCode === 'number' ? e.statusCode : 0;
+    if (status === 408 || status === 409 || status === 429 || status === 529 || status >= 500) return true;
+    const code = typeof e?.code === 'string' ? e.code : '';
+    if (/^(AI_BUSY|AI_UNAVAILABLE|AI_OVERLOADED|AI_TIMEOUT|AI_CREDIT|ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|UND_ERR)/.test(code)) return true;
+    const name = typeof e?.name === 'string' ? e.name : '';
+    if (/APIConnectionError|APIConnectionTimeoutError|InternalServerError|RateLimitError|AbortError|TimeoutError/.test(name)) return true;
+    const message = typeof e?.message === 'string' ? e.message : '';
+    return /overloaded|busy|rate.?limit|credit|timed? ?out|temporarily|unavailable|could not answer just now|socket hang up|network|ECONNRESET|ETIMEDOUT/i.test(message);
+}
 export const CHUNK_TRIES = 3;
 const PER_TICK = 10;
 
@@ -68,11 +84,20 @@ export async function drainBuddyQueue(now: Date = new Date(), limit = PER_TICK):
             result.digested++;
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
+            // A model or network outage is not the piece's fault: it waits (kept, its tries untouched) and
+            // the whole queue is tried again later (the quiet scheduler: 1, 2, 5, then every 15 minutes).
+            // Only a failure of the piece itself counts toward its 3 tries. Either way the 48-hour limit
+            // still bounds how long his words are kept.
+            if (isTransientAiError(err)) {
+                await prisma.buddyChunk.updateMany({ where: { id: c.id }, data: { lastError: message.slice(0, 300) } });
+                console.error(`[buddy] the AI is unavailable; the queue waits (${message.slice(0, 120)})`);
+                result.failed++;
+                result.waiting += chunks.length - chunks.indexOf(c) - 1;
+                break;
+            }
             await prisma.buddyChunk.updateMany({ where: { id: c.id }, data: { attempts: { increment: 1 }, lastError: message.slice(0, 300) } });
             console.error(`[buddy] a piece of a chat could not be digested (try ${c.attempts + 1}): ${message}`);
             result.failed++;
-            // An AI outage: leave the rest of the queue for the next tick.
-            if (/busy|overloaded|credit|AI_/i.test(message)) break;
         }
     }
     return result;

@@ -8,14 +8,14 @@ import { authCookie, createTestUser } from '../helpers/auth';
 import { lastOtpSentTo, mailsTo, setMailFailure } from '../helpers/mail';
 
 describe('POST /api/otp/generate', () => {
-    it('stores a 4-digit signup OTP (lowercased email) and emails it', async () => {
+    it('stores a 6-digit signup OTP (lowercased email) and emails it', async () => {
         const res = await request(app).post('/api/otp/generate').send({ email: 'Someone@Example.test' });
         expect(res.status).toBe(200);
         expect(res.body).toEqual({ success: true, message: 'OTP sent successfully to your email' });
 
         const stored = await prisma.otp.findFirstOrThrow({ where: { email: 'someone@example.test' } });
         expect(stored.purpose).toBe('signup');
-        expect(stored.otp).toMatch(/^\d{4}$/);
+        expect(stored.otp).toMatch(/^\d{6}$/);
         expect(lastOtpSentTo('Someone@Example.test')).toBe(stored.otp);
     });
 
@@ -59,7 +59,7 @@ describe('POST /api/otp/verify', () => {
         const code = lastOtpSentTo('wrongcode@example.test')!;
         const res = await request(app)
             .post('/api/otp/verify')
-            .send({ email: 'wrongcode@example.test', otp: code === '9999' ? '1000' : '9999' });
+            .send({ email: 'wrongcode@example.test', otp: code === '999999' ? '100000' : '999999' });
         expect(res.status).toBe(400);
         expect(res.body).toEqual({ message: 'Invalid OTP. Please check and try again.' });
     });
@@ -82,7 +82,7 @@ describe('POST /api/otp/verify', () => {
         const res = await request(app).post('/api/otp/verify').send({ email: 'x@example.test', otp: '12' });
         expect(res.status).toBe(400);
         expect(res.body.message).toBe('Invalid request');
-        expect(res.body.error.fieldErrors.otp).toEqual(['OTP must be exactly 4 digits']);
+        expect(res.body.error.fieldErrors.otp).toEqual(['The code is 6 digits']);
     });
 });
 

@@ -48,7 +48,10 @@ const errorHandler = (err : any, req : Request, res : Response, next: NextFuncti
     error = new ErrorResponse(400, message);
   }
 
-  const statusCode = error.statusCode || 500;
+  // A body the parser refused (too large: 413; malformed: 400) keeps its 4xx (http-errors marks those
+  // `expose`); spreading the error above loses it, so it used to answer 500.
+  const parserStatus = err?.expose === true && typeof err?.status === 'number' && err.status >= 400 && err.status < 500 ? err.status : 0;
+  const statusCode = error.statusCode || parserStatus || 500;
   if (process.env.NODE_ENV === 'production') {
     // Hosting P1-7: a failure's kind and where it happened, never its message (a database error can
     // quote what was sent) and never the request; the request log already has the 4xx.

@@ -31,11 +31,11 @@ export function mailsTo(email: string): SentMail[] {
     return sentMails().filter((m) => String(m.to).toLowerCase() === email.toLowerCase());
 }
 
-/** The 4-digit code of the last OTP email sent to `email` (subject is "Login Code: 1234"). */
+/** The code (6 digits since the hosting review; 4 before) of the last OTP email sent to `email` (subject is "Login Code: 1234"). */
 export function lastOtpSentTo(email: string): string | undefined {
     const mails = mailsTo(email);
     const last = mails[mails.length - 1];
-    return last?.subject?.match(/(\d{4})/)?.[1];
+    return last?.subject?.match(/(\d{4,8})/)?.[1];
 }
 
 export function createNodemailerMock() {

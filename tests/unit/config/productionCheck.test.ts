@@ -12,6 +12,7 @@ const GOOD: NodeJS.ProcessEnv = {
     HOST: '127.0.0.1',
     SIGNUP_MODE: 'allowlist',
     DATABASE_URL: 'postgresql://app:pw@ep-quiet-sky-123456-pooler.ap-southeast-1.aws.neon.tech/workspace?sslmode=verify-full',
+    OAUTH_CIMD_HOSTS: 'claude.ai',
 };
 const withEnv = (patch: Record<string, string | undefined>): NodeJS.ProcessEnv => {
     const env: NodeJS.ProcessEnv = { ...GOOD };
@@ -78,9 +79,22 @@ describe('productionProblems', () => {
         expect(problems({ DATABASE_URL: 'not a url' })).toEqual(['DATABASE_URL is not a valid connection URL']);
     });
 
+    it('NODE_TLS_REJECT_UNAUTHORIZED=0 (every TLS check off) refuses the start (hosting review A8)', () => {
+        expect(problems({ NODE_TLS_REJECT_UNAUTHORIZED: '0' })).toEqual([expect.stringMatching(/^NODE_TLS_REJECT_UNAUTHORIZED=0 must be removed/)]);
+        expect(problems({ NODE_TLS_REJECT_UNAUTHORIZED: '1' })).toEqual([]);
+    });
+
+    it('OAUTH_CIMD_HOSTS unset or blank refuses the start (hosting review A1)', () => {
+        for (const v of [undefined, ' , ']) expect(problems({ OAUTH_CIMD_HOSTS: v })).toEqual([expect.stringMatching(/^OAUTH_CIMD_HOSTS must list/)]);
+    });
+
+    it('a pooled URL with sslmode=verify-full and no sslrootcert counts as verified (hosting review A9)', () => {
+        expect(problems({ DATABASE_URL: 'postgresql://app:pw@ep-x-pooler.ap-southeast-1.aws.neon.tech/workspace?sslmode=verify-full&channel_binding=require' })).toEqual([]);
+    });
+
     it('every problem at once, in a fixed order', () => {
-        const all = productionProblems({ NODE_ENV: 'production', ASSISTANT_FAKE: 'qa@recollect.local' });
-        expect(all.map((p) => p.split(' ')[0])).toEqual(['JWT_SECRET', 'ALLOWED_ORIGINS', 'RECOLLECT_SELF_URL', 'HOST', 'SIGNUP_MODE', 'ASSISTANT_FAKE', 'DATABASE_URL']);
+        const all = productionProblems({ NODE_ENV: 'production', ASSISTANT_FAKE: 'qa@recollect.local', NODE_TLS_REJECT_UNAUTHORIZED: '0' });
+        expect(all.map((p) => p.split(/[ =]/)[0])).toEqual(['JWT_SECRET', 'ALLOWED_ORIGINS', 'RECOLLECT_SELF_URL', 'HOST', 'SIGNUP_MODE', 'ASSISTANT_FAKE', 'NODE_TLS_REJECT_UNAUTHORIZED', 'OAUTH_CIMD_HOSTS', 'DATABASE_URL']);
     });
 });
 

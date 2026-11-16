@@ -27,9 +27,11 @@ export const OTP_INVALID_MESSAGE = 'Invalid OTP. Please check and try again.';
 
 /** Hosting P1-4: a code dies at its 5th wrong try (the 6th fails even when right)... */
 export const OTP_MAX_WRONG_TRIES = 5;
-/** ...and an email gets at most 3 codes an hour (in memory: one process). The code stays 4 digits. */
+/** ...and an email gets at most 3 codes an hour and 6 a day (in memory: one process). */
 export const OTP_SENDS_PER_HOUR = 3;
+export const OTP_SENDS_PER_DAY = 6;
 const HOUR_MS = 3_600_000;
+const DAY_MS = 24 * HOUR_MS;
 const sends = new Map<string, number[]>();
 
 /** Tests: forget the codes sent so far. */
@@ -39,22 +41,28 @@ export function resetOtpSendLimits(): void {
 
 /** 429 when this email already had OTP_SENDS_PER_HOUR codes in the last hour; else counts this one. */
 function countOtpSend(email: string, now = Date.now()): void {
-    const recent = (sends.get(email) ?? []).filter((t) => now - t < HOUR_MS);
-    if (recent.length >= OTP_SENDS_PER_HOUR) {
-        const minutes = Math.max(1, Math.ceil((recent[0]! + HOUR_MS - now) / 60_000));
+    const today = (sends.get(email) ?? []).filter((t) => now - t < DAY_MS);
+    if (today.length >= OTP_SENDS_PER_DAY) {
+        throw new ErrorResponse(429, 'Too many codes for this email today. Try again tomorrow.');
+    }
+    const lastHour = today.filter((t) => now - t < HOUR_MS);
+    if (lastHour.length >= OTP_SENDS_PER_HOUR) {
+        const minutes = Math.max(1, Math.ceil((lastHour[0]! + HOUR_MS - now) / 60_000));
         throw new ErrorResponse(429, `Too many codes for this email. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`);
     }
-    recent.push(now);
-    sends.set(email, recent);
+    today.push(now);
+    sends.set(email, today);
 }
 
 function toDbPurpose(purpose: OtpPurposeName): OtpPurpose {
     return purpose === 'password-reset' ? 'password_reset' : 'signup';
 }
 
-/** 4-digit code, 1000-9999 (same format as before, from a CSPRNG). */
+/** Hosting review A3: six digits (was four), from a CSPRNG. The web app's code fields take six. */
+export const OTP_DIGITS = 6;
+
 export function generateOtpCode(): string {
-    return crypto.randomInt(1000, 10000).toString();
+    return crypto.randomInt(10 ** (OTP_DIGITS - 1), 10 ** OTP_DIGITS).toString();
 }
 
 /** An OTP expires OTP_TTL_SECONDS after it was created. */

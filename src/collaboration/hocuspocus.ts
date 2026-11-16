@@ -353,6 +353,15 @@ export function attachCollaborationServer(server: HttpServer): void {
       socket.destroy();
       return;
     }
+    // Hosting review A4 (T8): a browser always sends Origin on a WebSocket; it must be the web app's
+    // (ALLOWED_ORIGINS). A missing one is refused too: behind the tunnel every peer is loopback, and the
+    // server's own writers use direct connections, never a socket.
+    const origin = request.headers.origin;
+    if (!origin || !allowedOrigins().includes(origin)) {
+      socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+      socket.destroy();
+      return;
+    }
     const wss = hocuspocusServer.webSocketServer;
     hocuspocusServer.hocuspocus
       .hooks('onUpgrade', { request, socket, head, instance: hocuspocusServer.hocuspocus })

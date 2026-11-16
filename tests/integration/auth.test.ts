@@ -184,7 +184,7 @@ describe('OTP signup: POST /api/pre-signup → POST /api/verify-signup', () => {
         expect(pre.body).toEqual({ success: true, message: 'OTP sent successfully to your email. Please verify to complete signup.' });
 
         const code = lastOtpSentTo('Grace@Example.test');
-        expect(code).toMatch(/^\d{4}$/);
+        expect(code).toMatch(/^\d{6}$/);
         const stored = await prisma.otp.findFirstOrThrow({ where: { email: 'grace@example.test' } });
         expect(stored.otp).toBe(code);
         expect(stored.purpose).toBe('signup');
@@ -221,7 +221,7 @@ describe('OTP signup: POST /api/pre-signup → POST /api/verify-signup', () => {
     it('400 for a wrong code (the OTP stays usable)', async () => {
         await request(app).post('/api/pre-signup').send({ name: 'W', email: 'wrong@example.test', password: 'secret-pass' });
         const code = lastOtpSentTo('wrong@example.test')!;
-        const wrongCode = code === '1234' ? '4321' : '1234';
+        const wrongCode = code === '123456' ? '654321' : '123456';
 
         const res = await request(app).post('/api/verify-signup').send({ email: 'wrong@example.test', otp: wrongCode });
         expect(res.status).toBe(400);
@@ -251,7 +251,7 @@ describe('OTP signup: POST /api/pre-signup → POST /api/verify-signup', () => {
     });
 
     it('400 when no OTP exists', async () => {
-        const res = await request(app).post('/api/verify-signup').send({ email: 'never@example.test', otp: '1234' });
+        const res = await request(app).post('/api/verify-signup').send({ email: 'never@example.test', otp: '123456' });
         expect(res.status).toBe(400);
         expect(res.body).toEqual({ message: 'OTP has expired or does not exist. Please request a new one.' });
     });
