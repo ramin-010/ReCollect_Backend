@@ -9,7 +9,7 @@ import type { PlanMode } from '../learning/plan';
 import { dayOf } from '../learning/time';
 import path from 'node:path';
 import { svgToPng } from '../docs/diagram/png';
-import { drawLock, drawWallpaper } from './wallpaperArt';
+import { drawLock, drawWallpaper, kindWords } from './wallpaperArt';
 
 export type AmbientState = 'morning' | 'working' | 'evening' | 'done' | 'rest';
 
@@ -137,8 +137,16 @@ export function dayNumbers(a: Pick<Ambient, 'items' | 'counts'>): string {
     return `${open} left today${minutes ? ` · about ${minutes} min` : ''}`;
 }
 
-/** The drawing's version (11-16: the lock picture's full ring). */
-const DRAWING = 'ring-1';
+/**
+ * What is left by kind, in words, for the phone app's day card under its headline ("7 reviews · 2 tasks";
+ * '' on a free or done day): the headline says how many and how long, this says what (B8).
+ */
+export function dayBreakdown(a: Pick<Ambient, 'counts'>): string {
+    return kindWords(a.counts);
+}
+
+/** The drawing's version (11-16: the lock picture's full ring; B8: the type system and the home picture's zoom). */
+const DRAWING = 'type-2';
 
 /** A short fingerprint of everything the pictures draw (FNV-1a over the words). */
 function pictureKey(a: Omit<Ambient, 'key' | 'updatedAt'>): string {
@@ -221,11 +229,19 @@ export const WALLPAPER_FONTS = ['Regular', 'Medium', 'SemiBold', 'Bold'].map((w)
 
 export type WallpaperScreen = 'home' | 'lock';
 
-/** The wallpaper as SVG (wallpaperArt.ts): the home picture (the sky of the day and its list) or the lock picture (the dial). */
-export function wallpaperSvg(a: Ambient, width: number, height: number, theme: 'light' | 'dark', screen: WallpaperScreen = 'home', look: { style?: string; color?: string } = {}): string {
+/** How a picture is drawn beyond the day: its style and colour, and the zoom the phone shows it at (B8). */
+export interface PictureLook {
+    style?: string;
+    color?: string;
+    zoom?: number;
+}
+
+/** The wallpaper as SVG (wallpaperArt.ts): the home picture (the day in numbers) or the lock picture (the ring and the buddy's line, or the dial). */
+export function wallpaperSvg(a: Ambient, width: number, height: number, theme: 'light' | 'dark', screen: WallpaperScreen = 'home', look: PictureLook = {}): string {
     const input = {
         ...(look.style ? { style: look.style } : {}),
         ...(look.color ? { color: look.color } : {}),
+        ...(look.zoom && look.zoom !== 1 ? { zoom: look.zoom } : {}),
         state: a.state,
         date: a.date,
         headline: a.headline,
@@ -240,6 +256,6 @@ export function wallpaperSvg(a: Ambient, width: number, height: number, theme: '
 }
 
 /** The wallpaper as a PNG, sized for the phone (pixels, not CSS px). */
-export function wallpaperPng(a: Ambient, width: number, height: number, theme: 'light' | 'dark', screen: WallpaperScreen = 'home', look: { style?: string; color?: string } = {}): Buffer {
+export function wallpaperPng(a: Ambient, width: number, height: number, theme: 'light' | 'dark', screen: WallpaperScreen = 'home', look: PictureLook = {}): Buffer {
     return svgToPng(wallpaperSvg(a, width, height, theme, screen, look), width, height, 1, Math.max(width, height), WALLPAPER_FONTS).png;
 }

@@ -144,6 +144,8 @@ export const TOKEN_ROUTES: readonly TokenRoute[] = [
     route('POST', '/api/buddy/feedback', 'ambient'),
     // B7: his months, for recall_memory.
     route('GET', '/api/buddy/chapters', 'read'),
+    // B9: his work log, for get_work_log and Ask AI (removing a line is the app's alone).
+    route('GET', '/api/buddy/work', 'read'),
 ];
 
 /**

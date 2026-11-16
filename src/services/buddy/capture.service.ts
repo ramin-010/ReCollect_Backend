@@ -2,7 +2,7 @@
 // queued as one BuddyChunk per piece of a session; the worker (./worker.ts) gates and digests them,
 // then deletes the chunk. Only counts are kept per day (BuddyCaptureDay), never words.
 //
-//   queueWords   POST /api/buddy/words {sessionKey, seq, project?, messages[≤ 50]}   sessions:write → 202
+//   queueWords   POST /api/buddy/words {sessionKey, seq, project?, office?, messages[≤ 50]}   sessions:write → 202
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../db/prisma';
 import type { DayString } from '../learning';
@@ -27,6 +27,8 @@ export interface WordsInput {
     sessionKey: string;
     seq: number;
     project?: string | null | undefined;
+    /** B9: from a folder that never gets his brief (office work). */
+    office?: boolean | undefined;
     messages: ReadonlyArray<{ at?: string | undefined; text: string; reply?: string | undefined }>;
 }
 
@@ -38,6 +40,8 @@ export interface DayCounts {
     secrets?: number;
     notes?: number;
     items?: number;
+    /** B9: work lines written. */
+    work?: number;
 }
 
 /** Adds to his day's counts. */
@@ -80,6 +84,7 @@ export async function queueWords(userId: string, input: WordsInput, now: Date = 
                 sessionKey: input.sessionKey.slice(0, 80),
                 seq: input.seq,
                 project: input.project ? input.project.toLowerCase().slice(0, 100) : null,
+                office: input.office === true,
                 messages: messages as unknown as Prisma.InputJsonValue,
             },
             select: { id: true },

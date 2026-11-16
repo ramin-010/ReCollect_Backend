@@ -35,5 +35,8 @@ router.patch('/routines/:id', cookieOnly, buddy.routineHandler);
 // B7: his answer to a chapter's "Still true?".
 router.post('/questions', cookieOnly, buddy.questionHandler);
 router.get('/chapters', requireScope('read'), buddy.chaptersHandler);
+// B9: the work log (what he did, per project and day); removing a line is his alone.
+router.get('/work', requireScope('read'), buddy.workHandler);
+router.delete('/work/:id', cookieOnly, buddy.hideWorkHandler);
 
 export default router;

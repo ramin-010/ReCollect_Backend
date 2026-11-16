@@ -15,6 +15,7 @@ import { addDays, isValidDay, type DayString } from '../learning';
 import { loadLearningContext, toDbDay } from '../learningDb/common';
 import { bumpDay, type ChunkMessage } from './capture.service';
 import { MEMORY_KINDS, cleanNoteText, memoryKey } from './memory.service';
+import { summariseWork, workLogOn } from './work';
 
 export const GATE_MODEL = process.env['BUDDY_GATE_MODEL'] || 'claude-haiku-5-5';
 export const DIGEST_MODEL = process.env['BUDDY_DIGEST_MODEL'] || 'claude-sonnet-5-5';
@@ -30,7 +31,9 @@ const MEMORIES_SHOWN = 150;
 // ─── The gate ──────────────────────────────────────────────────────────────
 
 export const GATE_LABELS = ['none', 'about_him', 'item'] as const;
-export type GateLabel = (typeof GATE_LABELS)[number];
+/** With his work log on (B9): a fourth label for the work itself. */
+export const GATE_LABELS_WORK = ['none', 'about_him', 'item', 'work'] as const;
+export type GateLabel = (typeof GATE_LABELS_WORK)[number];
 
 export const GATE_SCHEMA: Record<string, unknown> = {
     type: 'object',
@@ -50,26 +53,60 @@ export const GATE_SYSTEM = `You sort the messages a software engineer typed to h
 - none: everything else: instructions to the agent about the code or the task at hand, questions about a topic, pasted logs, approvals like "yes, do it", small talk.
 If a message is both about him and an item, answer item. Most messages are none. Judge only by what he wrote; when unsure, answer none.`;
 
-export function gateRequest(messages: readonly ChunkMessage[]): CreateParams {
+/**
+ * The gate with his work log on (B9, BUDDY_MEMORY_PLAN §11.2): the same labels and a fourth, `work`,
+ * for the work itself (what to build, fix or check; a problem; a result). Work never becomes a note
+ * about him: it goes to the work log (work.ts).
+ */
+export const GATE_SYSTEM_WORK = `You sort the messages a software engineer typed to his AI agents (coding, studying, planning), for his personal assistant: its memory of him, and a log of his work. For each numbered message, give one label:
+- about_him: it says something about him as a person: a preference or habit, how he likes to work, a feeling, a worry or a stress, a plan, an aim or a value, a decision about his work, study or life, something he is proud of, something he promised.
+- item: something he wants kept or brought back to him later, outside the work at hand: a reminder he asks for ("remind me…"), a task of his own with a day, a thing to save, a decision about his own life or study with its reason.
+- work: he directs, describes or decides something about the work at hand, saying what it is: what to build, fix, change, test or check; a decision about the work and why; a problem he hit or parked; a result he reports; what comes next in the work.
+- none: everything else: approvals like "yes, do it" or "ok", questions about a topic, pasted logs or code, small talk.
+If a message is several of these, answer about_him first, then item, then work. A decision or a next step about the work itself is work, not an item. Judge only by what he wrote; when unsure, answer none.`;
+
+export const GATE_SCHEMA_WORK: Record<string, unknown> = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['labels'],
+    properties: {
+        labels: {
+            type: 'array',
+            items: { type: 'object', additionalProperties: false, required: ['i', 'label'], properties: { i: { type: 'integer' }, label: { type: 'string', enum: [...GATE_LABELS_WORK] } } },
+        },
+    },
+};
+
+/** The gate's request; `work`: his work log is on (else the request is exactly the one before B9). */
+export function gateRequest(messages: readonly ChunkMessage[], opts: { work?: boolean } = {}): CreateParams {
     const numbered = messages.map((m, i) => `[${i + 1}] ${m.text.replace(/\s+/g, ' ').slice(0, 1500)}`).join('\n');
     return {
         model: GATE_MODEL,
         // Haiku 5.5 at high effort (Ramin 11-16: the gate decides what of his chats reaches the buddy; it
         // runs on every chunk, so Haiku, thinking hard), with room to think so the labels are never cut off.
         max_tokens: Math.min(12_000, 3000 + 120 * messages.length),
-        output_config: { effort: 'high', format: { type: 'json_schema', schema: GATE_SCHEMA } },
-        system: [{ type: 'text', text: GATE_SYSTEM, cache_control: EPHEMERAL }],
+        output_config: { effort: 'high', format: { type: 'json_schema', schema: opts.work ? GATE_SCHEMA_WORK : GATE_SCHEMA } },
+        system: [{ type: 'text', text: opts.work ? GATE_SYSTEM_WORK : GATE_SYSTEM, cache_control: EPHEMERAL }],
         messages: [{ role: 'user', content: [{ type: 'text', text: `<messages>\n${numbered}\n</messages>` }] }],
     } as CreateParams;
 }
 
-const zGate = z.object({ labels: z.array(z.object({ i: z.number().int(), label: z.enum(GATE_LABELS) })) });
+const zGate = z.object({ labels: z.array(z.object({ i: z.number().int(), label: z.enum(GATE_LABELS_WORK) })) });
 
-/** The indexes (0-based) the gate kept; a message it didn't label is dropped. */
-export function keptIndexes(output: unknown, count: number): number[] {
+function labelled(output: unknown, count: number, want: (label: GateLabel) => boolean): number[] {
     const parsed = zGate.safeParse(output);
     if (!parsed.success) throw new Error('the gate answered in the wrong shape');
-    return [...new Set(parsed.data.labels.filter((l) => l.label !== 'none' && l.i >= 1 && l.i <= count).map((l) => l.i - 1))].sort((a, b) => a - b);
+    return [...new Set(parsed.data.labels.filter((l) => want(l.label) && l.i >= 1 && l.i <= count).map((l) => l.i - 1))].sort((a, b) => a - b);
+}
+
+/** The indexes (0-based) the gate kept for his memory (about him, or an item); a message it didn't label is dropped. */
+export function keptIndexes(output: unknown, count: number): number[] {
+    return labelled(output, count, (l) => l === 'about_him' || l === 'item');
+}
+
+/** The indexes (0-based) the gate marked as work (B9: they send the piece to the work log). */
+export function workIndexes(output: unknown, count: number): number[] {
+    return labelled(output, count, (l) => l === 'work');
 }
 
 // ─── The digest ────────────────────────────────────────────────────────────
@@ -249,19 +286,30 @@ export async function writeDigest(userId: string, chunk: Pick<BuddyChunk, 'sessi
     return result;
 }
 
-/** One chunk through the gate (and the digest when the gate keeps anything). Throws on a failed call. */
-export async function digestChunk(chunk: BuddyChunk, now: Date = new Date()): Promise<{ kept: number } & DigestWrite> {
+/**
+ * One chunk through the gate (and the digest when the gate keeps anything; the work summary when his
+ * work log is on and the gate marked work). Throws on a failed gate or digest call; a failed work
+ * summary is logged and skipped (the next piece of that session rewrites its lines anyway).
+ */
+export async function digestChunk(chunk: BuddyChunk, now: Date = new Date()): Promise<{ kept: number; work: number } & DigestWrite> {
     const messages = (Array.isArray(chunk.messages) ? chunk.messages : []) as unknown as ChunkMessage[];
     const ctx = await loadLearningContext(chunk.userId, now);
-    if (!messages.length) return { kept: 0, notes: 0, seen: 0, items: 0 };
+    if (!messages.length) return { kept: 0, notes: 0, seen: 0, items: 0, work: 0 };
 
-    const gate = await callClaude(withRefusalFallbacks(gateRequest(messages)), 'buddy gate');
+    const workLog = await workLogOn(chunk.userId);
+    const gate = await callClaude(withRefusalFallbacks(gateRequest(messages, { work: workLog })), 'buddy gate');
     await recordAiUsage(chunk.userId, 'buddy_gate', gate);
-    const kept = keptIndexes(parseJson(responseText(gate)), messages.length);
-    if (!kept.length) {
-        await bumpDay(chunk.userId, ctx.today, {});
-        return { kept: 0, notes: 0, seen: 0, items: 0 };
+    const labels = parseJson(responseText(gate));
+    const kept = keptIndexes(labels, messages.length);
+    let work = 0;
+    if (workLog && workIndexes(labels, messages.length).length) {
+        try {
+            work = (await summariseWork(chunk, messages, now)).lines;
+        } catch (err) {
+            console.error(`[buddy] the work summary failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
     }
+    if (!kept.length) return { kept: 0, notes: 0, seen: 0, items: 0, work };
 
     const [known, saved, tasks] = await Promise.all([
         prisma.memory.findMany({ where: { userId: chunk.userId, status: 'active' }, select: { id: true, text: true, kind: true }, orderBy: [{ lastSeenDay: 'desc' }], take: MEMORIES_SHOWN }),
@@ -285,5 +333,5 @@ export async function digestChunk(chunk: BuddyChunk, now: Date = new Date()): Pr
     );
     await recordAiUsage(chunk.userId, 'buddy_digest', digest);
     const written = await writeDigest(chunk.userId, chunk, parseDigest(parseJson(responseText(digest))), ctx.today);
-    return { kept: kept.length, ...written };
+    return { kept: kept.length, work, ...written };
 }

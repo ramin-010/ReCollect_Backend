@@ -5,6 +5,7 @@ import { prisma } from '../../db/prisma';
 import { addDays, type DayString } from '../learning';
 import { fromDbDay, loadLearningContext, toDbDay } from '../learningDb/common';
 import type { Line, Slot } from './think';
+import { unlabel, unlabelOr } from './words';
 
 export interface BuddyNoteJson {
     id: string;
@@ -40,7 +41,8 @@ export async function currentLine(userId: string, now: Date = new Date()): Promi
     if (!row || stale) return null;
     const lines = (Array.isArray(row.lines) ? row.lines : []) as unknown as Line[];
     const line = lines.find((l) => l.slot === slot);
-    return line ? { ...line, dayId: row.id } : null;
+    // Read through unlabel too: lines saved before the voice fix (11-16) still had "From your notes:".
+    return line ? { ...line, text: unlabel(line.text), dayId: row.id } : null;
 }
 
 /** The newest note or follow-up of his buddy day not yet given to this caller (`after` = the last id it showed), or null. */
@@ -48,8 +50,8 @@ export async function nextNoteFor(userId: string, after?: string | undefined, no
     const { row, stale } = await latestStep(userId, now);
     if (!row || stale) return null;
     const notes: BuddyNoteJson[] = [];
-    if (row.note) notes.push({ id: `${row.id}:note`, text: row.note, kind: 'note', day: fromDbDay(row.day) });
-    if (row.followUp) notes.push({ id: `${row.id}:follow`, text: row.followUp, kind: 'followUp', day: fromDbDay(row.day) });
+    if (row.note) notes.push({ id: `${row.id}:note`, text: unlabel(row.note), kind: 'note', day: fromDbDay(row.day) });
+    if (row.followUp) notes.push({ id: `${row.id}:follow`, text: unlabel(row.followUp), kind: 'followUp', day: fromDbDay(row.day) });
     return notes.find((n) => n.id !== after) ?? null;
 }
 
@@ -60,7 +62,7 @@ export async function nextNoteFor(userId: string, after?: string | undefined, no
 export async function briefNote(userId: string, now: Date = new Date()): Promise<{ note: string | null; followUp: string | null; noteId: string | null; noteDay: string | null }> {
     const { row, stale } = await latestStep(userId, now);
     if (!row || stale) return { note: null, followUp: null, noteId: null, noteDay: null };
-    return { note: row.note, followUp: row.followUp, noteId: row.note ? `${row.id}:note` : null, noteDay: row.note ? fromDbDay(row.day) : null };
+    return { note: unlabelOr(row.note), followUp: unlabelOr(row.followUp), noteId: row.note ? `${row.id}:note` : null, noteDay: row.note ? fromDbDay(row.day) : null };
 }
 
 // ─── The phone app's screen (B4, app 0.3.0) ────────────────────────────────
@@ -118,7 +120,7 @@ export async function phoneBuddy(userId: string, now: Date = new Date()): Promis
         const said = (Array.isArray(r.lines) ? r.lines : []) as unknown as Line[];
         for (let i = d === day ? SLOT_ORDER.indexOf(slot) : SLOT_ORDER.length - 1; i >= 0; i--) {
             const l = said.find((x) => x.slot === SLOT_ORDER[i]);
-            if (l && !l.fallback && l.text) lines.push({ dayId: r.id, slot: l.slot, day: d, when: whenWords(d, l.slot, day), text: l.text, current: d === day && l.slot === slot });
+            if (l && !l.fallback && l.text) lines.push({ dayId: r.id, slot: l.slot, day: d, when: whenWords(d, l.slot, day), text: unlabel(l.text), current: d === day && l.slot === slot });
         }
     }
     const top = rows[0] && fromDbDay(rows[0].day) === day ? rows[0] : null;
@@ -127,7 +129,7 @@ export async function phoneBuddy(userId: string, now: Date = new Date()): Promis
     const thumbs = ids.length ? await prisma.buddyFeedback.findMany({ where: { userId, buddyDayId: { in: ids } }, orderBy: { createdAt: 'asc' } }) : [];
     return {
         name: state.name,
-        note: top?.note ? { id: `${top.id}:note`, dayId: top.id, text: top.note, lockOk: top.noteLockOk, at: top.createdAt.toISOString() } : null,
+        note: top?.note ? { id: `${top.id}:note`, dayId: top.id, text: unlabel(top.note), lockOk: top.noteLockOk, at: top.createdAt.toISOString() } : null,
         lines: shown,
         thumbs: thumbs.map((t) => ({ dayId: t.buddyDayId, target: t.target, verdict: t.verdict })),
     };

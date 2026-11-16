@@ -62,7 +62,7 @@ export async function drainBuddyQueue(now: Date = new Date(), limit = PER_TICK):
             const r = await digestChunk(c, now);
             await prisma.buddyChunk.deleteMany({ where: { id: c.id } });
             const { today } = await loadLearningContext(c.userId, now);
-            await bumpDay(c.userId, today, { kept: r.kept, notes: r.notes, items: r.items });
+            await bumpDay(c.userId, today, { kept: r.kept, notes: r.notes, items: r.items, work: r.work });
             result.digested++;
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);

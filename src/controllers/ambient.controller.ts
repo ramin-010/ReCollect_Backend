@@ -3,7 +3,8 @@
 // `ambient` token (ANDROID_APP_SPEC), which fetches the picture a few times a day.
 import os from 'node:os';
 import { requireUser } from '../middlwares/auth';
-import { dayNumbers, getAmbient, wallpaperPng } from '../services/ambient/ambient.service';
+import { dayBreakdown, dayNumbers, getAmbient, wallpaperPng } from '../services/ambient/ambient.service';
+import { pictureZoom } from '../services/ambient/wallpaperArt';
 import { phoneBuddy } from '../services/buddy/voice';
 import { WALLPAPER_STYLES } from '../services/ambient/wallpaperStyles';
 import { revokeApiToken } from '../services/apiTokens/apiTokens.service';
@@ -33,7 +34,8 @@ const titlesFrom = (q: unknown) => q !== '0' && q !== 'false';
 /**
  * GET /api/ambient/widget[?titles=0] -> the day's lines, plus what the phone app's screen shows: whose
  * day it is (`account`), where a tap opens Recollect (`appUrl`, the web app; null when unknown), the
- * day in numbers for the widget (`numbers`) and the buddy's part of the app's screen (`buddy`: its
+ * day in numbers for the widget (`numbers`), what is left by kind under it on the app's day card
+ * (`breakdown`, B8) and the buddy's part of the app's screen (`buddy`: its
  * note, the lines it said, his thumbs; null while it is off). The widget itself keeps to `line`, the
  * lock-safe line (none with titles hidden).
  */
@@ -42,7 +44,7 @@ export const ambientWidgetHandler = handler(async (req, res) => {
     const now = new Date();
     const [ambient, buddy] = await Promise.all([getAmbient(user.id, now, { titles: titlesFrom(req.query.titles) }), phoneBuddy(user.id, now)]);
     const appUrl = process.env.FRONTEND_URL?.trim().replace(/\/+$/, '') || null;
-    ok(res, { ...ambient, numbers: dayNumbers(ambient), buddy, appUrl, account: { name: user.name, email: user.email } });
+    ok(res, { ...ambient, numbers: dayNumbers(ambient), breakdown: dayBreakdown(ambient), buddy, appUrl, account: { name: user.name, email: user.email } });
 });
 
 /**
@@ -69,7 +71,10 @@ export const ambientStylesHandler = handler(async (_req, res) => {
     ok(res, WALLPAPER_STYLES);
 });
 
-/** GET /api/ambient/wallpaper.png?w=1080&h=2340&theme=dark|light[&titles=0][&screen=lock|home][&style=bold&color=cobalt] */
+/**
+ * GET /api/ambient/wallpaper.png?w=1080&h=2340&theme=dark|light[&titles=0][&screen=lock|home][&style=peaks&color=dusk][&zoom=1.1]
+ * `zoom` (B8): how much larger the phone shows the picture at rest (1–1.25; Android 11's home screen: 1.1).
+ */
 export const ambientWallpaperHandler = handler(async (req, res) => {
     const width = size(req.query.w, 1080, 320, 2160);
     const height = size(req.query.h, 2340, 480, 4680);
@@ -82,5 +87,6 @@ export const ambientWallpaperHandler = handler(async (req, res) => {
     res.setHeader('X-Ambient-State', ambient.state);
     const style = word(req.query.style);
     const color = word(req.query.color);
-    res.send(wallpaperPng(ambient, width, height, theme, screen, { ...(style ? { style } : {}), ...(color ? { color } : {}) }));
+    const zoom = pictureZoom(req.query.zoom);
+    res.send(wallpaperPng(ambient, width, height, theme, screen, { ...(style ? { style } : {}), ...(color ? { color } : {}), ...(zoom !== 1 ? { zoom } : {}) }));
 });

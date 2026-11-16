@@ -23,6 +23,8 @@ export interface BuddySettingsJson {
     name: string | null;
     tone: BuddyTone;
     capUsd: number;
+    /** B9: keep a log of what he works on. */
+    workLog: boolean;
     portrait: { who: string | null; heading: string | null; now: string | null };
     lastNightDay: DayString | null;
     lastStepAt: string | null;
@@ -37,6 +39,7 @@ export function serializeBuddyState(s: BuddyState | null): BuddySettingsJson {
         name: s?.name ?? null,
         tone: toneOf(s?.tone),
         capUsd: s ? Number(s.capUsd) : DEFAULT_BUDDY_CAP_USD,
+        workLog: s?.workLog ?? false,
         portrait: { who: s?.who ?? null, heading: s?.heading ?? null, now: s?.now ?? null },
         lastNightDay: fromDbDayOrNull(s?.lastNightDay),
         lastStepAt: s?.lastStepAt?.toISOString() ?? null,
@@ -58,6 +61,7 @@ export interface BuddySettingsPatch {
     name?: string | null | undefined;
     tone?: BuddyTone | undefined;
     capUsd?: number | undefined;
+    workLog?: boolean | undefined;
 }
 
 export async function updateBuddySettings(userId: string, patch: BuddySettingsPatch): Promise<BuddySettingsJson> {
@@ -71,6 +75,7 @@ export async function updateBuddySettings(userId: string, patch: BuddySettingsPa
         ...(name !== undefined ? { name } : {}),
         ...(patch.tone ? { tone: patch.tone } : {}),
         ...(patch.capUsd !== undefined ? { capUsd: patch.capUsd } : {}),
+        ...(patch.workLog !== undefined ? { workLog: patch.workLog } : {}),
     };
     const row = await prisma.buddyState.upsert({
         where: { userId },

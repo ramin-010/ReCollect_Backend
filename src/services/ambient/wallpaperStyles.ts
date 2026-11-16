@@ -35,7 +35,13 @@ export interface RingLook {
 
 export interface StyleLook {
     defs: string[];
+    /** The backdrop: drawn whole, at the picture's size (the phone's zoom enlarges it). */
     art: string[];
+    /**
+     * Marks that belong with the words (a frame, an accent under the clock): drawn with them, for the
+     * phone's zoom, so they keep their place and their margins.
+     */
+    overlay: string[];
     ink: Ink;
     /** The soft light behind the words (null: none), and how strong. */
     glow: string | null;
@@ -175,7 +181,7 @@ function aurora(c: Ctx, color: StyleColor): StyleLook {
     art.push(`<rect width="${W}" height="${H}" fill="url(#auv)"/>`);
     grainLayer(defs, art, W, H, dark ? 0.07 : 0.05, Math.floor(rand() * 1000));
     const ink = dark ? inkOn('#000000') : inkOn('#FFFFFF');
-    return { defs, art, ink, glow: dark ? '#000000' : '#FFFFFF', glowAlpha: dark ? 0.35 : 0.5, ring: { lit: dark ? '#FFFFFF' : '#16161D', dim: dark ? 'rgba(255,255,255,0.18)' : 'rgba(22,22,29,0.16)', stroke: 0.011, glow: dark }, lineWeight: 500 };
+    return { defs, art, overlay: [], ink, glow: dark ? '#000000' : '#FFFFFF', glowAlpha: dark ? 0.35 : 0.5, ring: { lit: dark ? '#FFFFFF' : '#16161D', dim: dark ? 'rgba(255,255,255,0.18)' : 'rgba(22,22,29,0.16)', stroke: 0.011, glow: dark }, lineWeight: 500 };
 }
 
 // ── Mono: black or paper, a watch dial, one accent (sleek) ────────────────────────────────────
@@ -195,12 +201,14 @@ function mono(c: Ctx, color: StyleColor): StyleLook {
     const accent = color.id === 'lime' && !dark ? '#5E7D00' : color.id === 'silver' && !dark ? '#5D6066' : color.swatch;
     const defs: string[] = [];
     const art: string[] = [`<rect width="${W}" height="${H}" fill="${ground}"/>`];
-    // Hairlines: a frame inset from the edges, a short rule under the clock's place.
+    // Hairlines: a frame inset from the edges, a short rule under the clock's place (with the words: they keep their margins at any zoom).
     const ink = inkOn(ground, accent);
     const m = W * 0.06;
-    art.push(`<rect x="${r1(m)}" y="${r1(m * 1.6)}" width="${r1(W - 2 * m)}" height="${r1(H - m * 3.2)}" rx="${r1(W * 0.06)}" fill="none" stroke="${ink.dotOff}" stroke-width="${r1(W / 720)}"/>`);
-    art.push(`<rect x="${r1(W / 2 - W * 0.03)}" y="${r1(H * 0.26)}" width="${r1(W * 0.06)}" height="${r1(W * 0.004)}" fill="${accent}"/>`);
-    return { defs, art, ink: { ...ink, head: dark ? '#FFFFFF' : '#0E0E0E' }, glow: null, glowAlpha: 0, ring: { lit: accent, dim: ink.dotOff, stroke: 0.006, ticks: true }, lineWeight: 500 };
+    const overlay = [
+        `<rect x="${r1(m)}" y="${r1(m * 1.6)}" width="${r1(W - 2 * m)}" height="${r1(H - m * 3.2)}" rx="${r1(W * 0.06)}" fill="none" stroke="${ink.dotOff}" stroke-width="${r1(W / 720)}"/>`,
+        ...(c.screen === 'lock' ? [`<rect x="${r1(W / 2 - W * 0.03)}" y="${r1(H * 0.26)}" width="${r1(W * 0.06)}" height="${r1(W * 0.004)}" fill="${accent}"/>`] : []),
+    ];
+    return { defs, art, overlay, ink: { ...ink, head: dark ? '#FFFFFF' : '#0E0E0E' }, glow: null, glowAlpha: 0, ring: { lit: accent, dim: ink.dotOff, stroke: 0.006, ticks: true }, lineWeight: 500 };
 }
 
 // ── Glow: one luminous light rising out of the dark, with film grain (the grainy-gradient look) ──
@@ -227,7 +235,7 @@ function glow(c: Ctx, color: StyleColor): StyleLook {
     // A faint second light high on one side, so the dark above isn't flat.
     blob(defs, art, 'glowTop', rand() > 0.5 ? W * 0.95 : W * 0.05, H * 0.06, W * 0.75, g.edge, 0.2);
     grainLayer(defs, art, W, H, 0.13, Math.floor(rand() * 1000));
-    return { defs, art, ink: inkOn('#000000'), glow: '#000000', glowAlpha: 0.3, ring: { lit: '#FFFFFF', dim: 'rgba(255,255,255,0.2)', stroke: 0.013, glow: true }, lineWeight: 600 };
+    return { defs, art, overlay: [], ink: inkOn('#000000'), glow: '#000000', glowAlpha: 0.3, ring: { lit: '#FFFFFF', dim: 'rgba(255,255,255,0.2)', stroke: 0.013, glow: true }, lineWeight: 600 };
 }
 
 // ── Peaks: a night landscape, ridge behind ridge, under stars and a crescent (layered, flat, clean) ──
@@ -272,13 +280,14 @@ function peaks(c: Ctx, color: StyleColor): StyleLook {
     defs.push(`<mask id="pkMoon"><circle cx="${r1(mx)}" cy="${r1(my)}" r="${r1(mr)}" fill="#FFFFFF"/><circle cx="${r1(mx + mr * 0.42)}" cy="${r1(my - mr * 0.18)}" r="${r1(mr * 0.88)}" fill="#000000"/></mask>`);
     art.push(`<circle cx="${r1(mx)}" cy="${r1(my)}" r="${r1(mr)}" fill="${p.moon}" mask="url(#pkMoon)"/>`);
     // A glow on the horizon, then the ridges: back (highest, palest) to front (lowest, darkest).
-    const lift = c.screen === 'home' ? 0.03 : 0;
+    // On the home picture the ridges sit lower: the day's words end above them (B8; the phone's zoom enlarges the backdrop).
+    const lift = c.screen === 'home' ? 0.06 : 0;
     blob(defs, art, 'pkHorizon', W * 0.5, H * (0.8 + lift), W * 0.9, p.haze, 0.16);
     const bases = [0.75, 0.79, 0.83, 0.875, 0.92];
     const amps = [0.05, 0.04, 0.032, 0.024, 0.018];
     bases.forEach((b, i) => art.push(`<path d="${ridgePath(W, H, b + lift, amps[i]!, rand)}" fill="${p.ridges[i]}"/>`));
     grainLayer(defs, art, W, H, 0.06, Math.floor(rand() * 1000));
-    return { defs, art, ink: inkOn('#000000'), glow: p.sky[0], glowAlpha: 0.45, ring: { lit: '#FFFFFF', dim: 'rgba(255,255,255,0.2)', stroke: 0.014 }, lineWeight: 600 };
+    return { defs, art, overlay: [], ink: inkOn('#000000'), glow: p.sky[0], glowAlpha: 0.45, ring: { lit: '#FFFFFF', dim: 'rgba(255,255,255,0.2)', stroke: 0.014 }, lineWeight: 600 };
 }
 
 // ── Orb: a glass sphere in an upper corner of the dark, lit from inside the picture (premium) ──
@@ -312,7 +321,7 @@ function orb(c: Ctx, color: StyleColor): StyleLook {
     defs.push(`<radialGradient id="orbShine"><stop offset="0" stop-color="#FFFFFF" stop-opacity="0.5"/><stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/></radialGradient>`);
     art.push(`<ellipse cx="${r1(hx)}" cy="${r1(hy)}" rx="${r1(R * 0.34)}" ry="${r1(R * 0.15)}" fill="url(#orbShine)" transform="rotate(${left ? -30 : 30} ${r1(hx)} ${r1(hy)})"/>`);
     grainLayer(defs, art, W, H, 0.07, Math.floor(rand() * 1000));
-    return { defs, art, ink: inkOn('#000000'), glow: '#000000', glowAlpha: 0.4, ring: { lit: o.light, dim: 'rgba(255,255,255,0.18)', stroke: 0.013, glow: true }, lineWeight: 600 };
+    return { defs, art, overlay: [], ink: inkOn('#000000'), glow: '#000000', glowAlpha: 0.4, ring: { lit: o.light, dim: 'rgba(255,255,255,0.18)', stroke: 0.013, glow: true }, lineWeight: 600 };
 }
 
 // ── Dots: a dot-matrix screen on black, a dotted ring, one accent (Nothing-like, sleek) ──
@@ -335,9 +344,10 @@ function dots(c: Ctx, color: StyleColor): StyleLook {
     defs.push(`<radialGradient id="dotFade" cx="0.5" cy="0.48" r="0.72"><stop offset="0.28" stop-color="#000000"/><stop offset="0.85" stop-color="#FFFFFF"/></radialGradient>`);
     defs.push(`<mask id="dotMask"><rect width="${W}" height="${H}" fill="url(#dotFade)"/></mask>`);
     art.push(`<rect width="${W}" height="${H}" fill="url(#dotGrid)" opacity="0.3" mask="url(#dotMask)"/>`);
-    // One accent mark: a short row of lit dots under the clock's place.
-    for (let i = 0; i < 5; i++) art.push(`<circle cx="${r1(W / 2 + (i - 2) * step * 0.5)}" cy="${r1(H * 0.268)}" r="${r1(W / 280)}" fill="${color.swatch}" opacity="${i === 2 ? 1 : 0.45}"/>`);
-    return { defs, art, ink: inkOn('#000000'), glow: null, glowAlpha: 0, ring: { lit: color.swatch, dim: 'rgba(255,255,255,0.22)', stroke: 0.012, dotted: true }, lineWeight: 500 };
+    // One accent mark on the lock picture: a short row of lit dots under the clock's place (with the words).
+    const overlay: string[] = [];
+    if (c.screen === 'lock') for (let i = 0; i < 5; i++) overlay.push(`<circle cx="${r1(W / 2 + (i - 2) * step * 0.5)}" cy="${r1(H * 0.268)}" r="${r1(W / 280)}" fill="${color.swatch}" opacity="${i === 2 ? 1 : 0.45}"/>`);
+    return { defs, art, overlay, ink: inkOn('#000000'), glow: null, glowAlpha: 0, ring: { lit: color.swatch, dim: 'rgba(255,255,255,0.22)', stroke: 0.012, dotted: true }, lineWeight: 500 };
 }
 
 // ── Flow: a silk ribbon of thin lines drifting across the dark (elegant) ──
@@ -374,7 +384,7 @@ function flow(c: Ctx, color: StyleColor): StyleLook {
         art.push(`<path d="${d}" fill="none" stroke="url(#flowInk)" stroke-width="${r1(W / 900)}" opacity="${r1((0.18 + 0.55 * Math.sin(t * Math.PI)) * 100) / 100}"/>`);
     }
     grainLayer(defs, art, W, H, 0.06, Math.floor(rand() * 1000));
-    return { defs, art, ink: inkOn('#000000'), glow: null, glowAlpha: 0, ring: { lit: f.mid, dim: 'rgba(255,255,255,0.18)', stroke: 0.012 }, lineWeight: 500 };
+    return { defs, art, overlay: [], ink: inkOn('#000000'), glow: null, glowAlpha: 0, ring: { lit: f.mid, dim: 'rgba(255,255,255,0.18)', stroke: 0.012 }, lineWeight: 500 };
 }
 
 // ── The list ──────────────────────────────────────────────────────────────────────────────────

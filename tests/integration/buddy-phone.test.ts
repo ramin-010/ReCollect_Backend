@@ -8,7 +8,8 @@ import { prisma } from '../../src/db/prisma';
 import { setAiClientForTests } from '../../src/services/claude/client';
 import { LOCK_SCHEMA, NIGHT_SCHEMA } from '../../src/services/buddy/think';
 import { nightIfDue } from '../../src/services/buddy/worker';
-import { phoneBuddy } from '../../src/services/buddy/voice';
+import { buddyDayOf, phoneBuddy } from '../../src/services/buddy/voice';
+import { loadLearningContext } from '../../src/services/learningDb/common';
 import { dayNumbers } from '../../src/services/ambient/ambient.service';
 import { FakeClaude, fakeMessage } from '../helpers/claude';
 import { createTestUser } from '../helpers/auth';
@@ -150,5 +151,39 @@ describe("the phone app's buddy", () => {
         const brief = (await chat.get('/api/brief')).body.data.buddy;
         const hookNote = (await chat.get('/api/buddy/note')).body.data;
         expect(brief).toMatchObject({ note: 'Keep the morning reviews first.', noteId: hookNote.id, noteDay: hookNote.day });
+    });
+    it('B8: a line or note saved with a label in front ("From your notes:") reads without it everywhere', async () => {
+        const { user } = await setup();
+        // Dated by the service's own clock, so the step is the current one whenever this runs.
+        const now = new Date();
+        const ctx = await loadLearningContext(user.id, now);
+        const hour = Number(new Intl.DateTimeFormat('en-GB', { timeZone: ctx.tz, hour: '2-digit', hour12: false }).format(now)) % 24;
+        await prisma.buddyDay.create({
+            data: {
+                userId: user.id,
+                day: new Date(`${buddyDayOf(ctx.today, hour)}T00:00:00Z`),
+                kind: 'night',
+                lines: [
+                    { slot: 'morning', text: 'From your notes: LC 981, could you still write it cold?', form: 'question', lockOk: true, sourceId: null },
+                    { slot: 'afternoon', text: 'Reminder - one topic before lunch', form: 'push', lockOk: true, sourceId: null },
+                    { slot: 'evening', text: 'Stop before midnight', form: 'push', lockOk: true, sourceId: null },
+                ],
+                note: 'Heads-up: two good days in a row.',
+                noteLockOk: true,
+                followUp: 'Tip: how did the mock go?',
+                model: 'test',
+                costUsd: 0,
+            },
+        });
+        // The phone app's screen: the lines said so far (newest first; the morning's is the oldest).
+        const b = (await phoneBuddy(user.id, now))!;
+        expect(b.lines.at(-1)?.text).toBe('LC 981, could you still write it cold?');
+        for (const l of b.lines) expect(l.text).not.toMatch(/^(From your notes|Reminder)/);
+        expect(b.note?.text).toBe('Two good days in a row.');
+        // Home's card reads the same way.
+        const today = (await api(user).get('/api/buddy/today')).body.data;
+        expect(today.day.lines.map((l: { text: string }) => l.text)).toEqual(['LC 981, could you still write it cold?', 'One topic before lunch', 'Stop before midnight']);
+        expect([today.day.note, today.day.followUp]).toEqual(['Two good days in a row.', 'How did the mock go?']);
+        if (today.line) expect(today.line.text).not.toMatch(/^(From your notes|Reminder)/);
     });
 });

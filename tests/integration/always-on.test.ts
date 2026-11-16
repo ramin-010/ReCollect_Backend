@@ -52,6 +52,14 @@ describe('the ambient phone (6.6)', () => {
         expect(Buffer.compare(bold.body as Buffer, lock.body as Buffer)).not.toBe(0);
         const unknown = await bearer('/api/ambient/wallpaper.png?w=540&h=1170&titles=0&screen=lock&style=nope');
         expect(Buffer.compare(unknown.body as Buffer, lock.body as Buffer)).toBe(0);
+        // B8: the home picture drawn for the phone's zoom (Android 11: 1.1) differs; a zoom out of range is 1.
+        const zoomed = await bearer('/api/ambient/wallpaper.png?w=540&h=1170&titles=0&zoom=1.1');
+        expect([zoomed.status, zoomed.headers['content-type']]).toEqual([200, 'image/png']);
+        expect(Buffer.compare(zoomed.body as Buffer, png.body as Buffer)).not.toBe(0);
+        const silly = await bearer('/api/ambient/wallpaper.png?w=540&h=1170&titles=0&zoom=nope');
+        expect(Buffer.compare(silly.body as Buffer, png.body as Buffer)).toBe(0);
+        // The app's day card: one headline and what is left by kind under it (B8).
+        expect(typeof widget.body.data.breakdown).toBe('string');
         // Nothing else: not today, not the docs, not the agent API.
         for (const path of ['/api/today', '/api/docs', '/api/agent/docs']) expect((await bearer(path)).status, path).toBe(403);
         // The addresses: cookie only; the last one is always USB (localhost).

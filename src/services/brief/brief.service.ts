@@ -17,6 +17,7 @@ import { getMirror } from '../mirror/mirror.service';
 import { taskSummary } from '../tasks/tasks.service';
 import { listDecisions } from '../learningDb/decisions.service';
 import { buddyBrief, type BuddyBrief } from '../buddy/memory.service';
+import { workForBrief, type WorkBrief } from '../buddy/work';
 
 const WEAK_SPOTS_PER_TOPIC = 5;
 const RECENT = 5;
@@ -56,6 +57,11 @@ export interface Brief {
     project: { key: string; name: string; nextStep: string | null; lastSession: { day: string; minutes: number | null; title: string } | null } | null;
     /** The buddy (BUDDY_MEMORY_PLAN §3.4): the portrait, the memories this chat starts with, a note for him. */
     buddy: BuddyBrief;
+    /**
+     * The work log (B9; null while it is off or has nothing): in his own chats, yesterday's lines across
+     * projects (five at most); in a work folder's chat, that project's last three days with lines only.
+     */
+    work: WorkBrief | null;
     session: { key: string };
 }
 
@@ -93,7 +99,9 @@ function workBrief(b: Brief): Brief {
 
 export async function getBrief(userId: string, options: { project?: string | undefined; key?: string | undefined; work?: boolean | undefined } = {}, now: Date = new Date()): Promise<Brief> {
     const full = await fullBrief(userId, options, now);
-    return options.work ? workBrief(full) : full;
+    if (!options.work) return full;
+    // A work folder: its own project's work only (never the other projects', never his life).
+    return { ...workBrief(full), work: await workForBrief(userId, { project: options.project, work: true }, now) };
 }
 
 async function fullBrief(userId: string, options: { project?: string | undefined; key?: string | undefined } = {}, now: Date = new Date()): Promise<Brief> {
@@ -114,6 +122,7 @@ async function fullBrief(userId: string, options: { project?: string | undefined
         options.project ? listDecisions(userId, { project: options.project }, now) : Promise.resolve([]),
         buddyBrief(userId, { project: options.project }),
     ]);
+    const work = await workForBrief(userId, {}, now);
     const topicIds = today.next.map((n) => n.topic._id);
     const [weak, last] = await Promise.all([openWeakSpotsOf(userId, topicIds), lastSessionsOf(userId, topicIds)]);
     const evidence = buildCoachEvidence(coachRows, { ...window, today: ctx.today, tz: ctx.tz });
@@ -160,6 +169,7 @@ async function fullBrief(userId: string, options: { project?: string | undefined
         },
         project: project ? { key: project.key, name: project.name, nextStep: project.nextStep, lastSession: project.lastSession } : null,
         buddy,
+        work,
         session: { key: options.key ?? newSessionKey(now) },
     };
 }

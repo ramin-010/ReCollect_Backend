@@ -165,6 +165,7 @@ model User {
   buddyThumbs  BuddyFeedback[]
   routines     Routine[]
   chapters     BuddyChapter[]
+  workLines    WorkLine[]
 
   @@index([googleId])
 }
@@ -1290,6 +1291,8 @@ enum AiFeature {
   buddy_think
   buddy_pulse
   buddy_check
+  /// B9: the work summariser (what he did, per session and day).
+  buddy_work
 }
 
 /// The questions for one review (one revision) of a doc or capture. At most one unfinished set per
@@ -1846,6 +1849,9 @@ model BuddyState {
   notebook     String?
   /// The buddy's own monthly AI cap (the account's cap still applies).
   capUsd       Decimal   @default(25) @db.Decimal(10, 2)
+  /// B9: keep a log of what he works on (the gate's `work` label and the work summariser). Off: the
+  /// gate's request is exactly as before.
+  workLog      Boolean   @default(false)
   /// The local day the night step last ran (claimed first, like lastNudgeDay).
   lastNightDay DateTime? @db.Date
   lastStepAt   DateTime?
@@ -1931,6 +1937,8 @@ model BuddyChunk {
   /// The hook's running number for this session: a retried POST is not queued twice.
   seq        Int
   project    String?     @db.VarChar(100)
+  /// B9: from a folder that never gets his brief (`brief: false` in his hooks.json): office work.
+  office     Boolean     @default(false)
   source     BuddySource @default(hook)
   /// [{ at, text, reply? }]
   messages   Json
@@ -1956,6 +1964,8 @@ model BuddyCaptureDay {
   /// What the digest wrote: notes about him, items for his inbox.
   notes   Int      @default(0)
   items   Int      @default(0)
+  /// B9: work lines the summariser wrote.
+  work    Int      @default(0)
 
   @@id([userId, day])
 }
@@ -1968,26 +1978,26 @@ enum BuddyStepKind {
 /// What one thinking step wrote (BUDDY_MEMORY_PLAN §3.3): the day's three lines for the phone and
 /// Home, its note (or its silence), a follow-up for his next chat, and what the guards threw out.
 model BuddyDay {
-  id        String        @id @default(cuid())
-  userId    String
-  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id         String        @id @default(cuid())
+  userId     String
+  user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   /// His local day the step ran for.
-  day       DateTime      @db.Date
-  kind      BuddyStepKind
+  day        DateTime      @db.Date
+  kind       BuddyStepKind
   /// [{ slot: morning|afternoon|evening, text, form, lockOk, sourceId?, fallback? }]
-  lines     Json
-  note      String?       @db.VarChar(800)
+  lines      Json
+  note       String?       @db.VarChar(800)
   /// The lock check passed the note: the phone app may show its words in a notification (which the
   /// lock screen shows too). False when it named a private thing, wasn't checked, or the check failed.
-  noteLockOk Boolean      @default(false)
-  followUp  String?       @db.VarChar(300)
+  noteLockOk Boolean       @default(false)
+  followUp   String?       @db.VarChar(300)
   /// The memory changes applied (an audit, and what an Undo of the night would take back).
-  ops       Json          @default("[]")
+  ops        Json          @default("[]")
   /// What the op check and the guards threw out, and why (never his words).
-  dropped   Json          @default("[]")
-  model     String        @db.VarChar(100)
-  costUsd   Decimal       @default(0) @db.Decimal(10, 6)
-  createdAt DateTime      @default(now())
+  dropped    Json          @default("[]")
+  model      String        @db.VarChar(100)
+  costUsd    Decimal       @default(0) @db.Decimal(10, 6)
+  createdAt  DateTime      @default(now())
 
   @@index([userId, day])
 }
@@ -2044,4 +2054,43 @@ model BuddyChapter {
   createdAt DateTime @default(now())
 
   @@unique([userId, period])
+}
+
+// ─── The work log (BUDDY_MEMORY_PLAN §11.2, B9) ─────────────────────────────
+
+enum WorkLineKind {
+  did
+  decided
+  stuck
+  next
+}
+
+/// What he did, per project and day (B9): a store apart from the memory about him. Dated lines that
+/// never fade and never reach the portrait or the lock screen. The work summariser rewrites a
+/// session's lines for its day; a line he removed stays as a row (`hidden`) so it isn't written again.
+model WorkLine {
+  id           String                   @id @default(cuid())
+  userId       String
+  user         User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// His local day of the piece's last message.
+  day          DateTime                 @db.Date
+  /// The folder key, lower case (as Project.key).
+  project      String                   @db.VarChar(100)
+  sessionKey   String                   @db.VarChar(80)
+  kind         WorkLineKind
+  text         String                   @db.VarChar(200)
+  /// From a folder that never gets his brief: office work (only its own project's work brief shows it).
+  office       Boolean                  @default(false)
+  /// He removed it: never shown; the summariser is told not to write it again.
+  hidden       Boolean                  @default(false)
+  /// Its place in the session's list for the day.
+  position     Int                      @default(0)
+  /// Kept by a trigger from `text` (English stems and plain words); GIN index. Raw SQL only.
+  searchVector Unsupported("tsvector")?
+  createdAt    DateTime                 @default(now())
+
+  @@index([userId, day])
+  @@index([userId, project, day])
+  @@index([userId, sessionKey, day])
+  @@index([searchVector], type: Gin)
 }

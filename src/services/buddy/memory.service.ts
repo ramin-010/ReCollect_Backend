@@ -520,10 +520,11 @@ export async function feedback(userId: string, input: { buddyDayId: string; targ
 
 /** Everything the buddy keeps about him, as JSON (/you → Export). */
 export async function exportBuddy(userId: string, now: Date = new Date()) {
-    const [settings, memories, notes] = await Promise.all([
+    const [settings, memories, notes, work] = await Promise.all([
         buddySettings(userId),
         prisma.memory.findMany({ where: { userId }, orderBy: { createdAt: 'asc' } }),
         prisma.observation.findMany({ where: { userId }, orderBy: { createdAt: 'asc' } }),
+        prisma.workLine.findMany({ where: { userId }, orderBy: [{ day: 'asc' }, { createdAt: 'asc' }, { position: 'asc' }] }),
     ]);
     return {
         exportedAt: now.toISOString(),
@@ -542,5 +543,7 @@ export async function exportBuddy(userId: string, now: Date = new Date()) {
             memoryId: o.memoryId,
             createdAt: o.createdAt.toISOString(),
         })),
+        // B9: his work log, the lines he removed too (marked).
+        work: work.map((w) => ({ _id: w.id, day: fromDbDay(w.day), project: w.project, kind: w.kind, text: w.text, office: w.office, removed: w.hidden, sessionKey: w.sessionKey })),
     };
 }

@@ -20,6 +20,8 @@ import { LASTING_KINDS, MEMORY_KINDS, cleanNoteText, memoryKey, normalizeTags } 
 import { buddySignals, plainLine, type BuddySignals } from './signals';
 import { scrubSecrets } from './scrub';
 import { buddyDayOf } from './voice';
+import { unlabel } from './words';
+import { workForNight } from './work';
 import { runRoutines } from './routines';
 
 export const THINK_MODEL = process.env['BUDDY_THINK_MODEL'] || 'claude-opus-5-5';
@@ -140,6 +142,8 @@ export interface NightInput {
     doneForHim?: string[];
     /** Open threads quiet for five weeks or more, about to fade: the night may ask about one once. */
     quietThreads?: string[];
+    /** B9: his last day's work log (per project: time and lines; office ones marked), when it is on. */
+    workYesterday?: { text: string; lines: string[] } | null;
 }
 
 export function nightTask(input: NightInput): string {
@@ -158,6 +162,9 @@ export function nightTask(input: NightInput): string {
         `<said>\n${input.said.map((x) => `${x.day} ${x.what}: ${x.text}`).join('\n') || 'nothing yet'}\n</said>`,
         ...(input.quietThreads?.length
             ? [`<quiet_threads>\n${input.quietThreads.join('\n')}\nThese open threads have been quiet for over five weeks and fade within a week. If one still matters, ask him about it once, in followUp ("still on?"); else let it go.\n</quiet_threads>`]
+            : []),
+        ...(input.workYesterday
+            ? [`<work_yesterday>\n${input.workYesterday.text}\nWhat he worked on yesterday, from his work log: so you know where his hours went. You may speak of it in the note (how the day went, what is next); never in the lines, which show on his lock screen. Never turn it into a memory about him.\n</work_yesterday>`]
             : []),
         ...(input.doneForHim?.length ? [`<done_for_him>\nBy his standing yes you just: ${input.doneForHim.join('; ')}. Name it in the note.\n</done_for_him>`] : []),
         'Write tonight’s step.',
@@ -363,16 +370,9 @@ export interface Line {
     fallback?: true;
 }
 
-/** Lengths, numbers, repeats: a line that fails becomes the plain line (never on the lock screen it fails for). */
-/**
- * A label in front ("From your notes: …", "Reminder - …", "Tip: …") comes off: the buddy talks, it doesn't
- * file things (Ramin 11-16). The words after it stay, their first letter raised.
- */
-export function unlabel(text: string): string {
-    const t = text.replace(/^\s*(?:from (?:your |his )?(?:saved )?notes?|from your buddy|reminder|quick reminder|note|quick note|tip|today|tonight|heads[ -]?up|fyi|psst|ps)\s*[:\-\u2013\u2014]\s+/i, '');
-    return t === text ? text : t.charAt(0).toUpperCase() + t.slice(1);
-}
+export { unlabel };
 
+/** Lengths, numbers, repeats: a line that fails becomes the plain line (never on the lock screen it fails for). */
 export function guardLines(lines: NightOutput['lines'], ctx: { sources: string; recent: readonly string[]; plain: string }): { lines: Line[]; dropped: Dropped[] } {
     const dropped: Dropped[] = [];
     const out: Line[] = SLOTS.map((slot) => {
@@ -406,7 +406,7 @@ export const LOCK_SCHEMA: Record<string, unknown> = {
     },
 };
 
-const LOCK_SYSTEM = `A line will show on a person's phone lock screen, where anyone nearby can read it. You get the person's private facts and the lines. For each line answer reveals: true when a stranger reading only the line would learn one of those private facts, or anything about health, money, family, other people, guilt, fear, conflicts at work or leaving a job. A line may be shaped by a private fact as long as it does not name it. When unsure, answer true.
+const LOCK_SYSTEM = `A line will show on a person's phone lock screen, where anyone nearby can read it. You get the person's private facts and the lines. For each line answer reveals: true when a stranger reading only the line would learn one of those private facts, or anything about health, money, family, other people, guilt, fear, conflicts at work or leaving a job, or what he works on at his job (its projects, code, clients). A line may be shaped by a private fact as long as it does not name it. When unsure, answer true.
 The note (a few sentences) may show the same way, as a phone notification on the lock screen. Answer note with the same test for the whole note: true when it reveals any of that (or when there is no note).`;
 
 /** The lock check for the lines (and the note, when there is one): Haiku, structured, fail closed by the caller. */
@@ -539,7 +539,8 @@ export interface BuddyDayJson {
 export async function runNight(userId: string, now: Date = new Date()): Promise<BuddyDayJson> {
     // His routines run first, so the night can name what they did (B6).
     const doneForHim = await runRoutines(userId, now);
-    const input = { ...(await loadNightInput(userId, now)), doneForHim };
+    const loaded = await loadNightInput(userId, now);
+    const input = { ...loaded, doneForHim, workYesterday: await workForNight(userId, loaded.today, now) };
     const { today } = input;
     let cost = 0;
     const message = await callClaude(withRefusalFallbacks(nightRequest(input)), 'buddy night');
@@ -554,7 +555,7 @@ export async function runNight(userId: string, now: Date = new Date()): Promise<
     await prisma.observation.updateMany({ where: { userId, id: { in: input.notes.map((n) => n.id) }, foldedAt: null }, data: { foldedAt: now } });
 
     // The words it may use: numbers only from what it was given.
-    const sources = [JSON.stringify(input.signals), ...input.memories.map((m) => m.text), ...input.notes.map((n) => n.text), ...input.candidates.map((c) => `${c.text} ${c.due ?? ''}`), ...input.hisNotes.map((n) => `${n.title} ${n.text}`)].join('\n');
+    const sources = [JSON.stringify(input.signals), ...input.memories.map((m) => m.text), ...input.notes.map((n) => n.text), ...input.candidates.map((c) => `${c.text} ${c.due ?? ''}`), ...input.hisNotes.map((n) => `${n.title} ${n.text}`), input.workYesterday?.text ?? ''].join('\n');
     const recent = input.said.filter((x) => x.what !== 'note').map((x) => x.text);
     const guarded = guardLines(out.lines, { sources, recent, plain: plainLine(input.signals) });
     dropped.push(...guarded.dropped);
@@ -579,7 +580,8 @@ export async function runNight(userId: string, now: Date = new Date()): Promise<
     // The lock check: a line marked lockOk is checked against his private memories, and the note
     // (for the phone's notification) always; a failed or missing check keeps them off the lock
     // screen (fail closed).
-    const privateTexts = input.memories.filter((m) => m.private).map((m) => m.text).concat(input.notes.filter((n) => n.private).map((n) => n.text));
+    // His work log counts as private here (B9): no work line ever reaches the lock screen.
+    const privateTexts = input.memories.filter((m) => m.private).map((m) => m.text).concat(input.notes.filter((n) => n.private).map((n) => n.text), input.workYesterday?.lines ?? []);
     const checked = await lockCheck(userId, lines, privateTexts, note, dropped);
     lines = checked.lines;
     cost += checked.costUsd;

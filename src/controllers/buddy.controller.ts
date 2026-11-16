@@ -31,11 +31,17 @@ import { listRoutines, setRoutineEnabled } from '../services/buddy/routines';
 import { answerQuestion, searchChapters } from '../services/buddy/chapter';
 import { prisma } from '../db/prisma';
 import { currentLine, latestStep, nextNoteFor } from '../services/buddy/voice';
+import { unlabel, unlabelOr } from '../services/buddy/words';
+
 import { nightIfDue } from '../services/buddy/worker';
 import { buddyMaySpend } from '../services/buddy/spend';
 import { fromDbDay } from '../services/learningDb/common';
 import ErrorResponse from '../utils/errorResponse';
 import { handler, ok, param, parse } from './learning/common';
+import { hideWorkLine, listWork } from '../services/buddy/work';
+
+/** A step's stored lines with their words read through unlabel. */
+const unlabelLines = (lines: unknown): unknown => (Array.isArray(lines) ? lines.map((l) => (l && typeof l === 'object' && typeof (l as { text?: unknown }).text === 'string' ? { ...l, text: unlabel((l as { text: string }).text) } : l)) : lines);
 
 const zKind = z.enum(MEMORY_KINDS);
 // Longer texts are accepted and cut at a word (an agent's long note still lands).
@@ -123,7 +129,7 @@ export const getSettingsHandler = handler(async (req, res) => {
     ok(res, { ...settings, counts });
 });
 
-/** PATCH /api/buddy/settings {enabled?, paused?, name?, tone?, capUsd?} */
+/** PATCH /api/buddy/settings {enabled?, paused?, name?, tone?, capUsd?, workLog?} */
 export const patchSettingsHandler = handler(async (req, res) => {
     const patch = parse(
         z
@@ -133,6 +139,7 @@ export const patchSettingsHandler = handler(async (req, res) => {
                 name: z.string().max(BUDDY_NAME_MAX * 2).nullable().optional(),
                 tone: z.enum(BUDDY_TONES).optional(),
                 capUsd: z.number().min(0).max(MAX_BUDDY_CAP_USD).optional(),
+                workLog: z.boolean().optional(),
             })
             .strict()
             .refine((p) => Object.keys(p).length > 0, 'Send what changes'),
@@ -208,6 +215,7 @@ export const wordsHandler = handler(async (req, res) => {
                 sessionKey: z.string().trim().min(1).max(80),
                 seq: z.number().int().min(0).max(1_000_000),
                 project: z.string().trim().max(200).nullable().optional(),
+                office: z.boolean().optional(),
                 messages: z
                     .array(z.object({ at: z.string().max(40).optional(), text: z.string().max(20_000), reply: z.string().max(4000).optional() }).strict())
                     .min(1)
@@ -254,7 +262,8 @@ export const todayHandler = handler(async (req, res) => {
         name: settings.name,
         slot: step.slot,
         line,
-        day: row ? { _id: row.id, day: fromDbDay(row.day), kind: row.kind, lines: row.lines, note: row.note, followUp: row.followUp, createdAt: row.createdAt.toISOString() } : null,
+        // The words read through unlabel (lines saved before the voice fix still had "From your notes:").
+        day: row ? { _id: row.id, day: fromDbDay(row.day), kind: row.kind, lines: unlabelLines(row.lines), note: unlabelOr(row.note), followUp: unlabelOr(row.followUp), createdAt: row.createdAt.toISOString() } : null,
     });
 });
 
@@ -293,4 +302,32 @@ export const exportHandler = handler(async (req, res) => {
     const data = await exportBuddy(requireUser(req).id);
     res.setHeader('Content-Disposition', `attachment; filename="recollect-buddy-${data.exportedAt.slice(0, 10)}.json"`);
     ok(res, data);
+});
+
+/**
+ * GET /api/buddy/work?project=&from=&to=&q=&limit=&work=1 (read: the app, agents, Ask AI): his work log,
+ * newest day first (B9). `work=1` is an office chat's question: one project only, and it must be named.
+ */
+export const workHandler = handler(async (req, res) => {
+    const q = parse(
+        z
+            .object({
+                project: z.string().trim().max(100).optional(),
+                from: z.string().trim().max(10).optional(),
+                to: z.string().trim().max(10).optional(),
+                q: z.string().trim().max(200).optional(),
+                limit: z.coerce.number().int().min(1).max(500).optional(),
+                work: z.enum(['0', '1', 'true', 'false']).optional(),
+            })
+            .strict(),
+        req.query
+    );
+    const officeOnly = q.work === '1' || q.work === 'true';
+    if (officeOnly && !q.project) throw new ErrorResponse(400, 'A work chat asks about its own project: send project');
+    ok(res, await listWork(requireUser(req).id, { project: q.project, from: q.from, to: q.to, q: q.q, limit: q.limit }));
+});
+
+/** DELETE /api/buddy/work/:id (the app): he removes a line; it stays hidden and is never written again. */
+export const hideWorkHandler = handler(async (req, res) => {
+    ok(res, await hideWorkLine(requireUser(req).id, param(req, 'id')));
 });

@@ -15,11 +15,16 @@ import { undoAgentEdit } from '../src/services/agent/agentEdits.service';
 import { trashDoc } from '../src/services/docs/trash.service';
 import { runAssistant, type AssistantTurn } from '../src/services/assistant/engine';
 import { dismissSuggestion } from '../src/services/learningDb/suggestions.service';
+import { loadLearningContext } from '../src/services/learningDb/common';
+import { addDays } from '../src/services/learning';
 
 interface Case {
     id: string;
-    /** State the case needs first (trash_one: a throwaway doc in the trash; removed after). */
-    setup?: 'trash_one';
+    /**
+     * State the case needs first (trash_one: a throwaway doc in the trash; removed after. work_log: the
+     * work log on, with yesterday's lines in the "erp" project; removed after).
+     */
+    setup?: 'trash_one' | 'work_log';
     request: string;
     mustUse?: string[][];
     mustNotUse?: string[];
@@ -91,6 +96,21 @@ async function main(): Promise<void> {
             made = (await prisma.doc.create({ data: { userId: user.id, title: `Eval scratch ${Date.now().toString().slice(-5)}` }, select: { id: true } })).id;
             await trashDoc(user.id, made);
         }
+        let workWasOn: boolean | null = null;
+        if (c.setup === 'work_log') {
+            const { today } = await loadLearningContext(user.id, new Date());
+            const day = new Date(`${addDays(today, -1)}T00:00:00Z`);
+            workWasOn = (await prisma.buddyState.findUnique({ where: { userId: user.id }, select: { workLog: true } }))?.workLog ?? false;
+            await prisma.buddyState.upsert({ where: { userId: user.id }, create: { userId: user.id, workLog: true }, update: { workLog: true } });
+            await prisma.workLine.deleteMany({ where: { userId: user.id, sessionKey: 'eval_work' } });
+            await prisma.workLine.createMany({
+                data: [
+                    { userId: user.id, day, project: 'erp', sessionKey: 'eval_work', kind: 'did', text: 'Fixed the GST rounding in the invoice report (per line, then summed)', office: true, position: 0 },
+                    { userId: user.id, day, project: 'erp', sessionKey: 'eval_work', kind: 'decided', text: 'Kept the old CSV export until the client signs off', office: true, position: 1 },
+                    { userId: user.id, day, project: 'erp', sessionKey: 'eval_work', kind: 'stuck', text: 'Negative stock on returns in the stock ledger, not fixed yet', office: true, position: 2 },
+                ],
+            });
+        }
         const since = new Date();
         let turn: AssistantTurn;
         try {
@@ -103,6 +123,10 @@ async function main(): Promise<void> {
         const problems = grade(c, turn);
         const notes = await cleanUp(user.id, since);
         if (made) await prisma.doc.deleteMany({ where: { id: made, userId: user.id } });
+        if (c.setup === 'work_log') {
+            await prisma.workLine.deleteMany({ where: { userId: user.id, sessionKey: 'eval_work' } });
+            if (!workWasOn) await prisma.buddyState.update({ where: { userId: user.id }, data: { workLog: false } });
+        }
         spent += turn.costUsd;
         const tools = turn.tools.map((t) => `${t.name}${t.ok ? '' : '(failed)'}`);
         console.log(`${problems.length ? 'FAIL' : 'pass'} ${c.id.padEnd(20)} ${(turn.costUsd * 100).toFixed(1).padStart(5)}¢  ${tools.join(', ') || '(no tools)'}${problems.length ? `\n     ${problems.join('; ')}` : ''}${notes.length ? `\n     ${notes.join('; ')}` : ''}`);
