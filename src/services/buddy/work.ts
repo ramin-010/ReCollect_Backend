@@ -6,8 +6,12 @@
 // removes stays as a hidden row, so it is never written again.
 //
 //   GET    /api/buddy/work?project=&from=&to=&q=&limit=&work=1   read (cookie or token)
+//   POST   /api/buddy/work                                         sessions:write: an agent logs a day's work on his word (B10)
 //   DELETE /api/buddy/work/:id                                     cookie only: hides a line
-import { Prisma, type BuddyChunk, type WorkLine, type WorkLineKind } from '@prisma/client';
+//
+// B10 (BUDDY_MEMORY_PLAN §12): office chats send no words; the agent there writes the day's lines when he
+// asks (log_work, /log-work), with the time each took from the hook's clock. No model call on our side.
+import { Prisma, type BuddyChunk, type WorkLine, type WorkLineKind, type WorkLineSource } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../../db/prisma';
 import { callClaude } from '../claude/client';
@@ -19,7 +23,8 @@ import { dayOf } from '../learning/time';
 import { notFound } from '../learning/http';
 import { fromDbDay, loadLearningContext, toDbDay } from '../learningDb/common';
 import { searchTerms } from '../docs/docSearch.service';
-import type { ChunkMessage } from './capture.service';
+import ErrorResponse from '../../utils/errorResponse';
+import { bumpDay, type ChunkMessage } from './capture.service';
 import { scrubSecrets } from './scrub';
 import { unlabel } from './words';
 
@@ -151,13 +156,102 @@ export async function summariseWork(chunk: Pick<BuddyChunk, 'userId' | 'sessionK
     return { lines: lines.length, costUsd };
 }
 
+// ─── An agent logs the day (B10) ────────────────────────────────────────────
+
+/** Lines one log_work call may send. */
+export const LOG_LINES_MAX = 8;
+/** How far back a day may be logged (yesterday's work, the next morning). */
+const LOG_DAYS_BACK = 3;
+
+/** Two lines say the same thing: the same words, or most of them shared (as the night's tooClose). */
+function nearlySame(a: string, b: string): boolean {
+    const ka = lineKey(a);
+    const kb = lineKey(b);
+    if (ka === kb) return true;
+    const wa = new Set(ka.split(' ').filter((w) => w.length > 2));
+    const wb = new Set(kb.split(' ').filter((w) => w.length > 2));
+    if (!wa.size || !wb.size) return false;
+    const shared = [...wa].filter((w) => wb.has(w)).length;
+    return shared / Math.min(wa.size, wb.size) >= 0.75;
+}
+
+/** "10:15-11:40", "9:05 – 9:50" or "14:00" → "10:15–11:40" / "14:00"; anything else → null. */
+export function workSpan(at: string | null | undefined): string | null {
+    const m = /^\s*(\d{1,2}):(\d{2})\s*(?:(?:-|–|—|to)\s*(\d{1,2}):(\d{2}))?\s*$/i.exec(at ?? '');
+    if (!m) return null;
+    const t = (h: string, mm: string) => (Number(h) < 24 && Number(mm) < 60 ? `${Number(h)}:${mm}` : null);
+    const a = t(m[1]!, m[2]!);
+    const b = m[3] ? t(m[3], m[4]!) : '';
+    return a && b !== null ? (b ? `${a}–${b}` : a) : null;
+}
+
+export interface LogWorkInput {
+    /** The chat's key (the MCP makes one per chat): a second call replaces that chat's lines for the day. */
+    key: string;
+    project: string;
+    /** His local day (YYYY-MM-DD); today by default, at most three days back. */
+    day?: string | undefined;
+    /** From a work folder (the MCP knows it): only its own project's work brief shows it. */
+    office?: boolean | undefined;
+    lines: ReadonlyArray<{ kind: WorkLineKind; text: string; at?: string | undefined }>;
+}
+
+export type LogWorkResult =
+    | { status: 'saved'; day: DayString; project: string; saved: number; skipped: number }
+    | { status: 'off' }
+    | { status: 'paused' };
+
+/**
+ * An agent writes a day's work on his word (log_work): scrubbed, no label, short; a line he removed is
+ * not written again; one another chat already logged for that project and day is skipped; this chat's
+ * lines for the day are replaced in one transaction. Needs his work log on and the buddy not paused.
+ */
+export async function logWork(userId: string, input: LogWorkInput, now: Date = new Date()): Promise<LogWorkResult> {
+    const state = await prisma.buddyState.findUnique({ where: { userId }, select: { workLog: true, paused: true } });
+    if (!state?.workLog) return { status: 'off' };
+    if (state.paused) return { status: 'paused' };
+    const ctx = await loadLearningContext(userId, now);
+    const day = (input.day && isValidDay(input.day) ? input.day : ctx.today) as DayString;
+    if (day > ctx.today || day < addDays(ctx.today, -LOG_DAYS_BACK)) throw new ErrorResponse(400, `Log today's work or up to ${LOG_DAYS_BACK} days back`);
+    const project = input.project.trim().toLowerCase().slice(0, 100) || 'other';
+    const [removed, others] = await Promise.all([
+        prisma.workLine.findMany({ where: { userId, project, hidden: true, day: { gte: toDbDay(addDays(day, -REMOVED_DAYS)) } }, select: { text: true }, take: 80 }),
+        prisma.workLine.findMany({ where: { userId, project, day: toDbDay(day), hidden: false, sessionKey: { not: input.key } }, select: { text: true } }),
+    ]);
+    const kept: Array<{ kind: WorkLineKind; text: string; at: string | null }> = [];
+    let skipped = 0;
+    for (const l of input.lines.slice(0, LOG_LINES_MAX)) {
+        const text = oneLine(unlabel(scrubSecrets(l.text)), WORK_LINE_MAX);
+        if (!lineKey(text) || removed.some((r) => nearlySame(r.text, text)) || others.some((o) => nearlySame(o.text, text)) || kept.some((k) => nearlySame(k.text, text))) {
+            skipped++;
+            continue;
+        }
+        kept.push({ kind: l.kind, text, at: workSpan(l.at) });
+    }
+    await prisma.$transaction([
+        prisma.workLine.deleteMany({ where: { userId, sessionKey: input.key, day: toDbDay(day), hidden: false } }),
+        prisma.workLine.createMany({
+            data: kept.map((l, i) => ({ userId, day: toDbDay(day), project, sessionKey: input.key, kind: l.kind, text: l.text, at: l.at, source: 'agent' as WorkLineSource, office: !!input.office, position: i })),
+        }),
+    ]);
+    if (kept.length) await bumpDay(userId, ctx.today, { work: kept.length });
+    return { status: 'saved', day, project, saved: kept.length, skipped };
+}
+
 // ─── Reading it ─────────────────────────────────────────────────────────────
 
 export interface WorkLineJson {
     _id: string;
     kind: WorkLineKind;
     text: string;
+    /** The time it took, when an agent logged it from the hook's clock ("10:15–11:40"). */
+    at: string | null;
+    /** summary: from his captured words; agent: logged on his word (B10). */
+    source: WorkLineSource;
 }
+
+/** A line as briefs and the night read it: its time first when it has one. */
+export const workLineText = (l: { text: string; at?: string | null }) => (l.at ? `${l.at} ${l.text}` : l.text);
 
 export interface WorkProjectJson {
     project: string;
@@ -184,7 +278,7 @@ export interface WorkQuery {
     limit?: number | undefined;
 }
 
-const WORK_COLUMNS = Prisma.sql`w."id", w."userId", w."day", w."project", w."sessionKey", w."kind", w."text", w."office", w."hidden", w."position", w."createdAt"`;
+const WORK_COLUMNS = Prisma.sql`w."id", w."userId", w."day", w."project", w."sessionKey", w."kind", w."source", w."at", w."text", w."office", w."hidden", w."position", w."createdAt"`;
 
 /**
  * His work, newest day first: per day and project the lines, the time and the commits. `q` searches
@@ -245,7 +339,7 @@ export async function listWork(userId: string, query: WorkQuery = {}, now: Date 
                     minutes: s.reduce((a, x) => a + (x.minutes ?? 0), 0),
                     sessions: s.length,
                     commits: [...new Set(commits)].slice(0, 10),
-                    lines: lines.map((l) => ({ _id: l.id, kind: l.kind, text: l.text })),
+                    lines: lines.map((l) => ({ _id: l.id, kind: l.kind, text: l.text, at: l.at ?? null, source: l.source })),
                 };
             }),
         };
@@ -274,14 +368,14 @@ export async function workForBrief(userId: string, options: { project?: string |
         if (!recent.length) return null;
         const days = recent.map((r) => fromDbDay(r.day));
         const list = await listWork(userId, { project, from: days[days.length - 1], to: days[0] }, now);
-        return { days: list.map((d) => ({ day: d.day, projects: d.projects.map((p) => ({ project: p.project, minutes: p.minutes, lines: p.lines.map((l) => l.text) })) })) };
+        return { days: list.map((d) => ({ day: d.day, projects: d.projects.map((p) => ({ project: p.project, minutes: p.minutes, lines: p.lines.map(workLineText) })) })) };
     }
     const yesterday = addDays(ctx.today, -1);
     const list = await listWork(userId, { from: yesterday, to: yesterday }, now);
     if (!list.length) return null;
     let left = 5;
     const projects = list[0]!.projects.map((p) => {
-        const lines = p.lines.slice(0, left).map((l) => l.text);
+        const lines = p.lines.slice(0, left).map(workLineText);
         left -= lines.length;
         return { project: p.project, minutes: p.minutes, lines };
     }).filter((p) => p.lines.length);
@@ -295,7 +389,7 @@ export async function workForNight(userId: string, today: DayString, now: Date =
     if (!list.length) return null;
     const lines = list[0]!.projects.flatMap((p) => p.lines.map((l) => l.text));
     const text = list[0]!.projects
-        .map((p) => `${p.project}${p.office ? ' (office)' : ''} · ${p.minutes} min\n${p.lines.map((l) => `- ${l.kind}: ${l.text}`).join('\n')}`)
+        .map((p) => `${p.project}${p.office ? ' (office)' : ''} · ${p.minutes} min\n${p.lines.map((l) => `- ${l.kind}${l.at ? ` (${l.at})` : ''}: ${l.text}`).join('\n')}`)
         .join('\n');
     return { text, lines };
 }

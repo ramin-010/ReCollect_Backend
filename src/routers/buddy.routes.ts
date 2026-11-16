@@ -37,6 +37,8 @@ router.post('/questions', cookieOnly, buddy.questionHandler);
 router.get('/chapters', requireScope('read'), buddy.chaptersHandler);
 // B9: the work log (what he did, per project and day); removing a line is his alone.
 router.get('/work', requireScope('read'), buddy.workHandler);
+// B10: an agent logs a day's work on his word (log_work); no model call.
+router.post('/work', requireScope('sessions:write'), idempotency, buddy.logWorkHandler);
 router.delete('/work/:id', cookieOnly, buddy.hideWorkHandler);
 
 export default router;

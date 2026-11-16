@@ -38,7 +38,7 @@ import { buddyMaySpend } from '../services/buddy/spend';
 import { fromDbDay } from '../services/learningDb/common';
 import ErrorResponse from '../utils/errorResponse';
 import { handler, ok, param, parse } from './learning/common';
-import { hideWorkLine, listWork } from '../services/buddy/work';
+import { LOG_LINES_MAX, WORK_KINDS, hideWorkLine, listWork, logWork } from '../services/buddy/work';
 
 /** A step's stored lines with their words read through unlabel. */
 const unlabelLines = (lines: unknown): unknown => (Array.isArray(lines) ? lines.map((l) => (l && typeof l === 'object' && typeof (l as { text?: unknown }).text === 'string' ? { ...l, text: unlabel((l as { text: string }).text) } : l)) : lines);
@@ -325,6 +325,29 @@ export const workHandler = handler(async (req, res) => {
     const officeOnly = q.work === '1' || q.work === 'true';
     if (officeOnly && !q.project) throw new ErrorResponse(400, 'A work chat asks about its own project: send project');
     ok(res, await listWork(requireUser(req).id, { project: q.project, from: q.from, to: q.to, q: q.q, limit: q.limit }));
+});
+
+/**
+ * POST /api/buddy/work {key, project, day?, office?, lines} (an agent, on his word: log_work, /log-work; B10)
+ * → { status: saved, day, project, saved, skipped } | { status: off } | { status: paused }
+ */
+export const logWorkHandler = handler(async (req, res) => {
+    const input = parse(
+        z
+            .object({
+                key: z.string().trim().min(1).max(80),
+                project: z.string().trim().min(1).max(100),
+                day: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+                office: z.boolean().optional(),
+                lines: z
+                    .array(z.object({ kind: z.enum(WORK_KINDS), text: z.string().trim().min(1).max(400), at: z.string().trim().max(40).optional() }).strict())
+                    .min(1)
+                    .max(LOG_LINES_MAX),
+            })
+            .strict(),
+        req.body
+    );
+    ok(res, await logWork(requireUser(req).id, input), 201);
 });
 
 /** DELETE /api/buddy/work/:id (the app): he removes a line; it stays hidden and is never written again. */

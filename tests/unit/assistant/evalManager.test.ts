@@ -10,7 +10,8 @@ const set = JSON.parse(fs.readFileSync(path.join(root, 'evals', 'manager.json'),
     cases: Array<{ id: string; request: string; mustUse?: string[][]; mustNotUse?: string[]; textMust?: string[]; textMustNot?: string[] }>;
 };
 const catalogue = fs.readFileSync(path.join(root, '..', 'mcp', 'src', 'server.ts'), 'utf8');
-const toolNames = new Set([...catalogue.slice(catalogue.indexOf('export const TOOL_NAMES'), catalogue.indexOf('] as const;')).matchAll(/'([a-z_]+)'/g)].map((m) => m[1]!));
+const start = catalogue.indexOf('export const TOOL_NAMES');
+const toolNames = new Set([...catalogue.slice(start, catalogue.indexOf('] as const;', start)).matchAll(/'([a-z_]+)'/g)].map((m) => m[1]!));
 
 const tool = (name: string, level: 1 | 2 | 3, extra: Record<string, unknown> = {}) => ({ name, level, input: '{}', result: '', ok: true, ...extra });
 

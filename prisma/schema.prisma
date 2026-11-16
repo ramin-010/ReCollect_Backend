@@ -2070,6 +2070,12 @@ enum WorkLineKind {
   next
 }
 
+/// B10: the summariser (his captured words, personal folders) or an agent on his word (log_work, office folders).
+enum WorkLineSource {
+  summary
+  agent
+}
+
 /// What he did, per project and day (B9): a store apart from the memory about him. Dated lines that
 /// never fade and never reach the portrait or the lock screen. The work summariser rewrites a
 /// session's lines for its day; a line he removed stays as a row (`hidden`) so it isn't written again.
@@ -2083,6 +2089,10 @@ model WorkLine {
   project      String                   @db.VarChar(100)
   sessionKey   String                   @db.VarChar(80)
   kind         WorkLineKind
+  /// Who wrote it (B10): the summariser from his captured words, or an agent he asked (log_work).
+  source       WorkLineSource           @default(summary)
+  /// The time it took, as the agent read it from the hook's clock ("10:15–11:40"); none from the summariser.
+  at           String?                  @db.VarChar(20)
   text         String                   @db.VarChar(200)
   /// From a folder that never gets his brief: office work (only its own project's work brief shows it).
   office       Boolean                  @default(false)

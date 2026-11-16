@@ -544,6 +544,6 @@ export async function exportBuddy(userId: string, now: Date = new Date()) {
             createdAt: o.createdAt.toISOString(),
         })),
         // B9: his work log, the lines he removed too (marked).
-        work: work.map((w) => ({ _id: w.id, day: fromDbDay(w.day), project: w.project, kind: w.kind, text: w.text, office: w.office, removed: w.hidden, sessionKey: w.sessionKey })),
+        work: work.map((w) => ({ _id: w.id, day: fromDbDay(w.day), project: w.project, kind: w.kind, text: w.text, at: w.at, source: w.source, office: w.office, removed: w.hidden, sessionKey: w.sessionKey })),
     };
 }

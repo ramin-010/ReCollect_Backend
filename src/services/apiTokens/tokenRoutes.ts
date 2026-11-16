@@ -146,6 +146,8 @@ export const TOKEN_ROUTES: readonly TokenRoute[] = [
     route('GET', '/api/buddy/chapters', 'read'),
     // B9: his work log, for get_work_log and Ask AI (removing a line is the app's alone).
     route('GET', '/api/buddy/work', 'read'),
+    // B10: an agent logs a day's work when he asks (log_work, /log-work).
+    route('POST', '/api/buddy/work', 'sessions:write'),
 ];
 
 /**
@@ -209,6 +211,7 @@ export const SELF_LOGGED: Readonly<Record<string, string>> = {
     'POST /api/buddy/tell': "the phone app hands on Ramin's own words: a note for tonight he sees on /you, nothing changes by it",
     'POST /api/buddy/feedback': "the phone app hands on Ramin's thumb on a line: a signal for the next night, nothing changes by it",
     'POST /api/buddy/words': 'the hooks queue his own typed words for the buddy: scrubbed, digested into notes he sees on /you and suggestions he decides on, then deleted; nothing in the app changes by it',
+    'POST /api/buddy/work': "an agent logs a day's work on Ramin's word: the lines are their own visible record (/you › Your work, each removable and never written again once removed); nothing else changes",
 };
 
 /** The path of a URL without its query string. */

@@ -182,6 +182,62 @@ describe('the work log', () => {
         expect(exported.find((w: { text: string }) => w.text.includes('GST'))).toMatchObject({ removed: true, office: true });
     });
 
+    it("B10: an agent logs a day's work on his word (log_work): times, the office flag, one chat's lines replaced, another chat's and removed lines kept out; off and paused write nothing", async () => {
+        const { user } = await setup(false);
+        const agent = asAgent((await createTestToken(user, ['read', 'sessions:write'], 'Claude Code')).token, 'Claude Code');
+        const { today } = await loadLearningContext(user.id, new Date());
+        const body = (over: Record<string, unknown> = {}) => ({
+            key: 'lw_chat1',
+            project: 'ERP',
+            office: true,
+            lines: [
+                { kind: 'did', text: 'Fixed the GST rounding in the invoice report', at: '10:15 - 11:40' },
+                { kind: 'decided', text: 'Kept the old export until the client signs off', at: '14:05' },
+                { kind: 'next', text: 'Add the credit note export', at: 'after lunch' },
+            ],
+            ...over,
+        });
+        // The work log off: nothing written.
+        expect((await agent.post('/api/buddy/work', body())).body.data).toEqual({ status: 'off' });
+        await api(user).patch('/api/buddy/settings', { workLog: true });
+
+        const first = await agent.post('/api/buddy/work', body());
+        expect(first.status).toBe(201);
+        expect(first.body.data).toMatchObject({ status: 'saved', day: today, project: 'erp', saved: 3, skipped: 0 });
+        const rows = await prisma.workLine.findMany({ where: { userId: user.id }, orderBy: { position: 'asc' } });
+        expect(rows.map((r) => [r.kind, r.at, r.source, r.office, r.sessionKey])).toEqual([
+            ['did', '10:15–11:40', 'agent', true, 'lw_chat1'],
+            ['decided', '14:05', 'agent', true, 'lw_chat1'],
+            ['next', null, 'agent', true, 'lw_chat1'],
+        ]);
+        // The same chat again: its lines for the day are replaced, not doubled.
+        await agent.post('/api/buddy/work', body({ lines: [{ kind: 'did', text: 'Fixed the GST rounding in the invoice report and its tests', at: '10:15–12:00' }] }));
+        expect(await prisma.workLine.count({ where: { userId: user.id, hidden: false } })).toBe(1);
+        // Another chat: a line that says the same is skipped; a new one is kept.
+        const other = await agent.post('/api/buddy/work', body({ key: 'lw_chat2', lines: [{ kind: 'did', text: 'Fixed GST rounding in the invoice report', at: '16:00' }, { kind: 'did', text: 'Reviewed the payroll migration' }] }));
+        expect(other.body.data).toMatchObject({ saved: 1, skipped: 1 });
+        // A line he removed is never written again, by any chat.
+        const kept = await prisma.workLine.findFirstOrThrow({ where: { userId: user.id, sessionKey: 'lw_chat2' } });
+        expect((await api(user).delete(`/api/buddy/work/${kept.id}`)).status).toBe(200);
+        const again = await agent.post('/api/buddy/work', body({ key: 'lw_chat3', lines: [{ kind: 'did', text: 'Reviewed the payroll migration' }] }));
+        expect(again.body.data).toMatchObject({ saved: 0, skipped: 1 });
+
+        // Read back: the time and who wrote it; the office brief puts the time first.
+        const day = (await api(user).get(`/api/buddy/work?from=${today}&to=${today}`)).body.data[0];
+        expect(day.projects[0].lines[0]).toMatchObject({ text: 'Fixed the GST rounding in the invoice report and its tests', at: '10:15–12:00', source: 'agent' });
+        const office = (await agent.get('/api/brief?project=erp&work=1')).body.data;
+        expect(office.work.days[0].projects[0].lines).toEqual(['10:15–12:00 Fixed the GST rounding in the invoice report and its tests']);
+
+        // A day too far back, a bad body, a token without the scope.
+        expect((await agent.post('/api/buddy/work', body({ day: addDays(today, -5) }))).status).toBe(400);
+        expect((await agent.post('/api/buddy/work', body({ lines: [] }))).status).toBe(400);
+        const reader = asAgent((await createTestToken(user, ['read'])).token);
+        expect((await reader.post('/api/buddy/work', body())).status).toBe(403);
+        // Paused: nothing written.
+        await api(user).patch('/api/buddy/settings', { paused: true });
+        expect((await agent.post('/api/buddy/work', body({ key: 'lw_chat4' }))).body.data).toEqual({ status: 'paused' });
+    });
+
     it("the night reads his last day's work, says it only off the lock screen, and the summariser never writes a removed line again", async () => {
         const { user, hook } = await setup();
         await prisma.workLine.createMany({
