@@ -37,6 +37,7 @@ import mcpRoutes from './routers/mcp.routes';
 import phoneRoutes from './routers/phone.routes';
 import buddyRoutes from './routers/buddy.routes';
 import { consentRouter, publicOAuthRouter } from './routers/oauth.routes';
+import { healthDbRouter, healthzRouter } from './routers/health.routes';
 import { allowedOrigins } from './config/origins';
 
 // Cut on the pg-migration branch (files in backend/_archive): content, dashboards (dash),
@@ -60,6 +61,9 @@ export function createApp(): Application {
         res.setHeader('Surrogate-Control', 'no-store'); // Tells Cloudflare explicitly not to cache
         next();
     });
+
+    // GET /healthz: "the process is up", for an outside checker. No database, no login, no CORS.
+    app.use(healthzRouter);
 
     // Sign-in for MCP clients: other apps' servers call these, so they sit before the CORS check.
     app.use(publicOAuthRouter);
@@ -99,6 +103,8 @@ export function createApp(): Application {
     // Which endpoints accept a token at all: src/services/apiTokens/tokenRoutes.ts.
     app.use('/api/agent', agentRoutes);
     app.use('/api/tokens', apiTokenRoutes);
+    // The database check (SELECT 1) for the owner's cookie (OWNER_EMAIL): src/routers/health.routes.ts.
+    app.use('/api/health/db', healthDbRouter);
     // Canvas tools (CANVAS_BLOCK_SPEC §9, step 3): "Tidy up" and "Save as SVG/PNG" for a board.
     app.use('/api/canvas', canvasRoutes);
 

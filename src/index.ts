@@ -1,6 +1,11 @@
 // Server entry point: `npm run dev` (ts-node-dev) / `node dist/index.js`.
 // The Express app itself is built in ./app (so tests can import it without side effects).
 import 'dotenv/config';
+// Hosting P1-10: a production start with unsafe settings stops here, before the app or any timer
+// loads (this file compiles to CommonJS, which runs these lines in order).
+import { refuseUnsafeProductionStart } from './config/productionCheck';
+refuseUnsafeProductionStart();
+
 import app from './app';
 import { startCronScheduler } from './services/cronScheduler';
 import { startOtpCleanupCron } from './services/auth/otp.service';
