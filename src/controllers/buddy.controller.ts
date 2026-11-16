@@ -141,7 +141,11 @@ export const patchSettingsHandler = handler(async (req, res) => {
     ok(res, await updateBuddySettings(requireUser(req).id, patch));
 });
 
-/** The health numbers (BUDDY_MEMORY_PLAN §3.7.5), last 30 days: the share of memories he confirmed, his thumbs, what the guards threw out. */
+/**
+ * The health numbers (BUDDY_MEMORY_PLAN §3.7.5): the last 30 days (the share of memories he confirmed, his
+ * thumbs, what the guards threw out), the memories by age, and the last three months (a falling thumbs
+ * ratio or a rising drop rate is the sign to look at the prompts; the cost per month).
+ */
 async function buddyHealth(userId: string) {
     const since = new Date(Date.now() - 30 * 86_400_000);
     const [active, confirmed, more, less, steps] = await Promise.all([
@@ -152,7 +156,35 @@ async function buddyHealth(userId: string) {
         prisma.buddyDay.findMany({ where: { userId, createdAt: { gte: since } }, select: { dropped: true } }),
     ]);
     const dropped = steps.reduce((n, s) => n + (Array.isArray(s.dropped) ? s.dropped.length : 0), 0);
-    return { confirmedShare: active ? Math.round((confirmed / active) * 100) : 0, thumbs: { more, less }, dropped, steps: steps.length };
+    // Memories by age (their first day): this month, the two before it, older.
+    const day = 86_400_000;
+    const at = (days: number) => new Date(Date.now() - days * day);
+    const [young, mid, old] = await Promise.all([
+        prisma.memory.count({ where: { userId, status: 'active', firstSeenDay: { gte: at(30) } } }),
+        prisma.memory.count({ where: { userId, status: 'active', firstSeenDay: { lt: at(30), gte: at(90) } } }),
+        prisma.memory.count({ where: { userId, status: 'active', firstSeenDay: { lt: at(90) } } }),
+    ]);
+    // The last three calendar months: his thumbs, what the checks threw out, what the buddy cost.
+    const now = new Date();
+    const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 2, 1));
+    const [fb, days, usage] = await Promise.all([
+        prisma.buddyFeedback.findMany({ where: { userId, createdAt: { gte: start } }, select: { verdict: true, createdAt: true } }),
+        prisma.buddyDay.findMany({ where: { userId, createdAt: { gte: start } }, select: { dropped: true, createdAt: true } }),
+        prisma.aiUsage.findMany({ where: { userId, createdAt: { gte: start }, feature: { in: ['buddy_gate', 'buddy_digest', 'buddy_think', 'buddy_pulse', 'buddy_check'] } }, select: { costUsd: true, createdAt: true } }),
+    ]);
+    const monthOf = (d: Date) => d.toISOString().slice(0, 7);
+    const months = [0, 1, 2].map((i) => {
+        const month = monthOf(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1)));
+        const inMonth = <T extends { createdAt: Date }>(rows: T[]) => rows.filter((r) => monthOf(r.createdAt) === month);
+        return {
+            month,
+            more: inMonth(fb).filter((f) => f.verdict === 'more').length,
+            less: inMonth(fb).filter((f) => f.verdict === 'less').length,
+            dropped: inMonth(days).reduce((n, s) => n + (Array.isArray(s.dropped) ? s.dropped.length : 0), 0),
+            costUsd: Math.round(inMonth(usage).reduce((a, u) => a + Number(u.costUsd), 0) * 100) / 100,
+        };
+    });
+    return { confirmedShare: active ? Math.round((confirmed / active) * 100) : 0, thumbs: { more, less }, dropped, steps: steps.length, byAge: { month: young, quarter: mid, older: old }, months };
 }
 
 /** GET /api/buddy/you → what /you draws: settings, counts and every memory (newest first, at most 500) */

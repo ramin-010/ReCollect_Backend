@@ -138,6 +138,8 @@ export interface NightInput {
     timezone: string;
     /** What his routines did by themselves just now (B6): the note names them. */
     doneForHim?: string[];
+    /** Open threads quiet for five weeks or more, about to fade: the night may ask about one once. */
+    quietThreads?: string[];
 }
 
 export function nightTask(input: NightInput): string {
@@ -154,6 +156,9 @@ export function nightTask(input: NightInput): string {
         `<his_notes>\n${input.hisNotes.map((n) => `"${n.title}": ${n.text}`).join('\n') || 'none'}\n</his_notes>`,
         `<notebook>\n${input.notebook ?? 'empty: this is your first night'}\n</notebook>`,
         `<said>\n${input.said.map((x) => `${x.day} ${x.what}: ${x.text}`).join('\n') || 'nothing yet'}\n</said>`,
+        ...(input.quietThreads?.length
+            ? [`<quiet_threads>\n${input.quietThreads.join('\n')}\nThese open threads have been quiet for over five weeks and fade within a week. If one still matters, ask him about it once, in followUp ("still on?"); else let it go.\n</quiet_threads>`]
+            : []),
         ...(input.doneForHim?.length ? [`<done_for_him>\nBy his standing yes you just: ${input.doneForHim.join('; ')}. Name it in the note.\n</done_for_him>`] : []),
         'Write tonight’s step.',
     ].join('\n\n');
@@ -507,6 +512,10 @@ export async function loadNightInput(userId: string, now: Date): Promise<NightIn
         candidates: candidates.map((c) => ({ id: c.id, kind: c.kind, text: c.text, due: typeof (c.payload as Record<string, unknown>)?.['dueDay'] === 'string' ? String((c.payload as Record<string, unknown>)['dueDay']) : null })),
         hisNotes,
         notebook: state?.notebook ?? null,
+        // Threads quiet 38-45 days: the week before they fade (fadeMemories, THREAD_QUIET_DAYS).
+        quietThreads: working
+            .filter((m) => m.kind === 'thread' && !m.byUser && !m.pinned && fromDbDay(m.lastSeenDay) <= addDays(ctx.today, -38) && fromDbDay(m.lastSeenDay) >= addDays(ctx.today, -45))
+            .map((m) => `${m.id} · quiet since ${fromDbDay(m.lastSeenDay)} · ${m.text}`),
         said,
         timezone: ctx.tz,
         tz: ctx.tz,

@@ -90,6 +90,21 @@ describe('the month', () => {
         expect((await prisma.buddyChapter.findUniqueOrThrow({ where: { userId_period: { userId: user.id, period: '2026' } } })).text).toBe('In 2026: 25 hours logged over 20 active days in 2 months, 40 reviews and 8 tasks done.');
     });
 
+    it('past a hundred lasting memories the audit is asked to condense them; the health numbers by age and month', async () => {
+        const { user } = await setup();
+        await prisma.memory.createMany({
+            data: Array.from({ length: 100 }, (_, i) => ({ userId: user.id, text: `Lasting fact number ${i}`, kind: 'fact' as const, lasting: true, source: 'buddy' as const, firstSeenDay: day('2026-06-01'), lastSeenDay: day('2026-11-20') })),
+        });
+        fake.push(fakeMessage({ chapter: 'November was a month of building.', merge: [], close: [], questions: [], who: '', heading: '' }));
+        await runMonth(user.id, AT);
+        expect(JSON.stringify(fake.calls[0]!.messages)).toContain('<condense>');
+        // /you's health numbers: memories by age and the last three months.
+        const health = (await api(user).get('/api/buddy/you')).body.data.health;
+        expect(health.byAge.older).toBeGreaterThanOrEqual(100);
+        expect(health.months).toHaveLength(3);
+        expect(health.months[0]).toMatchObject({ month: expect.stringMatching(/^\d{4}-\d{2}$/), more: expect.any(Number), costUsd: expect.any(Number) });
+    });
+
     it('a chapter with a number it was not given becomes the plain one', async () => {
         const { user } = await setup();
         fake.push(fakeMessage({ chapter: 'He logged 97 hours in November.', merge: [], close: [], questions: [], who: '', heading: '' }));

@@ -109,6 +109,21 @@ describe('the night step', () => {
         expect((await api(user).post('/api/buddy/think')).status).toBe(409);
     });
 
+    it('a thread quiet for over five weeks reaches the night once more, to ask about it before it fades', async () => {
+        const { user } = await setup();
+        const thread = (text: string, last: string) =>
+            prisma.memory.create({ data: { userId: user.id, text, kind: 'thread', lasting: false, source: 'buddy', firstSeenDay: new Date('2026-09-01T00:00:00Z'), lastSeenDay: new Date(`${last}T00:00:00Z`) } });
+        const quiet = await thread('Planning a talk at the Pune meetup', '2026-10-07'); // 40 days before 16 Nov
+        const fresh = await thread('Moving the blog to Astro', '2026-10-27'); // 20 days
+        fake.push(fakeMessage(night()));
+        await nightIfDue(user.id, AT);
+        const asked = JSON.stringify(fake.calls[0]!.messages);
+        expect(asked).toContain('<quiet_threads>');
+        expect(asked).toContain(`${quiet.id} · quiet since 2026-10-07`);
+        expect(asked).not.toContain(`${fresh.id} · quiet since`);
+        expect((await prisma.memory.findUniqueOrThrow({ where: { id: quiet.id } })).status).toBe('active'); // it fades at 45 days, not yet
+    });
+
     it('not before 04:00, not when off; a failed lock check keeps every line off the lock screen; a broken answer leaves the plain line', async () => {
         const { user } = await setup();
         expect(await nightIfDue(user.id, new Date(Date.UTC(2026, 10, 15, 21, 0)))).toBeNull(); // 02:30 his time

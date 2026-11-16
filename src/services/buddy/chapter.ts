@@ -17,7 +17,7 @@ import { dayRange, loadLearningContext } from '../learningDb/common';
 import { characterPrompt } from './character';
 import { MEMORY_KINDS } from './memory.service';
 import { scrubSecrets } from './scrub';
-import { THINK_MODEL, applyOps, checkOps, strayNumbers, type NightOp } from './think';
+import { LASTING_MAX, THINK_MODEL, applyOps, checkOps, strayNumbers, type NightOp } from './think';
 
 const EPHEMERAL = { type: 'ephemeral' } as const;
 const CHAPTER_WORDS = 150;
@@ -127,12 +127,15 @@ export async function runMonth(userId: string, now: Date = new Date(), month?: s
         prisma.memory.findMany({ where: { userId, status: 'active' }, orderBy: [{ lasting: 'desc' }, { lastSeenDay: 'desc' }], take: 220 }),
         prisma.buddyDay.findMany({ where: { userId, kind: 'night', createdAt: { gte: from, lt: to } }, select: { note: true }, orderBy: { createdAt: 'asc' }, take: 31 }),
     ]);
+    const lastingCount = memories.filter((m) => m.lasting).length;
     const memLine = (m: (typeof memories)[number]) => `${m.id} · ${m.kind} · ${m.lasting ? 'lasting' : 'working'}${m.byUser ? ' · his own' : ''} · seen ${m.seenCount} · ${m.text}`;
     const text = [
         `<month>${period}</month>`,
         `<facts>\n${JSON.stringify(facts)}\n</facts>`,
         `<memories>\n${memories.map(memLine).join('\n') || 'none'}\n</memories>`,
         `<month_notes>\n${steps.map((s) => s.note).filter(Boolean).map((n) => (n!.length > 240 ? `${n!.slice(0, 239)}…` : n)).join('\n') || 'none'}\n</month_notes>`,
+        // Past the hundred lasting memories the night reads: condense (§3.7), nothing dropped.
+        ...(lastingCount > LASTING_MAX ? [`<condense>\nHe has ${lastingCount} lasting memories, more than the ${LASTING_MAX} you can read each night. Merge related ones into fewer, richer memories (one merged memory may hold several) until about ${LASTING_MAX - 10} remain. Never his own.\n</condense>`] : []),
         'Write this month’s chapter and audit.',
     ].join('\n\n');
     const request = {
