@@ -1,0 +1,17 @@
+{
+  // The maintenance scripts the server runs with plain node (hosting review A7): check-blocks,
+  // search-reindex and the cutover, with the src/ modules they import, compiled into dist-scripts/.
+  // `npm run build` builds them after the API, so a release carries them; run them as
+  // node dist-scripts/scripts/<name>.js (each script's header says how it names its database).
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "./dist-scripts",
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false,
+    "types": ["node"]
+  },
+  "include": ["scripts/check-blocks.ts", "scripts/search-reindex.ts", "scripts/cutover.ts", "scripts/lib/*.ts"],
+  "exclude": ["dist", "dist-scripts", "node_modules", "_archive"]
+}

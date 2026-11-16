@@ -35,8 +35,9 @@ live document and closes the database pool, within 20 s).
 
 Every one is optional; unset, the server behaves as in development. With `NODE_ENV=production` it refuses to start
 (and says why) when `JWT_SECRET` is under 32 characters, `ALLOWED_ORIGINS` or `RECOLLECT_SELF_URL` (https) is unset,
-`HOST` is not a loopback address, `SIGNUP_MODE` is unset or `open`, `ASSISTANT_FAKE` is set, or a `DATABASE_URL` on
-another host lacks `sslmode=verify-full` (`src/config/productionCheck.ts`).
+`HOST` is not a loopback address, `SIGNUP_MODE` is unset or `open`, `ASSISTANT_FAKE` is set,
+`NODE_TLS_REJECT_UNAUTHORIZED=0`, `OAUTH_CIMD_HOSTS` is unset, or a `DATABASE_URL` on another host lacks
+`sslmode=verify-full` (`src/config/productionCheck.ts`).
 
 | Setting | What it does |
 |---|---|
@@ -53,8 +54,26 @@ another host lacks `sslmode=verify-full` (`src/config/productionCheck.ts`).
 | `COOKIE_SAMESITE` | `lax`, `strict` or `none` for the login cookie. Unset: `none` in production, `lax` in development |
 | `BUDDY_OFFICE_CAPTURE=off` | Words a hook marks as office work are dropped on arrival (counted) |
 | `REMINDER_EMAIL=off` | No reminder emails at all (the phone app rings for them) |
+| `OAUTH_CIMD_HOSTS` | Host names whose client-metadata documents the OAuth server may fetch (comma-separated, e.g. `claude.ai`); any other client id is refused before a request leaves |
 
 `GET /healthz` answers 200 while the process is up and never touches the database.
+
+### Maintenance scripts on a server
+
+`npm run build` also compiles `scripts/check-blocks.ts`, `scripts/search-reindex.ts` and `scripts/cutover.ts`, with
+the modules they use, into `dist-scripts/` (`tsconfig.scripts.json`), so they run with plain `node` and the production
+dependencies only. Each takes its database from `DATABASE_URL` exactly as the process gets it, never from a `.env`
+file, and refuses the dev database (`recollect_dev`, port 5433 on the same machine, or the address in `backend/.env`).
+
+| Command | What it does |
+|---|---|
+| `node dist-scripts/scripts/check-blocks.js` | Read only: every doc read as blocks, printed as Markdown and as its public page; counts only; exit 1 when one fails |
+| `node dist-scripts/scripts/search-reindex.js [--all]` | Writes the search words of docs that have none (`--all`: of every doc again) |
+| `node dist-scripts/scripts/cutover.js --owner-email <address>` | The cutover's clean-up, a dry run unless `--execute --confirm <database name>`. Deletes the QA accounts (and any `--delete-account <address>`) with all they own; gives the owner's account (`--from-email`, default `dev@recollect.local`) the real address and a new password (typed twice, hidden, or one line on stdin with `--password-stdin`); revokes every access token; deletes OAuth refresh tokens and codes, push subscriptions and email codes. One transaction; a second run changes nothing. Besides the dev database it refuses any database on the same machine except a disposable copy (`recollect_test_*`, `restore_*`) |
+
+With the API's settings: `DOTENV_CONFIG_PATH=<the API's env file> node -r dotenv/config dist-scripts/scripts/<name>.js`;
+or with an address given to that one process only: `DATABASE_URL="<address>" node dist-scripts/scripts/<name>.js`.
+`--allow-dev` lets `check-blocks` and `search-reindex` work on the dev database on purpose.
 
 ## Tests
 
