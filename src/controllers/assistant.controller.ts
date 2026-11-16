@@ -7,6 +7,7 @@ import { runAssistant, type AssistantEvent } from '../services/assistant/engine'
 import { docAskContext, docRules } from '../services/assistant/docContext';
 import { addMessage, createThread, deleteThread, getThread, listThreads, toolsWithState } from '../services/assistant/threads.service';
 import ErrorResponse from '../utils/errorResponse';
+import { internalUrl } from '../services/oauth/oauth.service';
 import { handler, ok, param, parse } from './learning/common';
 
 /** GET /api/assistant/threads -> [{ _id, title, createdAt, updatedAt }] */
@@ -52,6 +53,9 @@ export const stopTurnHandler = handler(async (req, res) => {
     ok(res, { stopped: Boolean(turn) });
 });
 
+/** Hosting P1-13: the stream's keep-alive comment comes this often. */
+export const STREAM_KEEPALIVE_MS = 25_000;
+
 /**
  * POST /api/assistant/messages { threadId?, text, docId?, focus? }: his message, then the manager's
  * turn as a stream (text/event-stream): `thread` { _id, title, docId }, `delta` { text, round } as
@@ -64,6 +68,7 @@ export const stopTurnHandler = handler(async (req, res) => {
 export const sendMessageHandler: RequestHandler = async (req, res, next) => {
     let streaming = false;
     let key: string | null = null;
+    let keepAlive: NodeJS.Timeout | null = null;
     // He may leave mid-turn: the turn still finishes and is kept; only the writes stop.
     const send = (event: string, data: unknown) => {
         if (!res.destroyed && !res.writableEnded) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
@@ -80,9 +85,14 @@ export const sendMessageHandler: RequestHandler = async (req, res, next) => {
         res.status(200).set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive' });
         res.flushHeaders();
         streaming = true;
+        // A comment line every 25 s, so a quiet stretch (a slow tool, a long thought) never looks idle
+        // to a proxy that closes silent requests (Cloudflare: 100 s; hosting P1-13).
+        keepAlive = setInterval(() => {
+            if (!res.destroyed && !res.writableEnded) res.write(': keep-alive\n\n');
+        }, STREAM_KEEPALIVE_MS);
         send('thread', { _id: thread._id, title: thread.title, docId: thread.docId });
         // The catalogue calls this same server back, at the port the request came in on.
-        const baseUrl = `http://localhost:${req.socket.localPort}`;
+        const baseUrl = internalUrl(req.socket.localPort); // this server, as it listens (hosting P1-9)
         // The words as they arrive, each tool as it finishes (with its card's words when it left one
         // waiting): all in the order they happened.
         let sent = Promise.resolve();
@@ -105,6 +115,7 @@ export const sendMessageHandler: RequestHandler = async (req, res, next) => {
         send('error', { message: err instanceof Error ? err.message : 'Something went wrong' });
         res.end();
     } finally {
+        if (keepAlive) clearInterval(keepAlive);
         if (key) running.delete(key);
     }
 };

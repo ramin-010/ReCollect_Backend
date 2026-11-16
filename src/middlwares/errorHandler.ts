@@ -49,8 +49,15 @@ const errorHandler = (err : any, req : Request, res : Response, next: NextFuncti
   }
 
   const statusCode = error.statusCode || 500;
-  // Tests: keep the output readable; expected 4xx errors are not logged.
-  if (process.env.NODE_ENV !== 'test' || statusCode >= 500) {
+  if (process.env.NODE_ENV === 'production') {
+    // Hosting P1-7: a failure's kind and where it happened, never its message (a database error can
+    // quote what was sent) and never the request; the request log already has the 4xx.
+    if (statusCode >= 500) {
+      const frames = String(err?.stack ?? '').split('\n').filter((l) => /^\s+at /.test(l)).slice(0, 8).join('\n');
+      console.error(`[error] ${statusCode} ${req.method} ${(req.originalUrl || '').split('?')[0]} ${err?.name ?? 'Error'}${typeof err?.code === 'string' ? ` ${err.code}` : ''}\n${frames}`);
+    }
+  } else if (process.env.NODE_ENV !== 'test' || statusCode >= 500) {
+    // Tests: keep the output readable; expected 4xx errors are not logged.
     console.error(err.stack);
   }
 

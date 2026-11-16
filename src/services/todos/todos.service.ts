@@ -456,7 +456,7 @@ export async function assignPersonalTodo(userId: string, todoId: string, emails:
             const { user: target, created } = await findOrCreatePlaceholderUser(email, tx);
             if (created) {
                 ghostEmails.push(email);
-                console.log(`[assign] Created ghost user: ${email} (${target.id})`);
+                console.log(`[assign] Created ghost user: ${target.id}`);
             }
             // No self-assignment, no duplicates.
             if (target.id === userId || existingAssignees.has(target.id)) continue;

@@ -301,12 +301,13 @@ export const hocuspocusServer = new Server({
     async onConnect(data: any) {
     const { documentName, context } = data;
     const parsed = parseDocumentName(documentName);
-    console.log(`[Collab] Connected: ${parsed?.prefix}:${parsed?.id} - ${context?.user?.name || '(pending auth)'}`);
+    // Ids only, never a person's name (hosting P1-7).
+    console.log(`[Collab] Connected: ${parsed?.prefix}:${parsed?.id}${context?.user?.id ? ` - user ${context.user.id}` : ' - (pending auth)'}`);
   },
 
   async onDisconnect({ documentName, context }: { documentName: string; context: any }) {
     const parsed = parseDocumentName(documentName);
-    console.log(`[Collab] Disconnected: ${parsed?.prefix}:${parsed?.id} - ${context?.user?.name}`);
+    console.log(`[Collab] Disconnected: ${parsed?.prefix}:${parsed?.id}${context?.user?.id ? ` - user ${context.user.id}` : ''}`);
     
         if (context?.user?.id) {
       const key = `${documentName}:${context.user.id}`;

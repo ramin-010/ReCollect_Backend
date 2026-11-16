@@ -19,11 +19,18 @@ export function signAuthToken(userId: string): string {
     } as jwt.SignOptions);
 }
 
+/**
+ * The cookies' flags (hosting P1-6). COOKIE_SAMESITE (lax, strict or none) sets SameSite; unset,
+ * today's: none in production (an API on another site), lax in dev. Production on one site
+ * (re-collect.in and api.re-collect.in) sets lax. No Domain unless COOKIE_DOMAIN is set, and only
+ * in production (as before): the cookie stays on the API's own host.
+ */
 function cookieEnv() {
     const isProduction = process.env.NODE_ENV === 'production';
-    // Let the browser default to the API host natively for standard cross-origin setups
     const cookieDomain = isProduction ? process.env.COOKIE_DOMAIN || undefined : undefined;
-    return { isProduction, cookieDomain };
+    const set = process.env.COOKIE_SAMESITE?.trim().toLowerCase();
+    const sameSite: 'lax' | 'strict' | 'none' = set === 'lax' || set === 'strict' || set === 'none' ? set : isProduction ? 'none' : 'lax';
+    return { isProduction, cookieDomain, sameSite };
 }
 
 /** Options for the `token` and `auth_hint` cookies (JWT_COOKIE_EXPIRE is in days). */
@@ -33,20 +40,20 @@ export function authCookieOptions(now: number = Date.now()): { token: CookieOpti
     }
     const days = parseInt(process.env.JWT_COOKIE_EXPIRE);
     const maxAge = days * 24 * 60 * 60 * 1000;
-    const { isProduction, cookieDomain } = cookieEnv();
+    const { isProduction, cookieDomain, sameSite } = cookieEnv();
 
     return {
         token: {
             expires: new Date(now + maxAge),
             httpOnly: true,
             secure: isProduction, // Needs to be false for local HTTP testing
-            sameSite: isProduction ? 'none' : 'lax', // Needs to be 'none' for cross-domain API
+            sameSite,
             domain: cookieDomain,
         },
         hint: {
             httpOnly: false,
             secure: isProduction,
-            sameSite: isProduction ? 'none' : 'lax',
+            sameSite,
             expires: new Date(now + maxAge),
             domain: cookieDomain,
         },
@@ -69,13 +76,13 @@ export function sendTokenResponse(user: SafeUserRow, statusCode: number, res: Re
 
 /** Expire both auth cookies (logout). */
 export function clearAuthCookies(res: Response): void {
-    const { isProduction, cookieDomain } = cookieEnv();
+    const { isProduction, cookieDomain, sameSite } = cookieEnv();
 
     res.cookie(AUTH_COOKIE_NAME, '', {
         httpOnly: true,
         expires: new Date(0),
         secure: isProduction,
-        sameSite: isProduction ? 'none' : 'lax',
+        sameSite,
         domain: cookieDomain,
     });
 
@@ -84,7 +91,7 @@ export function clearAuthCookies(res: Response): void {
         httpOnly: false,
         expires: new Date(0),
         secure: isProduction,
-        sameSite: isProduction ? 'none' : 'lax',
+        sameSite,
         domain: cookieDomain,
     });
 }

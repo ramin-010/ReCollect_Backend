@@ -83,7 +83,7 @@ export async function completeEmailSignup(
         if (existing && existing.isGhost) {
             // Claim the ghost account
             result = await claimGhostUser(existing.id, signupData, tx);
-            console.log(`[auth] Ghost user claimed via email signup: ${email}`);
+            console.log(`[auth] Ghost user claimed via email signup: ${existing.id}`);
         } else if (existing) {
             throw new ErrorResponse(400, 'User already exists');
         } else {
@@ -131,7 +131,7 @@ export async function loginWithGoogle(identity: GoogleIdentity): Promise<SafeUse
     if (existing) {
         if (existing.isGhost) {
             assertSignupAllowed(normalizedEmail); // claiming a placeholder is making an account (hosting P1-3)
-            console.log(`[auth] Ghost user claimed via Google: ${identity.email}`);
+            console.log(`[auth] Ghost user claimed via Google: ${existing.id}`);
         }
         return applyGoogleLogin(existing, { googleId: identity.googleId, picture: identity.picture });
     }

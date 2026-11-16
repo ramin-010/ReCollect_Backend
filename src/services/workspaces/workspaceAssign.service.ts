@@ -95,7 +95,7 @@ export async function assignWorkspaceTask(actor: TaskActor, todoId: string, emai
 
         for (const email of normalizedEmails) {
             const { user: target, created } = await findOrCreatePlaceholderUser(email, tx);
-            if (created) console.log(`[assign] Created ghost user: ${email} (${target.id})`);
+            if (created) console.log(`[assign] Created ghost user: ${target.id}`);
             // No self-assignment, no duplicates.
             if (target.id === actor.id || assignees.has(target.id)) continue;
             assignees.add(target.id);

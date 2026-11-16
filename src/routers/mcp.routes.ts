@@ -6,7 +6,7 @@
 import express, { type Request, type Response } from 'express';
 import { findApiToken, isApiTokenFormat } from '../services/apiTokens/apiTokens.service';
 import { serveMcpHttp } from '../services/assistant/catalogue';
-import { selfUrl, wwwAuthenticate } from '../services/oauth/oauth.service';
+import { internalUrl, wwwAuthenticate } from '../services/oauth/oauth.service';
 import { doorLimit } from '../middlwares/rateLimit';
 
 const router = express.Router();
@@ -30,7 +30,8 @@ router.post('/mcp', doorLimit('mcp'), express.json({ limit: '2mb' }), async (req
     if (!row || row.revokedAt) return unauthorized(res, 'This token is not valid any more. Make a new one in Settings → Agents.', true);
     if (row.expiresAt && row.expiresAt.getTime() <= Date.now()) return unauthorized(res, 'This token has expired: refresh it, or sign in again.', true);
     try {
-        await serveMcpHttp(req, res, { baseUrl: selfUrl(), token, agentName: row.name || 'Remote MCP' });
+        // The tools call this server on the address it listens on, never the public one (hosting P1-9).
+        await serveMcpHttp(req, res, { baseUrl: internalUrl(req.socket.localPort), token, agentName: row.name || 'Remote MCP' });
     } catch (err) {
         console.error('[mcp] request failed:', err);
         if (!res.headersSent) res.status(500).json({ jsonrpc: '2.0', error: { code: -32603, message: 'The Recollect tools could not run.' }, id: null });

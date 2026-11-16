@@ -30,6 +30,20 @@ const REQUEST_AUDIENCE = 'recollect-oauth-request';
 /** This server's own address: the issuer, and the MCP resource is <self>/mcp. */
 export const selfUrl = (): string => (process.env['RECOLLECT_SELF_URL'] || `http://localhost:${process.env['PORT'] || 8002}`).replace(/\/+$/, '');
 export const mcpResource = (): string => `${selfUrl()}/mcp`;
+
+/**
+ * Where this server calls itself (hosting P1-9: /mcp's tools and Ask AI run on the same API), on
+ * the port the request came in on. RECOLLECT_SELF_URL is only for the metadata, the issuer and links.
+ * With HOST set (production: 127.0.0.1) the loopback address it listens on; without it, localhost:
+ * the dev server listens on every interface and on his Windows PC answers localhost (IPv6), not
+ * 127.0.0.1.
+ */
+export function internalUrl(port: number | string | undefined, env: NodeJS.ProcessEnv = process.env): string {
+    const p = port || env['PORT'] || 8002;
+    const host = env['HOST']?.trim();
+    if (!host) return `http://localhost:${p}`;
+    return host === '::1' || host === '[::1]' ? `http://[::1]:${p}` : `http://127.0.0.1:${p}`;
+}
 /** The web app (the consent page lives there). */
 export const appUrl = (): string => (process.env['FRONTEND_URL'] || 'http://localhost:3005').replace(/\/+$/, '');
 
