@@ -1,7 +1,9 @@
 node_modules/
 dist/
 dist-scripts/
-uploads/
+# Only the backend's own upload folder: a bare `uploads/` also hid src/services/uploads/ and
+# tests/unit/uploads/ (source the committed code imports) from every commit.
+/uploads/
 
 # Environment
 .env
