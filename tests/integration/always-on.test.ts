@@ -60,6 +60,18 @@ describe('the ambient phone (6.6)', () => {
         expect(Buffer.compare(silly.body as Buffer, png.body as Buffer)).toBe(0);
         // The app's day card: one headline and what is left by kind under it (B8).
         expect(typeof widget.body.data.breakdown).toBe('string');
+        // Today's reminders still to come reach the home picture (titles hidden: plain words); a finished task's don't.
+        const soon = new Date(Date.now() + 2 * 60_000);
+        const todo = await prisma.todo.create({ data: { userId: user.id, title: 'Call the bank' } });
+        const done = await prisma.todo.create({ data: { userId: user.id, title: 'Already done', status: 'complete' } });
+        await prisma.reminder.create({ data: { userId: user.id, todoId: todo.id, reminderDate: soon } });
+        await prisma.reminder.create({ data: { userId: user.id, todoId: done.id, reminderDate: soon } });
+        const withTitles = (await request(app).get('/api/ambient/widget').set('Cookie', authCookie(user))).body.data;
+        const sameDay = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(soon) === new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+        if (sameDay) {
+            expect(withTitles.reminders).toEqual([{ at: expect.stringMatching(/^\d{1,2}(:\d\d)? (am|pm)$/), text: 'Call the bank' }]);
+            expect((await bearer('/api/ambient/widget?titles=0')).body.data.reminders).toEqual([{ at: expect.any(String), text: 'A reminder' }]);
+        }
         // The live lock screen (app 0.4.0): the band for the notification icons, its place in a header.
         const live = await bearer('/api/ambient/wallpaper.png?w=540&h=1170&titles=0&screen=lock&icons=1');
         expect(live.headers['x-ambient-icons']).toMatch(/^[\d.]+,[\d.]+,#[0-9A-F]{8}$/);

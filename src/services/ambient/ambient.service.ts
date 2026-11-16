@@ -9,6 +9,7 @@ import type { PlanMode } from '../learning/plan';
 import { dayOf } from '../learning/time';
 import path from 'node:path';
 import { svgToPng } from '../docs/diagram/png';
+import { prisma } from '../../db/prisma';
 import { drawLock, drawWallpaper, kindWords } from './wallpaperArt';
 
 export type AmbientState = 'morning' | 'working' | 'evening' | 'done' | 'rest';
@@ -35,8 +36,19 @@ export interface Ambient {
      * titles hidden): the lock picture's main words and the widget's line.
      */
     line?: { dayId: string; slot: string; text: string } | null;
+    /**
+     * Today's reminders still to come (Ramin 11-16: "the home screen could show my reminders; if there
+     * are none it stays clean"), soonest first, three at most; with titles hidden, plain words.
+     */
+    reminders?: AmbientReminder[];
     /** Changes whenever either picture would: the phone app fetches them again only then. */
     key?: string;
+}
+
+export interface AmbientReminder {
+    /** "7 pm", "6:30 pm" (his zone). */
+    at: string;
+    text: string;
 }
 
 export type AmbientItemKind = 'review' | 'focus' | 'task';
@@ -151,7 +163,7 @@ const DRAWING = 'type-2';
 /** A short fingerprint of everything the pictures draw (FNV-1a over the words). */
 function pictureKey(a: Omit<Ambient, 'key' | 'updatedAt'>): string {
     // DRAWING: bumped when the drawing itself changes, so every phone fetches the new pictures.
-    const text = JSON.stringify([DRAWING, a.state, a.date, a.headline, a.lines, a.mode, a.week, a.items, a.counts, a.goal, a.line?.text ?? null]);
+    const text = JSON.stringify([DRAWING, a.state, a.date, a.headline, a.lines, a.mode, a.week, a.items, a.counts, a.goal, a.line?.text ?? null, ...(a.reminders?.length ? [a.reminders] : [])]);
     let h = 2166136261;
     for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 16777619);
     return (h >>> 0).toString(36);
@@ -211,14 +223,30 @@ function localClock(now: Date, timezone: string): { hour: number; date: string }
     return { hour, date };
 }
 
+/** His reminders still to come today (pending; a finished task's left out), soonest first, three at most. */
+export async function todayReminders(userId: string, now: Date, tz: string, titles = true): Promise<AmbientReminder[]> {
+    const rows = await prisma.reminder.findMany({
+        where: { userId, status: 'pending', reminderDate: { gte: now, lt: new Date(now.getTime() + 24 * 3600_000) } },
+        include: { todo: { select: { title: true, status: true } } },
+        orderBy: { reminderDate: 'asc' },
+        take: 8,
+    });
+    const today = dayOf(now, tz);
+    return rows
+        .filter((r) => r.todo?.status !== 'complete' && dayOf(r.reminderDate, tz) === today)
+        .slice(0, 3)
+        .map((r) => ({ at: clockWords(r.reminderDate, tz), text: titles ? (r.message?.trim() || r.todo?.title?.trim() || 'A reminder') : 'A reminder' }));
+}
+
 export async function getAmbient(userId: string, now: Date = new Date(), options: AmbientOptions = {}): Promise<Ambient> {
     const [brief, today, line] = await Promise.all([getBrief(userId, {}, now), getToday(userId, now), options.titles === false ? Promise.resolve(null) : currentLine(userId, now)]);
+    const reminders = await todayReminders(userId, now, brief.now.timezone, options.titles !== false);
     const { hour, date } = localClock(now, brief.now.timezone);
     const mode = (today.plan?.mode ?? 'normal') as PlanMode;
     const week = today.stats?.rhythm?.last7?.map((d) => ({ day: d.day, active: d.active }));
     const day = dayItems(today, now, options.titles !== false);
     const buddyLine = line && line.lockOk && !line.fallback ? { dayId: line.dayId, slot: line.slot, text: line.text } : null;
-    const a = { ...ambientFor(brief, mode, hour, date, now, options), ...(week?.length === 7 ? { week } : {}), ...day, line: buddyLine };
+    const a = { ...ambientFor(brief, mode, hour, date, now, options), ...(week?.length === 7 ? { week } : {}), ...day, line: buddyLine, ...(reminders.length ? { reminders } : {}) };
     return { ...a, key: pictureKey(a) };
 }
 
@@ -254,6 +282,7 @@ export function wallpaperSvg(a: Ambient, width: number, height: number, theme: '
         ...(a.counts ? { counts: a.counts } : {}),
         ...(a.goal !== undefined ? { goal: a.goal } : {}),
         line: a.line?.text ?? null,
+        ...(a.reminders?.length ? { reminders: a.reminders } : {}),
     };
     return screen === 'lock' ? drawLock(input, width, height, theme) : drawWallpaper(input, width, height, theme);
 }

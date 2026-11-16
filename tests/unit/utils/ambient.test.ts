@@ -190,6 +190,30 @@ describe('the two pictures', () => {
         for (const m of svg.matchAll(/font-size="([\d.]+)"/g)) expect(Number(m[1])).toBeGreaterThanOrEqual(1080 * 0.031 - 0.1);
     });
 
+    it("home: today's reminders under the day's number (time and words, three at most); none: the picture as before", () => {
+        const plain = wallpaperSvg(a, 1080, 2340, 'dark', 'home');
+        const withNone = wallpaperSvg({ ...a, reminders: [] }, 1080, 2340, 'dark', 'home');
+        expect(withNone).toBe(plain);
+        const reminders = [
+            { at: '6:30 pm', text: 'Call the bank' },
+            { at: '9 pm', text: 'Write up the contest' },
+            { at: '10 pm', text: 'Pack the bag' },
+            { at: '11 pm', text: 'A fourth one' },
+        ];
+        const svg = wallpaperSvg({ ...a, reminders }, 1080, 2340, 'dark', 'home');
+        for (const r of reminders.slice(0, 3)) {
+            expect(svg).toContain(`>${r.at}<`);
+            expect(svg).toContain(`>${r.text}<`);
+        }
+        expect(svg).not.toContain('A fourth one');
+        // The words of the rows start in one column; the block grew upward (its bottom stays above the dock).
+        const xs = reminders.slice(0, 3).map((r) => Number(new RegExp(`<text x="([\\d.]+)" [^>]*>${r.text}<`).exec(svg)?.[1]));
+        expect(xs.every((v) => v > 0)).toBe(true);
+        expect(new Set(xs).size).toBe(1);
+        const eyebrowY = (s: string) => Number(/<text x="[\d.]+" y="([\d.]+)"[^>]*>SUNDAY 15 NOVEMBER</.exec(s)?.[1]);
+        expect(eyebrowY(svg)).toBeLessThan(eyebrowY(plain));
+    });
+
     it('home (B8): drawn for the zoom the phone shows it at: the words smaller about the centre, the backdrop whole', () => {
         const flat = wallpaperSvg(a, 1080, 2340, 'dark', 'home');
         const zoomed = wallpaperSvg(a, 1080, 2340, 'dark', 'home', { zoom: 1.1 });

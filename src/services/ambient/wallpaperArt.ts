@@ -44,6 +44,8 @@ export interface WallpaperInput {
      * size, ink as #AARRGGBB).
      */
     iconSlot?: boolean;
+    /** Today's reminders still to come (the home picture lists them under the day's number; none: nothing). */
+    reminders?: Array<{ at: string; text: string }>;
 }
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -560,6 +562,40 @@ interface Block {
     draw: (top: number) => string[];
 }
 
+/** A bell (lucide's), its box at (x, top), `size` square, in `color`. */
+function bell(x: number, top: number, size: number, color: string): string {
+    return `<g transform="translate(${r1(x)} ${r1(top)}) scale(${r1((size / 24) * 1000) / 1000})" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></g>`;
+}
+
+/**
+ * Today's reminders under the day's number (Ramin 11-16): a bell, the time and the words, one row each
+ * in the secondary size; nothing at all when there are none. The block's height counts its gap above.
+ */
+function reminderRows(list: ReadonlyArray<{ at: string; text: string }>, W: number, x: number, usable: number, ink: Sky['ink']): Block {
+    const rows = list.slice(0, 3);
+    if (!rows.length) return { h: 0, draw: () => [] };
+    const u = W / 100;
+    const size = W * TYPE.secondary;
+    const step = size * 1.62;
+    const icon = size * 0.92;
+    // The words start in one column after the widest time.
+    const atW = Math.max(...rows.map((r) => textWidth(r.at, size, 600)));
+    return {
+        h: 7 * u + size * CAP + (rows.length - 1) * step,
+        draw: (top) =>
+            rows.flatMap((r, i) => {
+                const base = top + 7 * u + size * CAP + i * step;
+                const tx = x + icon + 2.4 * u;
+                const room = x + usable - (tx + atW + 2.6 * u);
+                return [
+                    bell(x, base - size * CAP - (icon - size * CAP) / 2, icon, ink.body),
+                    text(tx, base, r.at, size, 600, ink.head),
+                    text(tx + atW + 2.6 * u, base, fit(r.text, size, 400, room), size, 400, ink.body),
+                ];
+            }),
+    };
+}
+
 /**
  * Two lines beside a numeral or a tick (x at their left edge), centred on its caps: the first in the
  * secondary size, the second quieter.
@@ -647,7 +683,8 @@ export function drawWallpaper(input: WallpaperInput, width: number, height: numb
 
     const hero = homeHero(input, W, x, usable, ink);
     const weekH = week ? weekHeight(W) : 0;
-    let heroTop = H * 0.74 - weekH - (week ? 8 * u : 0) - hero.h;
+    const rem = reminderRows(input.reminders ?? [], W, x, usable, ink);
+    let heroTop = H * 0.74 - weekH - (week ? 8 * u : 0) - rem.h - hero.h;
     // Never up into the clock and the search bar.
     heroTop = Math.max(heroTop, H * 0.36);
 
@@ -655,7 +692,8 @@ export function drawWallpaper(input: WallpaperInput, width: number, height: numb
     const ls = quiet * TRACK.caps;
     words.push(text(x, heroTop - 5 * u, fit(eyebrow, quiet, 500, usable, ls), quiet, 500, ink.meta, { track: TRACK.caps }));
     words.push(...hero.draw(heroTop));
-    if (week) words.push(...weekDots(week, x, heroTop + hero.h + 8 * u, W, ink));
+    words.push(...rem.draw(heroTop + hero.h));
+    if (week) words.push(...weekDots(week, x, heroTop + hero.h + rem.h + 8 * u, W, ink));
     return picture(W, H, defs, art, words, input.zoom);
 }
 
