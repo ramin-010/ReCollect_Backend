@@ -2,11 +2,9 @@ import type { IncomingMessage, Server as HttpServer } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { Server } from '@hocuspocus/server';
 import jwt from 'jsonwebtoken';
-import dotenv from 'dotenv';
+import 'dotenv/config'; // honours DOTENV_CONFIG_PATH (a bare dotenv.config() read the working folder's .env)
 import * as Y from 'yjs';
 import { allowedOrigins } from '../config/origins';
-
-dotenv.config();
 
 export interface CollabUser {
   id: string;

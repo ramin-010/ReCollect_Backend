@@ -113,8 +113,12 @@ export function devDatabaseUrl(): string | undefined {
 }
 
 export interface ResolveOptions {
-    /** 'cutover': never the dev database, and on this machine only a disposable copy. 'maintenance': the dev database only with allowDev. */
-    purpose: 'cutover' | 'maintenance';
+    /**
+     * 'cutover': never the dev database, and on this machine only a disposable copy. 'maintenance': the
+     * dev database only with allowDev. 'scratch': a disposable copy only (recollect_test_*, restore_*),
+     * on any host: never the dev database, never production.
+     */
+    purpose: 'cutover' | 'maintenance' | 'scratch';
     /** --allow-dev (maintenance scripts only). */
     allowDev?: boolean;
     /** For tests: DATABASE_URL at the start (default: as read when this module loaded). */
@@ -139,7 +143,11 @@ export function resolveTarget(opts: ResolveOptions): Target {
     const devUrl = 'devUrl' in opts ? opts.devUrl : devDatabaseUrl();
     if (isDevDatabase(target, devUrl)) {
         if (opts.purpose === 'cutover') throw new TargetError(`${describeTarget(target)} is the dev database; the cutover never runs on it.`);
+        if (opts.purpose === 'scratch') throw new TargetError(`${describeTarget(target)} is the dev database; this runs only on a disposable copy.`);
         if (!opts.allowDev) throw new TargetError(`${describeTarget(target)} is the dev database; add --allow-dev to work on it on purpose.`);
+    }
+    if (opts.purpose === 'scratch' && !isDisposable(target)) {
+        throw new TargetError(`${describeTarget(target)} is not a disposable copy (recollect_test_* or restore_*); this runs only on such a copy.`);
     }
     if (opts.purpose === 'cutover' && target.local && !isDisposable(target)) {
         throw new TargetError(

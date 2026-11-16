@@ -1,18 +1,10 @@
 // Personal Task Email Templates — Isolated from workspace emails
 // Uses the same design system but handles only personal (non-workspace) task scenarios.
 
-import nodemailer from 'nodemailer';
+import { createMailTransport } from '../../utils/mailTransport';
 
-// ─── Transporter ─────────────────────────────────────────────────────
-const createTransporter = () => {
-  return nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASSWORD
-    }
-  });
-};
+// ─── Transporter (Gmail; EMAIL_DELIVERY=off drops every message) ─────
+const createTransporter = () => createMailTransport();
 
 // ─── Design System (duplicated for isolation) ────────────────────────
 const LOGO_LIGHT_URL = 'https://res.cloudinary.com/dsfb3jjqx/image/upload/v1773391852/recollect-logo-1024px_3_yalexb.png'; 

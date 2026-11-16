@@ -1,18 +1,10 @@
 // Email Service for Sending Reminders
 // No database access: callers pass plain { name, email } objects (the unused Mongoose model type
 // imports were removed in the Postgres port).
-import nodemailer from 'nodemailer';
+import { createMailTransport } from './mailTransport';
 
-// Create reusable transporter
-const createTransporter = () => {
-  return nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASSWORD
-    }
-  });
-};
+// Create reusable transporter (Gmail; EMAIL_DELIVERY=off drops every message: ./mailTransport)
+const createTransporter = () => createMailTransport();
 
 // ─── Minimalist Design System ────────────────────────────────────────
 // Pure white background, left-aligned, high contrast, clean typography.

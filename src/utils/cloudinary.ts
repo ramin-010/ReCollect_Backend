@@ -1,5 +1,7 @@
 const cloudinary = require('cloudinary').v2;
-require('dotenv').config();
+// dotenv/config, not dotenv.config(): it honours DOTENV_CONFIG_PATH (a test backend's settings file),
+// where a bare config() always read the working folder's .env (on the PC: the dev keys).
+require('dotenv/config');
 
 cloudinary.config({
     cloud_name : process.env.CLOUDINARY_CLOUD_NAME,

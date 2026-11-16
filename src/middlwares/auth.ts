@@ -1,8 +1,7 @@
 import { Request, Response, NextFunction } from "express"
 import ErrorResponse from "../utils/errorResponse";
 import jwt from 'jsonwebtoken'
-import dotenv from 'dotenv'
-dotenv.config();
+import 'dotenv/config'; // honours DOTENV_CONFIG_PATH (a bare dotenv.config() read the working folder's .env)
 
 import { findUserById, toAuthUser } from '../services/users/users.service';
 import { API_TOKEN_PREFIX, findApiToken, storedScopes, touchApiToken } from '../services/apiTokens/apiTokens.service';

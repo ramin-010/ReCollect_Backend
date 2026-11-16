@@ -11,7 +11,7 @@ Branch `pg-migration`. Read this before you change or add a module. The auth/use
 | What | Where |
 |---|---|
 | Schema (all 13 kept models + 6 child/join tables) | `prisma/schema.prisma`. **Don't edit it in a module port.** If you really need to, ask the supervisor. |
-| Migrations | `prisma/migrations/` (`npm run db:migrate` locally, `npm run db:deploy` on servers) |
+| Migrations | `prisma/migrations/`: written with `prisma migrate diff`, applied with `npm run db:deploy` (locally and on servers); never `prisma migrate dev`, which can offer to reset a database (see "Making a new migration") |
 | Prisma client singleton | `src/db/prisma.ts`: `prisma`, `DbClient`, `TxClient`, `disconnectPrisma()` |
 | Prisma error → HTTP mapping | `src/db/errors.ts` (used by `src/middlwares/errorHandler.ts`), plus `isUniqueViolation()` and `isRecordNotFound()` |
 | JSON shape helpers | `src/db/serializers/`: `withMongoId`, `serializeUser`, `serializeUserSummary`, `userSummarySelect`, plus one file per module (doc, docSharing, notification, recentVisit, workspace), all re-exported from `src/db/serializers/index.ts`. Todo shapes: `src/services/todos/todoShape.ts` |
@@ -194,7 +194,7 @@ npm run test:int                                   # uses TEST_DATABASE_URL (rec
 TEST_DB_NAME=recollect_test_<you> npm run test:int # your own database: created + migrated automatically
 npm test                                           # both
 npm run typecheck                                  # src (build config) + tests/seed (tsconfig.test.json)
-npm run db:migrate                                 # prisma migrate dev on recollect_dev (schema owner only)
+npm run db:deploy                                  # apply migrations (after npm run db:dump); new ones: "Making a new migration"
 npm run db:seed                                    # dev login dev@recollect.local / devpass123 (local only)
 ```
 

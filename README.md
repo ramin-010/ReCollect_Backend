@@ -55,6 +55,7 @@ Every one is optional; unset, the server behaves as in development. With `NODE_E
 | `BUDDY_OFFICE_CAPTURE=off` | Words a hook marks as office work are dropped on arrival (counted) |
 | `REMINDER_EMAIL=off` | No reminder emails at all (the phone app rings for them) |
 | `OAUTH_CIMD_HOSTS` | Host names whose client-metadata documents the OAuth server may fetch (comma-separated, e.g. `claude.ai`); any other client id is refused before a request leaves |
+| `EMAIL_DELIVERY=off` | No email leaves the server: each message is built and dropped and the send reports success, so no job fails or retries. For a test backend on restored real data; never in production |
 
 `GET /healthz` answers 200 while the process is up and never touches the database.
 
@@ -70,6 +71,7 @@ file, and refuses the dev database (`recollect_dev`, port 5433 on the same machi
 | `node dist-scripts/scripts/check-blocks.js` | Read only: every doc read as blocks, printed as Markdown and as its public page; counts only; exit 1 when one fails |
 | `node dist-scripts/scripts/search-reindex.js [--all]` | Writes the search words of docs that have none (`--all`: of every doc again) |
 | `node dist-scripts/scripts/cutover.js --owner-email <address>` | The cutover's clean-up, a dry run unless `--execute --confirm <database name>`. Deletes the QA accounts (and any `--delete-account <address>`) with all they own; gives the owner's account (`--from-email`, default `dev@recollect.local`) the real address and a new password (typed twice, hidden, or one line on stdin with `--password-stdin`); revokes every access token; deletes OAuth refresh tokens and codes, push subscriptions and email codes. One transaction; a second run changes nothing. Besides the dev database it refuses any database on the same machine except a disposable copy (`recollect_test_*`, `restore_*`) |
+| `node dist-scripts/scripts/office-filter.js [--office-key <key>]... [--clear-derived]` | On a disposable copy only (`recollect_test_*`, `restore_*`; never the dev database or production): deletes, for every account, what was captured from office work (office-flagged work lines and queued chat pieces, notes and work sessions of office projects or sessions, the memories citing or tagged with them, the office projects with their decisions and week targets); `--clear-derived` also clears the buddy's own writing (portrait, day lines, chapters). A dry run unless `--execute --confirm <database name>`; `--recount --office-key …` checks a restore of the filtered dump; `--print-sql` shows the statements |
 
 With the API's settings: `DOTENV_CONFIG_PATH=<the API's env file> node -r dotenv/config dist-scripts/scripts/<name>.js`;
 or with an address given to that one process only: `DATABASE_URL="<address>" node dist-scripts/scripts/<name>.js`.

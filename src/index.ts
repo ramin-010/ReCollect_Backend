@@ -13,11 +13,19 @@ import { flushAwakeMeter, startAwakeMeter } from './services/scheduler/awake';
 import { attachCollaborationServer, collabAttached, hocuspocusServer, initializeCollaboration, startCollaborationServer } from './collaboration';
 import { disconnectPrisma } from './db/prisma';
 import { installShutdown } from './lifecycle/shutdown';
+import { emailDeliveryOff } from './utils/mailTransport';
+import { isAiConfigured } from './services/claude/client';
 
 // All data lives in Postgres (Prisma). It connects lazily on the first query; see src/db/prisma.ts.
 if (!process.env.DATABASE_URL) {
     throw new Error('DATABASE_URL is missing (Postgres). Locally: `npm run db:start`, then set it in backend/.env.');
 }
+
+// What may leave this server, in one line (a test backend on restored real data runs with all three off).
+console.log(
+    `[outbound] email ${emailDeliveryOff() ? 'OFF (EMAIL_DELIVERY=off)' : process.env.EMAIL_USER ? 'on' : 'not set up'} · ` +
+        `push ${process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY ? 'on' : 'off (no VAPID keys)'} · AI ${isAiConfigured() ? 'on' : 'off (no CLAUDE_API_KEY)'}`
+);
 
 // The database's awake time (hosting P1-15): a hosted database that sleeps when idle (Neon) bills
 // the minutes it is awake. Counted from the pool's queries, kept in RECOLLECT_STATE_DIR. Quiet mode

@@ -3,6 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import { describeTarget, isDevDatabase, parseTarget, resolveTarget, type ResolveOptions } from '../../../scripts/lib/target';
 import { maskEmail, passwordProblem } from '../../../scripts/lib/cutover';
+import { mentionPattern } from '../../../scripts/lib/officeFilter';
 
 const NEON = 'postgresql://app:s3cret@ep-cool-1-pooler.ap-southeast-1.aws.neon.tech/workspace?sslmode=verify-full';
 const DEV = 'postgresql://postgres:postgres@127.0.0.1:5433/recollect_dev';
@@ -45,6 +46,15 @@ describe('the target of a maintenance script', () => {
         expect(resolve(NEON, 'cutover').host).toBe('ep-cool-1-pooler.ap-southeast-1.aws.neon.tech');
     });
 
+    it('the office filter runs only on a disposable copy, on any host: never dev, never production', () => {
+        expect(() => resolve(DEV, 'scratch')).toThrow(/dev database; this runs only on a disposable copy/);
+        expect(() => resolve(DEV, 'scratch', { allowDev: true })).toThrow(/dev database/);
+        expect(() => resolve(NEON, 'scratch')).toThrow(/not a disposable copy/);
+        expect(() => resolve(at('localhost', 5432, 'postgres'), 'scratch')).toThrow(/not a disposable copy/);
+        expect(resolve(at('127.0.0.1', 5433, 'recollect_test_office'), 'scratch').database).toBe('recollect_test_office');
+        expect(resolve(at('db.example.org', 5432, 'restore_20261116'), 'scratch').database).toBe('restore_20261116');
+    });
+
     it('check-blocks and search-reindex take the dev database only with --allow-dev', () => {
         expect(() => resolve(DEV, 'maintenance')).toThrow(/add --allow-dev/);
         expect(resolve(DEV, 'maintenance', { allowDev: true }).database).toBe('recollect_dev');
@@ -56,6 +66,11 @@ describe("the cutover's rules", () => {
     it('masks the address of an account that stays', () => {
         expect(maskEmail('ramin.example@gmail.com')).toBe('r***e@gmail.com');
         expect(maskEmail('ab@x.org')).toBe('a*@x.org');
+    });
+
+    it("the office filter's mention check: each key as a whole word, its punctuation escaped", () => {
+        expect(mentionPattern(['erp', 'erp-workspace', 'a.b'])).toBe('\\m(erp|erp\\-workspace|a\\.b)\\M');
+        expect(mentionPattern([])).toBeNull();
     });
 
     it("refuses a weak owner password, a padded one and the dev setup's", () => {
