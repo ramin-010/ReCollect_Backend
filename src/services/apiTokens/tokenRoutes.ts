@@ -130,6 +130,7 @@ export const TOKEN_ROUTES: readonly TokenRoute[] = [
     // Stage 6: the phone's wallpaper and widget (an automation app fetches them with a read token).
     route('GET', '/api/ambient/widget', 'read', 'ambient'),
     route('GET', '/api/ambient/wallpaper.png', 'read', 'ambient'),
+    route('GET', '/api/ambient/styles', 'read', 'ambient'),
     route('POST', '/api/ambient/disconnect', 'ambient'),
     // The buddy (BUDDY_MEMORY_PLAN §7): a note about Ramin, his memories, an agent's forget.
     route('POST', '/api/buddy/remember', 'sessions:write'),

@@ -1977,6 +1977,9 @@ model BuddyDay {
   /// [{ slot: morning|afternoon|evening, text, form, lockOk, sourceId?, fallback? }]
   lines     Json
   note      String?       @db.VarChar(800)
+  /// The lock check passed the note: the phone app may show its words in a notification (which the
+  /// lock screen shows too). False when it named a private thing, wasn't checked, or the check failed.
+  noteLockOk Boolean      @default(false)
   followUp  String?       @db.VarChar(300)
   /// The memory changes applied (an audit, and what an Undo of the night would take back).
   ops       Json          @default("[]")

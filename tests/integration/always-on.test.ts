@@ -43,6 +43,15 @@ describe('the ambient phone (6.6)', () => {
         expect([lock.status, lock.headers['content-type']]).toEqual([200, 'image/png']);
         expect(Buffer.compare(lock.body as Buffer, png.body as Buffer)).not.toBe(0);
         expect(widget.body.data).toMatchObject({ key: expect.any(String), items: expect.any(Array), counts: { reviews: { done: expect.any(Number), total: expect.any(Number) } } });
+        // The styles (11-16): the list for the app's picker, the sky first; a styled picture differs; an unknown style is the sky.
+        const styles = (await bearer('/api/ambient/styles')).body.data as Array<{ id: string; colors: Array<{ id: string }> }>;
+        expect(styles[0]!.id).toBe('sky');
+        expect(styles.map((s) => s.id)).toEqual(['sky', 'glow', 'peaks', 'orb', 'dots', 'flow', 'aurora', 'mono']);
+        const bold = await bearer('/api/ambient/wallpaper.png?w=540&h=1170&titles=0&screen=lock&style=peaks&color=dusk');
+        expect([bold.status, bold.headers['content-type']]).toEqual([200, 'image/png']);
+        expect(Buffer.compare(bold.body as Buffer, lock.body as Buffer)).not.toBe(0);
+        const unknown = await bearer('/api/ambient/wallpaper.png?w=540&h=1170&titles=0&screen=lock&style=nope');
+        expect(Buffer.compare(unknown.body as Buffer, lock.body as Buffer)).toBe(0);
         // Nothing else: not today, not the docs, not the agent API.
         for (const path of ['/api/today', '/api/docs', '/api/agent/docs']) expect((await bearer(path)).status, path).toBe(403);
         // The addresses: cookie only; the last one is always USB (localhost).

@@ -9,6 +9,7 @@ import { addDays, isValidDay, type DayString } from '../learning';
 import { fromDbDayOrNull, loadLearningContext, toDbDay } from '../learningDb/common';
 import { createTask } from '../tasks/tasks.service';
 import { createFocusItem } from '../learningDb/focus.service';
+import { moveOffBusyDays } from '../learningDb/plan.service';
 import { weekStartOf, weekTargets } from '../learningDb/week.service';
 import { quoted, recordAgentEdit } from '../agent/agentEditLog';
 import { notFound } from '../learning/http';
@@ -26,6 +27,12 @@ export const ROUTINES = {
         itemKind: 'focus_line',
         title: "Sets the day's first focus line from your week's targets",
         offer: "Set each day's first focus line from your week's targets by itself?",
+    },
+    // Not from three accepts: offered the first time he marks a busy stretch (his own act is the sign).
+    auto_busy: {
+        itemKind: 'busy_days',
+        title: 'Moves the reviews that don’t fit your busy days to after them',
+        offer: 'You’re busy for a few days. Move the reviews that won’t fit to after it, by itself, whenever you’re busy?',
     },
 } as const;
 export type RoutineKind = keyof typeof ROUTINES;
@@ -62,8 +69,9 @@ export async function createRoutine(userId: string, kind: string): Promise<void>
 /** After he accepts one of the buddy's items: the third of its kind in 30 days brings the offer, once ever. */
 export async function maybeOfferRoutine(userId: string, acceptedKind: string, now: Date = new Date()): Promise<boolean> {
     const entry = (Object.entries(ROUTINES) as Array<[RoutineKind, (typeof ROUTINES)[RoutineKind]]>).find(([, d]) => d.itemKind === acceptedKind);
-    if (!entry) return false;
-    const [kind, def] = entry;
+    // Only the routines his accepts lead to (the busy one has its own offer).
+    if (!entry || (entry[1].itemKind !== 'task' && entry[1].itemKind !== 'focus_line')) return false;
+    const [kind, def] = entry as [RoutineKind, { itemKind: 'task' | 'focus_line'; title: string; offer: string }];
     if (await prisma.routine.findUnique({ where: { userId_kind: { userId, kind } }, select: { id: true } })) return false;
     if (await prisma.suggestion.findFirst({ where: { userId, kind: 'routine', payload: { path: ['routine'], equals: kind } }, select: { id: true } })) return false;
     const accepted = await prisma.suggestion.count({
@@ -77,8 +85,22 @@ export async function maybeOfferRoutine(userId: string, acceptedKind: string, no
     return true;
 }
 
+/** The first busy stretch brings the busy-day offer, once ever (the night asks, before it runs routines). */
+export async function maybeOfferBusyRoutine(userId: string, now: Date = new Date()): Promise<boolean> {
+    const { today, user } = await loadLearningContext(userId, now);
+    const until = fromDbDayOrNull(user.busyUntil);
+    if (!until || until < today) return false;
+    if (await prisma.routine.findUnique({ where: { userId_kind: { userId, kind: 'auto_busy' } }, select: { id: true } })) return false;
+    if (await prisma.suggestion.findFirst({ where: { userId, kind: 'routine', payload: { path: ['routine'], equals: 'auto_busy' } }, select: { id: true } })) return false;
+    await prisma.suggestion.create({
+        data: { userId, kind: 'routine', text: ROUTINES.auto_busy.offer, reason: `You marked yourself busy until ${until}`, payload: { routine: 'auto_busy' } as Prisma.InputJsonValue, proposedBy: 'buddy', status: 'pending', expiresDay: toDbDay(until) },
+    });
+    return true;
+}
+
 /** The night runs his routines first; answers what was done, in words, for its note. */
 export async function runRoutines(userId: string, now: Date = new Date()): Promise<string[]> {
+    await maybeOfferBusyRoutine(userId, now);
     const routines = await prisma.routine.findMany({ where: { userId, enabled: true } });
     if (!routines.length) return [];
     const { today } = await loadLearningContext(userId, now);
@@ -111,6 +133,14 @@ export async function runRoutines(userId: string, now: Date = new Date()): Promi
                 const item = await createFocusItem(userId, text, now);
                 await recordAgentEdit(actor, { kind: 'focus_add', summary: `Set today's focus line ${quoted(text)} from the week by itself`, entityId: item._id });
                 done.push(`set today's focus line to ${quoted(text)} from his week`);
+                runs++;
+            }
+        }
+        if (r.kind === 'auto_busy') {
+            const moved = await moveOffBusyDays(userId, now);
+            if (moved.changes.length && moved.until) {
+                await recordAgentEdit(actor, { kind: 'revisions_spread', summary: `Moved ${moved.moved} ${moved.moved === 1 ? 'review' : 'reviews'} off your busy days to after ${moved.until}`, undoData: { changes: moved.changes } });
+                done.push(`moved ${moved.moved} ${moved.moved === 1 ? 'review' : 'reviews'} that didn't fit his busy days to after ${moved.until}`);
                 runs++;
             }
         }

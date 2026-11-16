@@ -54,8 +54,10 @@ export function gateRequest(messages: readonly ChunkMessage[]): CreateParams {
     const numbered = messages.map((m, i) => `[${i + 1}] ${m.text.replace(/\s+/g, ' ').slice(0, 1500)}`).join('\n');
     return {
         model: GATE_MODEL,
-        max_tokens: 200 + 24 * messages.length,
-        output_config: { format: { type: 'json_schema', schema: GATE_SCHEMA } },
+        // Haiku 5.5 at high effort (Ramin 11-16: the gate decides what of his chats reaches the buddy; it
+        // runs on every chunk, so Haiku, thinking hard), with room to think so the labels are never cut off.
+        max_tokens: Math.min(12_000, 3000 + 120 * messages.length),
+        output_config: { effort: 'high', format: { type: 'json_schema', schema: GATE_SCHEMA } },
         system: [{ type: 'text', text: GATE_SYSTEM, cache_control: EPHEMERAL }],
         messages: [{ role: 'user', content: [{ type: 'text', text: `<messages>\n${numbered}\n</messages>` }] }],
     } as CreateParams;

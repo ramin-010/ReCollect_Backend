@@ -4,9 +4,14 @@
 // The plan is computed on every read and never stored: GET /api/today stays write-free.
 import { prisma, type DbClient } from '../../db/prisma';
 import {
+    addDays,
+    BUSY_MAX_ITEMS,
     daysLate,
+    earliestPendingPerItem,
     lastSeenBefore,
     planFreshStart,
+    planPriority,
+    revisionItemKey,
     planMode,
     planToday,
     revisionMinutes,
@@ -108,6 +113,59 @@ export interface FreshStartResult {
     spreadDays: number;
     /** Each review moved, from its old day to its new one (for an agent's Undo). */
     changes: Array<{ id: string; from: DayString; to: DayString }>;
+}
+
+/**
+ * The busy-day routine (BUDDY_MEMORY_PLAN §3.6, B6): while he is busy (his busyUntil), each busy day
+ * keeps its most important reviews (as many as busy mode plans: 3, fewer today by what he has done)
+ * and the rest move to the days after the busy stretch, spread by his budget the way a fresh start
+ * spreads them (a moved review's later cycles move with it). Answers the moves, for its Undo.
+ */
+export async function moveOffBusyDays(userId: string, now: Date = new Date()): Promise<{ moved: number; until: DayString | null; changes: Array<{ id: string; from: DayString; to: DayString }> }> {
+    return prisma.$transaction(
+        async (tx) => {
+            const ctx = await lockLearningContext(tx, userId, now);
+            const { today, tz } = ctx;
+            const until = fromDbDayOrNull(ctx.user.busyUntil);
+            if (!until || until < today) return { moved: 0, until: null, changes: [] };
+            const pending = await tx.revision.findMany({
+                where: { userId, status: 'pending' },
+                select: { id: true, topicId: true, captureId: true, cycleNumber: true, intervalDays: true, scheduledFor: true, completedAt: true, status: true },
+            });
+            const subjectOf = await itemSubjects(tx, userId, pending);
+            const goals = new Set(await activeGoalSubjectIds(userId, tx));
+            const all = pending.map((r) => ({ ...toEngineRevision(r), subjectId: subjectOf(r) }));
+            const firsts = earliestPendingPerItem(all);
+            const doneToday = await tx.revision.count({ where: { userId, status: 'done', completedAt: dayRange(today, tz) } });
+            const overflow: typeof all = [];
+            for (let d = today; d <= until; d = addDays(d, 1)) {
+                const own = firsts.filter((r) => r.scheduledFor === d).sort(planPriority(d, goals));
+                overflow.push(...own.slice(Math.max(0, BUSY_MAX_ITEMS - (d === today ? doneToday : 0))));
+            }
+            if (!overflow.length) return { moved: 0, until, changes: [] };
+            // From the first free day: the moving reviews' whole chains, and what already sits after the
+            // busy stretch (its load; it stays where it is). The busy days' kept reviews are not touched.
+            const after = addDays(until, 1);
+            const moving = new Set(overflow.map((r) => revisionItemKey(r)));
+            const plan = planFreshStart({
+                revisions: all.filter((r) => moving.has(revisionItemKey(r)) || r.scheduledFor >= after),
+                today: after,
+                budgetMin: ctx.user.dailyBudgetMin,
+                goalSubjectIds: [...goals],
+                doneToday: [],
+            });
+            const dayOf = new Map(all.map((r) => [r.id, r.scheduledFor]));
+            const changes: Array<{ id: string; from: DayString; to: DayString }> = [];
+            for (const p of plan.patches) {
+                const from = dayOf.get(p.id);
+                if (p.scheduledFor === undefined || !from || from === p.scheduledFor) continue;
+                changes.push({ id: p.id, from, to: p.scheduledFor });
+                await tx.revision.update({ where: { id: p.id }, data: { scheduledFor: toDbDay(p.scheduledFor) }, select: { id: true } });
+            }
+            return { moved: overflow.length, until, changes };
+        },
+        { timeout: 60_000 }
+    );
 }
 
 export async function freshStart(userId: string, opts: { dryRun?: boolean | undefined } = {}, now: Date = new Date()): Promise<FreshStartResult> {

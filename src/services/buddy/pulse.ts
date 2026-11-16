@@ -13,7 +13,7 @@ import { loadLearningContext, toDbDay } from '../learningDb/common';
 import { characterPrompt } from './character';
 import { buddySignals, plainLine } from './signals';
 import { scrubSecrets } from './scrub';
-import { FORMS, LINE_MAX, SLOTS, guardLines, lockRequest, strayNumbers, type Line, type Slot } from './think';
+import { FORMS, LINE_MAX, SLOTS, guardLines, lockCheck, strayNumbers, unlabel, type Line, type Slot } from './think';
 
 export const PULSE_MODEL = process.env['BUDDY_PULSE_MODEL'] || 'claude-sonnet-5-5';
 const EPHEMERAL = { type: 'ephemeral' } as const;
@@ -36,7 +36,7 @@ export const PULSE_SCHEMA: Record<string, unknown> = {
     },
 };
 
-const PULSE_JOB = `It is the middle of his day. Something new arrived since you last thought (below). Rewrite only the lines for the hours still to come (the slots you are given), each at most ${LINE_MAX} characters, one thought, lockOk true only if a stranger may read it; keep a line as it is when it still fits. note: a few sentences only if the new things truly call for one now, else "". Never repeat what you already said today.`;
+const PULSE_JOB = `It is the middle of his day. Something new arrived since you last thought (below). Rewrite only the lines for the hours still to come (the slots you are given), each at most ${LINE_MAX} characters, one thought, said the way a friend would text it (no label in front), lockOk true only if a stranger may read it; keep a line as it is when it still fits. note: a few casual sentences, like a friend's message, only if the new things truly call for one now, else "". Never repeat what you already said today.`;
 
 const zPulse = z.object({ lines: z.array(z.object({ slot: z.enum(SLOTS), text: z.string(), form: z.enum(FORMS), lockOk: z.boolean(), sourceId: z.string() })), note: z.string() });
 
@@ -97,20 +97,13 @@ export async function pulseIfDue(userId: string, now: Date = new Date()): Promis
     let lines: Line[] = SLOTS.map((slot) => (slots.includes(slot) && wanted.some((l) => l.slot === slot) ? guarded.lines.find((l) => l.slot === slot)! : current.find((c) => c.slot === slot) ?? guarded.lines.find((l) => l.slot === slot)!));
     const dropped = guarded.dropped.filter((d) => slots.some((s) => d.what.endsWith(s)));
 
-    const privateTexts = (await prisma.memory.findMany({ where: { userId, status: 'active', sensitivity: 'private' }, select: { text: true }, take: 60 })).map((m) => m.text).concat(notes.filter((n) => n.sensitivity === 'private').map((n) => n.text));
-    const fresh = lines.filter((l) => slots.includes(l.slot) && l.lockOk && !l.fallback);
-    if (fresh.length && privateTexts.length) {
-        try {
-            const check = await callClaude(lockRequest(fresh, privateTexts), 'buddy lock check');
-            cost += (await recordAiUsage(userId, 'buddy_check', check)).costUsd;
-            const verdict = z.object({ lines: z.array(z.object({ slot: z.enum(SLOTS), reveals: z.boolean() })) }).parse(parseJson(responseText(check)));
-            lines = lines.map((l) => (slots.includes(l.slot) && l.lockOk && !l.fallback && verdict.lines.find((v) => v.slot === l.slot)?.reveals !== false ? { ...l, lockOk: false } : l));
-        } catch {
-            lines = lines.map((l) => (slots.includes(l.slot) && !l.fallback ? { ...l, lockOk: false } : l));
-        }
-    }
-    const noteText = scrubSecrets(out.note).trim();
+    const noteText = unlabel(scrubSecrets(out.note).trim());
     const note = noteText && !strayNumbers(noteText, sources).length ? noteText.slice(0, 600) : null;
+    // The lock check on the lines it wrote and its own note; a note carried over keeps its verdict.
+    const privateTexts = (await prisma.memory.findMany({ where: { userId, status: 'active', sensitivity: 'private' }, select: { text: true }, take: 60 })).map((m) => m.text).concat(notes.filter((n) => n.sensitivity === 'private').map((n) => n.text));
+    const checked = await lockCheck(userId, lines, privateTexts, note, dropped, slots);
+    lines = checked.lines;
+    cost += checked.costUsd;
     await prisma.buddyDay.create({
         data: {
             userId,
@@ -118,6 +111,7 @@ export async function pulseIfDue(userId: string, now: Date = new Date()): Promis
             kind: 'pulse',
             lines: lines as unknown as Prisma.InputJsonValue,
             note: note ?? last.note,
+            noteLockOk: note ? checked.noteLockOk : last.noteLockOk,
             followUp: last.followUp,
             dropped: dropped as unknown as Prisma.InputJsonValue,
             model: message.model.slice(0, 100),

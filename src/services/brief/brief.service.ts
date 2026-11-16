@@ -87,7 +87,7 @@ function workBrief(b: Brief): Brief {
         next: [],
         recent: [],
         recall: { days: 7, finished: 0, weakTopics: [] },
-        buddy: { who: null, heading: null, now: null, memories: [], note: null, followUp: null },
+        buddy: { who: null, heading: null, now: null, memories: [], note: null, followUp: null, noteId: null, noteDay: null },
     };
 }
 

@@ -4,7 +4,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { prisma } from '../../src/db/prisma';
 import { setAiClientForTests } from '../../src/services/claude/client';
-import { CHAPTER_SCHEMA, runMonth } from '../../src/services/buddy/chapter';
+import { CHAPTER_SCHEMA, YEAR_SCHEMA, runMonth, runYear, yearIfDue } from '../../src/services/buddy/chapter';
 import { FakeClaude, fakeMessage } from '../helpers/claude';
 import { createTestUser } from '../helpers/auth';
 import { api } from '../helpers/learning';
@@ -67,6 +67,27 @@ describe('the month', () => {
         await api(user).post('/api/buddy/questions', { memoryId: a.id, answer: 'yes' });
         expect((await prisma.memory.findUniqueOrThrow({ where: { id: a.id } })).byUser).toBe(true);
         expect(((await prisma.buddyChapter.findUniqueOrThrow({ where: { id: ch.id } })).questions as unknown[]).length).toBe(1);
+    });
+
+    it("January: the year's chapter from its months, after December's; a number it was not given makes the plain one", async () => {
+        const { user } = await setup();
+        const facts = (month: string, minutes: number) => ({ month, minutes: { study: minutes }, activeDays: 10, sessions: 12, topProjects: [], reviewsDone: 20, tasksDone: 4, memoriesAdded: 3, memoriesClosed: 0, notes: 9 });
+        for (const [period, m] of [['2026-11', 600], ['2026-12', 900]] as const) {
+            await prisma.buddyChapter.create({ data: { userId: user.id, period, text: `${period}: he built his buddy and kept his reviews going.`, facts: facts(period, m), questions: [], model: 'test', costUsd: 0 } });
+        }
+        const JAN = new Date(Date.UTC(2027, 0, 2, 0, 0)); // 2 Jan 2027, 05:30 in Kolkata
+        fake.push(fakeMessage({ chapter: 'The year he built his buddy and kept his reviews going, mostly at night.' }));
+        expect(await yearIfDue(user.id, JAN)).toBe(true);
+        expect(fake.calls[0]!.output_config?.format?.schema).toBe(YEAR_SCHEMA);
+        expect(JSON.stringify(fake.calls[0]!.messages)).toContain('2026-12: he built his buddy');
+        const year = await prisma.buddyChapter.findUniqueOrThrow({ where: { userId_period: { userId: user.id, period: '2026' } } });
+        expect(year.text).toBe('The year he built his buddy and kept his reviews going, mostly at night.');
+        expect(year.facts).toMatchObject({ year: '2026', months: 2, minutes: { study: 1500 }, activeDays: 20, reviewsDone: 40 });
+        // Once: it is written now. And a number it was not given makes the plain year.
+        expect(await yearIfDue(user.id, JAN)).toBe(false);
+        fake.push(fakeMessage({ chapter: 'He logged 777 hours in 2026.' }));
+        await runYear(user.id, JAN, '2026');
+        expect((await prisma.buddyChapter.findUniqueOrThrow({ where: { userId_period: { userId: user.id, period: '2026' } } })).text).toBe('In 2026: 25 hours logged over 20 active days in 2 months, 40 reviews and 8 tasks done.');
     });
 
     it('a chapter with a number it was not given becomes the plain one', async () => {

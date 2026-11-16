@@ -4,6 +4,7 @@
 // soft mist on a light day. Soft colour fields over a horizon of hills, fine film grain (it also
 // keeps the gradients from banding), the day's lines set in Inter, and the last seven days as dots.
 // Every day draws a slightly different sky (the date seeds the shapes). Pure: SVG text in, out.
+import { styleLook, type RingLook } from './wallpaperStyles';
 import { INTER_ADVANCES, INTER_CHARS, INTER_UPM } from './interMetrics';
 
 export type SkyState = 'morning' | 'working' | 'evening' | 'done' | 'rest';
@@ -26,8 +27,11 @@ export interface WallpaperInput {
      * the lock check passed; without one the lock picture says the day in plain words.
      */
     line?: string | null;
-    /** The lock picture's day mark: a thin arc of the day over the line (default), or none. */
-    dayMark?: 'arc' | 'none';
+    /** The lock picture's day mark: the ring of the day over the line (default; Ramin 11-16), or none. */
+    dayMark?: 'ring' | 'none';
+    /** The picture's style (wallpaperStyles.ts; "sky" or none: the sky of the day) and its colour. */
+    style?: string;
+    color?: string;
 }
 
 // ── Tiny icons (24-unit paths in lucide's style: 2-unit strokes, round ends) ─────────────────
@@ -394,6 +398,28 @@ function drawSky(state: SkyState, date: string, W: number, H: number, theme: The
     return { defs, art, rand };
 }
 
+interface Look {
+    defs: string[];
+    art: string[];
+    ink: Sky['ink'];
+    rand: () => number;
+    /** The soft light behind the words, or null. */
+    glow: string | null;
+    glowAlpha: number;
+    ring: RingLook;
+    lineWeight: number;
+}
+
+/** The picture's backdrop: the sky of the day (the default), or one of the styles (wallpaperStyles.ts). */
+function lookOf(input: WallpaperInput, W: number, H: number, theme: Theme, screen: 'lock' | 'home'): Look {
+    const style = styleLook(input.style, input.color, { W, H, theme, screen, date: input.date, state: input.state, items: (input.items ?? []).map((i) => ({ kind: i.kind, done: i.done })) });
+    if (style) return { ...style, rand: seeded(`${input.date}|${input.state}|${input.style}`) };
+    const sky = SKIES[input.state][theme];
+    const { defs, art, rand } = drawSky(input.state, input.date, W, H, theme, screen === 'home', screen === 'lock' ? '|lock' : '');
+    grain(defs, art, W, H, sky.grain, Math.floor(rand() * 1000));
+    return { defs, art, ink: sky.ink, rand, glow: sky.light?.halo ?? sky.glows[0]?.color ?? '#FFFFFF', glowAlpha: theme === 'dark' ? 0.26 : 0.4, ring: { lit: sky.ink.head, dim: sky.ink.dotOff }, lineWeight: 600 };
+}
+
 /** Film grain over everything: fine, faint noise (it also hides gradient banding on AMOLED screens), one small tile repeated. */
 function grain(defs: string[], art: string[], W: number, H: number, amount: number, seed: number): void {
     const tile = 240;
@@ -430,11 +456,9 @@ function weekDots(week: NonNullable<WallpaperInput['week']>, cx0: number, y: num
 export function drawWallpaper(input: WallpaperInput, width: number, height: number, theme: Theme): string {
     const W = width;
     const H = height;
-    const sky = SKIES[input.state][theme];
-    const { defs, art, rand } = drawSky(input.state, input.date, W, H, theme, true);
-    grain(defs, art, W, H, sky.grain, Math.floor(rand() * 1000));
-
-    const ink = sky.ink;
+    const look = lookOf(input, W, H, theme, 'home');
+    const { defs, art } = look;
+    const ink = look.ink;
     const font = `font-family="Inter"`;
     const x = Math.round(W * 0.08);
     const usable = W - 2 * x;
@@ -519,67 +543,153 @@ function arc(cx: number, cy: number, r: number, a0: number, a1: number): string 
  * day in numbers with tiny icons and the goal's days. The open sky behind it, no horizon. Without a
  * line it says the day in plain words.
  */
+/**
+ * The ring of the day: one segment per thing (done ones first, so the lit part grows clockwise from
+ * the top); past sixteen it is one arc, lit as far as the day has come; an empty day is a dim circle.
+ */
+function dayRing(items: NonNullable<WallpaperInput['items']>, cx: number, cy: number, R: number, stroke: number, lit: string, dim: string, look: RingLook = { lit, dim }): string[] {
+    const out: string[] = [];
+    const open = items.filter((i) => !i.done);
+    const total = items.length;
+    // A watch dial: sixty ticks just outside the ring, lit (in the accent) as far as the day is done.
+    if (look.ticks) {
+        const share = total ? (total - open.length) / total : 0;
+        for (let t = 0; t < 60; t++) {
+            const a = (t / 60) * Math.PI * 2 - Math.PI / 2;
+            const major = t % 5 === 0;
+            const r0 = R + stroke * 2.2;
+            const r2 = r0 + (major ? R * 0.16 : R * 0.08);
+            const on = total > 0 && t < Math.round(share * 60);
+            out.push(`<line x1="${r1(cx + Math.cos(a) * r0)}" y1="${r1(cy + Math.sin(a) * r0)}" x2="${r1(cx + Math.cos(a) * r2)}" y2="${r1(cy + Math.sin(a) * r2)}" stroke="${on ? lit : dim}" stroke-width="${r1(major ? stroke * 1.6 : stroke)}" stroke-linecap="round"/>`);
+        }
+        out.push(`<circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="${dim}" stroke-width="${stroke}"/>`);
+        return out;
+    }
+    // Round dots on the circle, lit as far as the day is done (the dot-matrix style).
+    if (look.dotted) {
+        const n = 40;
+        const share = total ? (total - open.length) / total : 0;
+        for (let t = 0; t < n; t++) {
+            const a = (t / n) * Math.PI * 2 - Math.PI / 2;
+            const on = total > 0 && t < Math.round(share * n);
+            out.push(`<circle cx="${r1(cx + Math.cos(a) * R)}" cy="${r1(cy + Math.sin(a) * R)}" r="${r1(stroke * 0.85)}" fill="${on ? lit : dim}"/>`);
+        }
+        return out;
+    }
+
+    if (total === 0) {
+        out.push(`<circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="${dim}" stroke-width="${stroke}"/>`);
+    } else if (total > 16) {
+        const share = (total - open.length) / total;
+        out.push(`<circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="${dim}" stroke-width="${stroke}"/>`);
+        if (share > 0) out.push(`<path d="${arc(cx, cy, R, 0, Math.max(1, share * 359.9))}" fill="none" stroke="${lit}" stroke-width="${stroke}" stroke-linecap="round"/>`);
+    } else {
+        const seg = 360 / total;
+        // Round ends reach half a stroke past each end: the visible gap stays about one stroke wide.
+        const capDeg = (stroke / 2 / R) * (180 / Math.PI);
+        const gap = total > 1 ? Math.min(seg * 0.45, 2 * capDeg + (stroke / R) * (180 / Math.PI) * 0.9) : 0;
+        const ordered = [...items.filter((i) => i.done), ...open];
+        ordered.forEach((it, i) => {
+            const a0 = i * seg + gap / 2;
+            const a1 = (i + 1) * seg - gap / 2;
+            const color = it.done ? lit : dim;
+            const shape = total === 1 ? `<circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="${color}" stroke-width="${stroke}"/>` : `<path d="${arc(cx, cy, R, a0, Math.max(a0 + 0.5, a1))}" fill="none" stroke="${color}" stroke-width="${stroke}" stroke-linecap="round"/>`;
+            // A soft light under a lit segment (the night styles).
+            if (look.glow && it.done) out.push(shape.replace(`stroke-width="${stroke}"`, `stroke-width="${r1(stroke * 4)}" stroke-opacity="0.16"`));
+            out.push(shape);
+        });
+    }
+    return out;
+}
+
+/**
+ * The lock picture (B4; Ramin 11-16: "a whole circle like initially, not half"): the ring of the day
+ * with what is left inside it, the buddy's line under it as the main words, then the day in numbers
+ * with tiny icons and the goal's days, small. The group is centred in the calm band between the clock
+ * and the fingerprint. Without a line (the buddy off, or no line passed its lock check): the dial.
+ */
 export function drawLock(input: WallpaperInput, width: number, height: number, theme: Theme): string {
+    const main = (input.line ?? '').trim();
+    if (!main) return drawDial(input, width, height, theme);
     const W = width;
     const H = height;
-    const sky = SKIES[input.state][theme];
-    const { defs, art, rand } = drawSky(input.state, input.date, W, H, theme, false, '|lock');
-    const ink = sky.ink;
+    const look = lookOf(input, W, H, theme, 'lock');
+    const { defs, art } = look;
+    const ink = look.ink;
     const font = `font-family="Inter"`;
     const cx = W / 2;
     const items = input.items ?? [];
     const open = items.filter((i) => !i.done);
     const total = items.length;
-    const glow = sky.light?.halo ?? sky.glows[0]?.color ?? '#FFFFFF';
-    const cy = Math.round(H * 0.47);
-    defs.push(`<radialGradient id="lineGlow"><stop offset="0" stop-color="${glow}" stop-opacity="${theme === 'dark' ? 0.26 : 0.4}"/><stop offset="0.5" stop-color="${glow}" stop-opacity="${theme === 'dark' ? 0.1 : 0.16}"/><stop offset="1" stop-color="${glow}" stop-opacity="0"/></radialGradient>`);
-    art.push(`<ellipse cx="${cx}" cy="${cy}" rx="${r1(W * 0.62)}" ry="${r1(W * 0.5)}" fill="url(#lineGlow)"/>`);
-    grain(defs, art, W, H, sky.grain, Math.floor(rand() * 1000));
-
-    const words: string[] = [];
     const minutes = input.counts?.minutesLeft ?? 0;
-    const plain = total === 0 ? 'A free day' : open.length === 0 ? 'Done for today' : `${open.length} left today${minutes ? ` · about ${minutes} min` : ''}`;
-    const main = (input.line ?? '').trim() || plain;
+    const withRing = (input.dayMark ?? 'ring') === 'ring';
 
     // The line: as large as fits in three balanced lines.
     const usable = W * 0.8;
-    let size = Math.round(W * 0.066);
+    let size = Math.round(W * 0.062);
     let lines: string[] = [];
     for (; size >= Math.round(W * 0.046); size -= Math.max(1, Math.round(W * 0.003))) {
-        lines = wrapText(main, size, 600, usable, 99, -size * 0.015);
+        lines = wrapText(main, size, look.lineWeight >= 550 ? 600 : 500, look.lineWeight >= 650 ? usable * 0.95 : usable, 99, -size * 0.015); // Bold is measured as SemiBold, with room for its width
         if (lines.length <= 3) break;
     }
     lines = lines.slice(0, 3);
     const lh = Math.round(size * 1.2);
     const blockH = lines.length * lh;
-    let y = cy - blockH / 2;
 
-    // The day's mark: a thin arc over the line, lit as far as the day's things are done.
-    if ((input.dayMark ?? 'arc') === 'arc' && total > 0) {
-        const r = W * 0.16;
-        // The arc's ends sit half a radius below its top: keep them clear of the first line.
-        const ay = y - r * 0.5 - W * 0.05;
-        const stroke = Math.max(3, Math.round(W * 0.008));
-        const a0 = -60;
-        const a1 = 60;
-        const share = (total - open.length) / total;
-        words.push(`<path d="${arc(cx, ay + r, r, a0, a1)}" fill="none" stroke="${ink.dotOff}" stroke-width="${stroke}" stroke-linecap="round"/>`);
-        if (share > 0) words.push(`<path d="${arc(cx, ay + r, r, a0, Math.max(a0 + 1, a0 + (a1 - a0) * share))}" fill="none" stroke="${ink.head}" stroke-width="${stroke}" stroke-linecap="round"/>`);
-    }
-    lines.forEach((line, i) => {
-        words.push(`<text x="${cx}" y="${r1(y + (i + 1) * lh - lh * 0.24)}" text-anchor="middle" ${font} font-size="${size}" font-weight="600" letter-spacing="${r1(-size * 0.015)}" fill="${ink.head}">${esc(line)}</text>`);
-    });
-    y += blockH + W * 0.075;
-
-    // Under it, small: the day in numbers with tiny icons (only when the line isn't already that).
+    // What goes under the line: the day in numbers by kind, and the goal's days.
     const c = input.counts;
-    const chips = c && main !== plain
+    const chips = c
         ? ([
               ['review', c.reviews],
               ['focus', c.focus],
               ['task', c.tasks],
           ] as const).filter(([, n]) => n.total > 0)
         : [];
+    const g = input.goal;
+
+    // Measure the group, then centre it a little above the middle (the clock sits higher than the fingerprint).
+    const R = Math.round(W * 0.118);
+    const stroke = Math.max(4, Math.round(W * (look.ring.stroke ?? 0.017)));
+    const ringH = withRing ? 2 * R + stroke : 0;
+    const gapRing = withRing ? W * 0.075 : 0;
+    const step = W * 0.075;
+    const groupH = ringH + gapRing + blockH + (chips.length ? step : 0) + (g ? step : 0);
+    const top = Math.max(H * 0.3, H * 0.49 - groupH / 2);
+    const glowCy = top + groupH / 2;
+    if (look.glow && look.glowAlpha > 0) {
+        const a = look.glowAlpha;
+        defs.push(`<radialGradient id="lineGlow"><stop offset="0" stop-color="${look.glow}" stop-opacity="${a}"/><stop offset="0.5" stop-color="${look.glow}" stop-opacity="${r1(a * 0.4 * 100) / 100}"/><stop offset="1" stop-color="${look.glow}" stop-opacity="0"/></radialGradient>`);
+        art.push(`<ellipse cx="${cx}" cy="${r1(glowCy)}" rx="${r1(W * 0.64)}" ry="${r1(Math.max(W * 0.5, groupH * 0.75))}" fill="url(#lineGlow)"/>`);
+    }
+
+    const words: string[] = [];
+    const lit = look.ring.lit;
+    const dim = look.ring.dim;
+
+    // The ring of the day, with what is left inside it (a tick once done, "free" on an empty day).
+    if (withRing) {
+        const cy = top + stroke / 2 + R;
+        words.push(...dayRing(items, cx, cy, R, stroke, lit, dim, look.ring));
+        if (total === 0) {
+            words.push(`<text x="${cx}" y="${r1(cy + W * 0.011)}" text-anchor="middle" ${font} font-size="${Math.round(W * 0.032)}" font-weight="600" fill="${ink.head}">Free</text>`);
+        } else if (open.length === 0) {
+            const t = W * 0.042;
+            words.push(`<path d="M${r1(cx - t)} ${r1(cy - t * 0.05)} L${r1(cx - t * 0.3)} ${r1(cy + t * 0.62)} L${r1(cx + t * 1.02)} ${r1(cy - t * 0.66)}" fill="none" stroke="${ink.head}" stroke-width="${r1(W * 0.013)}" stroke-linecap="round" stroke-linejoin="round"/>`);
+        } else {
+            const numSize = Math.round(W * 0.092);
+            words.push(`<text x="${cx}" y="${r1(cy + W * 0.018)}" text-anchor="middle" ${font} font-size="${numSize}" font-weight="600" letter-spacing="${r1(-numSize * 0.03)}" fill="${ink.head}">${open.length}</text>`);
+            words.push(`<text x="${cx}" y="${r1(cy + W * 0.058)}" text-anchor="middle" ${font} font-size="${Math.round(W * 0.026)}" font-weight="500" fill="${ink.body}">left</text>`);
+        }
+    }
+
+    // The line, the main words.
+    let y = top + ringH + gapRing;
+    lines.forEach((line, i) => {
+        words.push(`<text x="${cx}" y="${r1(y + (i + 1) * lh - lh * 0.24)}" text-anchor="middle" ${font} font-size="${size}" font-weight="${look.lineWeight}" letter-spacing="${r1(-size * 0.015)}" fill="${ink.head}">${esc(line)}</text>`);
+    });
+    y += blockH + step;
+
+    // Under it, small: the day in numbers with tiny icons.
     if (chips.length) {
         const iconSize = Math.round(W * 0.036);
         const textSize = Math.round(W * 0.031);
@@ -595,12 +705,11 @@ export function drawLock(input: WallpaperInput, width: number, height: number, t
             words.push(`<text x="${r1(x + (isMinutes ? 0 : iconSize + inner))}" y="${r1(y + textSize * 0.36)}" ${font} font-size="${textSize}" font-weight="500" fill="${p.all ? ink.head : ink.body}">${esc(p.text)}</text>`);
             x += (widths[i] ?? 0) + between;
         });
-        y += W * 0.075;
+        y += step;
     }
 
     // The goal's days, quiet.
-    const g = input.goal;
-    if (g && y < H * 0.76) {
+    if (g && y < H * 0.78) {
         const size2 = Math.round(W * 0.029);
         const flag = Math.round(W * 0.03);
         const days = g.daysLeft >= 0 ? `${plural(g.daysLeft, 'day')} to ${g.title}` : `${g.title}: past its date`;
@@ -618,9 +727,9 @@ export function drawLock(input: WallpaperInput, width: number, height: number, t
 export function drawDial(input: WallpaperInput, width: number, height: number, theme: Theme): string {
     const W = width;
     const H = height;
-    const sky = SKIES[input.state][theme];
-    const { defs, art, rand } = drawSky(input.state, input.date, W, H, theme, false, '|lock');
-    const ink = sky.ink;
+    const look = lookOf(input, W, H, theme, 'lock');
+    const { defs, art } = look;
+    const ink = look.ink;
     const font = `font-family="Inter"`;
     const cx = W / 2;
     const items = input.items ?? [];
@@ -629,37 +738,19 @@ export function drawDial(input: WallpaperInput, width: number, height: number, t
 
     // The dial's light: a soft halo behind the ring, in the state's light (the sun of this sky).
     const R = Math.round(W * 0.215);
-    const stroke = Math.round(W * 0.024);
+    const stroke = Math.round(W * Math.max(0.01, (look.ring.stroke ?? 0.017) * 1.4));
     const cy = Math.round(H * 0.455);
-    const glow = sky.light?.halo ?? sky.glows[0]?.color ?? '#FFFFFF';
-    defs.push(`<radialGradient id="dialGlow"><stop offset="0" stop-color="${glow}" stop-opacity="${theme === 'dark' ? 0.34 : 0.5}"/><stop offset="0.45" stop-color="${glow}" stop-opacity="${theme === 'dark' ? 0.14 : 0.22}"/><stop offset="1" stop-color="${glow}" stop-opacity="0"/></radialGradient>`);
-    art.push(`<circle cx="${cx}" cy="${cy}" r="${r1(R * 2.3)}" fill="url(#dialGlow)"/>`);
-    grain(defs, art, W, H, sky.grain, Math.floor(rand() * 1000));
+    if (look.glow && look.glowAlpha > 0) {
+        const a = Math.min(0.6, look.glowAlpha * 1.3);
+        defs.push(`<radialGradient id="dialGlow"><stop offset="0" stop-color="${look.glow}" stop-opacity="${a}"/><stop offset="0.45" stop-color="${look.glow}" stop-opacity="${r1(a * 0.42 * 100) / 100}"/><stop offset="1" stop-color="${look.glow}" stop-opacity="0"/></radialGradient>`);
+        art.push(`<circle cx="${cx}" cy="${cy}" r="${r1(R * 2.3)}" fill="url(#dialGlow)"/>`);
+    }
 
     const words: string[] = [];
-    const lit = ink.head;
-    const dim = ink.dotOff;
-    // The ring: one segment per thing (done ones first, so the lit part grows clockwise from the top);
-    // past sixteen it is one arc, lit as far as the day has come.
-    if (total === 0) {
-        words.push(`<circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="${dim}" stroke-width="${stroke}"/>`);
-    } else if (total > 16) {
-        const share = (total - open.length) / total;
-        words.push(`<circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="${dim}" stroke-width="${stroke}"/>`);
-        if (share > 0) words.push(`<path d="${arc(cx, cy, R, 0, Math.max(1, share * 359.9))}" fill="none" stroke="${lit}" stroke-width="${stroke}" stroke-linecap="round"/>`);
-    } else {
-        const seg = 360 / total;
-        // Round ends reach half a stroke past each end: the visible gap stays about one stroke wide.
-        const capDeg = (stroke / 2 / R) * (180 / Math.PI);
-        const gap = total > 1 ? Math.min(seg * 0.45, 2 * capDeg + (stroke / R) * (180 / Math.PI) * 0.9) : 0;
-        const ordered = [...items.filter((i) => i.done), ...open];
-        ordered.forEach((it, i) => {
-            const a0 = i * seg + gap / 2;
-            const a1 = (i + 1) * seg - gap / 2;
-            if (total === 1) words.push(`<circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="${it.done ? lit : dim}" stroke-width="${stroke}"/>`);
-            else words.push(`<path d="${arc(cx, cy, R, a0, Math.max(a0 + 0.5, a1))}" fill="none" stroke="${it.done ? lit : dim}" stroke-width="${stroke}" stroke-linecap="round"/>`);
-        });
-    }
+    const lit = look.ring.lit;
+    const dim = look.ring.dim;
+    // The ring: one segment per thing (dayRing).
+    words.push(...dayRing(items, cx, cy, R, stroke, lit, dim, look.ring));
 
     // Inside the ring: what is left (a big number), or a tick when the day is done, or a free day.
     const numSize = Math.round(W * 0.15);

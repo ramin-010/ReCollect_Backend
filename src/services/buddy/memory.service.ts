@@ -453,6 +453,9 @@ export interface BuddyBrief {
     memories: Array<{ kind: MemoryKind; text: string; pinned: boolean }>;
     note: string | null;
     followUp: string | null;
+    /** The note's id as GET /api/buddy/note gives it, and its day: the hooks mark it shown for the session. */
+    noteId: string | null;
+    noteDay: string | null;
 }
 
 /**
@@ -485,7 +488,7 @@ export async function buddyBrief(userId: string, options: { project?: string | u
         room -= m.text.length;
         memories.push({ kind: m.kind, text: m.text, pinned: m.pinned });
     }
-    return { who: state.portrait.who, heading: state.portrait.heading, now: state.portrait.now, memories, note: said.note, followUp: said.followUp };
+    return { who: state.portrait.who, heading: state.portrait.heading, now: state.portrait.now, memories, note: said.note, followUp: said.followUp, noteId: said.noteId, noteDay: said.noteDay };
 }
 
 // ─── His own words and thumbs (BUDDY_MEMORY_PLAN §3.1 D, §3.5) ────────────

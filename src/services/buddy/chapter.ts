@@ -192,6 +192,79 @@ export async function chapterIfDue(userId: string, now: Date = new Date()): Prom
     return true;
 }
 
+// ─── The year (BUDDY_MEMORY_PLAN §3.7: "in January the twelve chapters become a year's chapter") ───
+
+const YEAR_WORDS = 250;
+const YEAR_JOB = `It is January. Look back at the year that ended, from its month chapters and its numbers, and answer with one JSON object:
+- chapter: the year as a chapter of his life, at most ${YEAR_WORDS} words, in the third person: what he worked on, what changed over the year, what weighed on him, what went well, and where it leaves him. Only what the chapters and the numbers show; every number must be one you were given. No headings, no list: a few short paragraphs.`;
+
+export const YEAR_SCHEMA: Record<string, unknown> = { type: 'object', additionalProperties: false, required: ['chapter'], properties: { chapter: { type: 'string' } } };
+
+export interface YearFacts {
+    year: string;
+    months: number;
+    minutes: Record<string, number>;
+    activeDays: number;
+    sessions: number;
+    reviewsDone: number;
+    tasksDone: number;
+}
+
+/** The year's numbers: its months' numbers added up (by code). */
+export function yearFacts(year: string, months: readonly MonthFacts[]): YearFacts {
+    const minutes: Record<string, number> = {};
+    for (const m of months) for (const [k, v] of Object.entries(m.minutes)) minutes[k] = (minutes[k] ?? 0) + v;
+    const sum = (k: 'activeDays' | 'sessions' | 'reviewsDone' | 'tasksDone') => months.reduce((a, m) => a + (Number(m[k]) || 0), 0);
+    return { year, months: months.length, minutes, activeDays: sum('activeDays'), sessions: sum('sessions'), reviewsDone: sum('reviewsDone'), tasksDone: sum('tasksDone') };
+}
+
+export function plainYear(f: YearFacts): string {
+    const hours = Math.round(Object.values(f.minutes).reduce((a, m) => a + m, 0) / 60);
+    return `In ${f.year}: ${hours} hours logged over ${f.activeDays} active days in ${f.months} ${f.months === 1 ? 'month' : 'months'}, ${f.reviewsDone} reviews and ${f.tasksDone} tasks done.`;
+}
+
+/** The year's chapter from its month chapters (one Opus call; a number it was not given makes the plain one). */
+export async function runYear(userId: string, now: Date = new Date(), year?: string): Promise<{ period: string; months: number; costUsd: number } | null> {
+    const ctx = await loadLearningContext(userId, now);
+    const period = year ?? String(Number(ctx.today.slice(0, 4)) - 1);
+    const months = await prisma.buddyChapter.findMany({ where: { userId, period: { startsWith: `${period}-` } }, orderBy: { period: 'asc' } });
+    if (!months.length) return null;
+    const facts = yearFacts(period, months.map((m) => m.facts as unknown as MonthFacts));
+    const state = await prisma.buddyState.findUnique({ where: { userId } });
+    const text = [`<year>${period}</year>`, `<numbers>\n${JSON.stringify(facts)}\n</numbers>`, `<months>\n${months.map((m) => `${m.period}: ${m.text}`).join('\n')}\n</months>`, 'Write the year’s chapter.'].join('\n\n');
+    const request = {
+        model: THINK_MODEL,
+        max_tokens: 8000,
+        thinking: { type: 'adaptive' },
+        output_config: { effort: 'medium', format: { type: 'json_schema', schema: YEAR_SCHEMA } },
+        system: [{ type: 'text', text: `${characterPrompt({ name: state?.name ?? null, tone: state?.tone === 'gentle' ? 'gentle' : 'candid' })}\n\n${YEAR_JOB}`, cache_control: EPHEMERAL }],
+        messages: [{ role: 'user', content: [{ type: 'text', text }] }],
+    } as CreateParams;
+    const message = await callClaude(withRefusalFallbacks(request), 'buddy year');
+    const cost = (await recordAiUsage(userId, 'buddy_think', message)).costUsd;
+    const out = z.object({ chapter: z.string() }).parse(parseJson(responseText(message)));
+    const sources = [JSON.stringify(facts), ...months.map((m) => m.text)].join('\n');
+    const said = scrubSecrets(out.chapter).trim();
+    const chapter = said && said.split(/\s+/).length <= YEAR_WORDS + 30 && !strayNumbers(said, sources).length ? said : plainYear(facts);
+    await prisma.buddyChapter.upsert({
+        where: { userId_period: { userId, period } },
+        create: { userId, period, text: chapter, facts: facts as unknown as Prisma.InputJsonValue, questions: [], model: message.model.slice(0, 100), costUsd: cost.toFixed(6) },
+        update: { text: chapter, facts: facts as unknown as Prisma.InputJsonValue, model: message.model.slice(0, 100), costUsd: cost.toFixed(6) },
+    });
+    return { period, months: months.length, costUsd: Math.round(cost * 1e4) / 1e4 };
+}
+
+/** The year's chapter in the first week of January, once its months are written (the month's chapter comes first). */
+export async function yearIfDue(userId: string, now: Date = new Date()): Promise<boolean> {
+    const ctx = await loadLearningContext(userId, now);
+    if (ctx.today.slice(5, 7) !== '01' || Number(ctx.today.slice(8, 10)) > 7) return false;
+    const period = String(Number(ctx.today.slice(0, 4)) - 1);
+    if (await prisma.buddyChapter.findUnique({ where: { userId_period: { userId, period } }, select: { id: true } })) return false;
+    // December's chapter first (the night writes it; the year waits for it).
+    if (!(await prisma.buddyChapter.findUnique({ where: { userId_period: { userId, period: `${period}-12` } }, select: { id: true } }))) return false;
+    return (await runYear(userId, now, period)) !== null;
+}
+
 const MONTH_NAMES = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
 
 /** His months that hold every word of the query (a month's name or "2026-03" finds that month): recall_memory. */

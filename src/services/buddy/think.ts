@@ -23,7 +23,8 @@ import { buddyDayOf } from './voice';
 import { runRoutines } from './routines';
 
 export const THINK_MODEL = process.env['BUDDY_THINK_MODEL'] || 'claude-opus-5-5';
-export const CHECK_MODEL = process.env['BUDDY_CHECK_MODEL'] || 'claude-haiku-5-5';
+// The lock check decides what strangers may read on his phone: Sonnet 5.5 (Ramin 11-16: "that check is crucial"; a few calls a day).
+export const CHECK_MODEL = process.env['BUDDY_CHECK_MODEL'] || 'claude-sonnet-5-5';
 const EPHEMERAL = { type: 'ephemeral' } as const;
 export const SLOTS = ['morning', 'afternoon', 'evening'] as const;
 export type Slot = (typeof SLOTS)[number];
@@ -54,8 +55,8 @@ const NIGHT_JOB = `Tonight you think about his day and answer with one JSON obje
   Memories marked "his own" are his: never update, merge or close them. Leave out notes not worth a memory. Keep memories short, specific, in the third person. Unused fields: "" or [] or false.
 - who (at most ${WHO_WORDS} words) and heading (at most ${HEADING_WORDS} words): rewrite only when a lasting memory changed tonight or none exists yet; else "".
 - now (at most ${NOW_WORDS} words): this week in his life: what he is on, what weighs on him, what is going well.
-- lines: exactly three, slot morning, afternoon, evening: what his phone and Home show at those hours. Each at most ${LINE_MAX} characters, one thought, plain. lockOk: true only if a stranger may read it. sourceId: the memory or note id it rests on, or "".
-- note: a few sentences to him, in your voice, or "" when there is nothing worth saying.
+- lines: exactly three, slot morning, afternoon, evening: what his phone and Home show at those hours. Each at most ${LINE_MAX} characters, one thought, said the way a friend would text it (no label in front). lockOk: true only if a stranger may read it. sourceId: the memory or note id it rests on, or "".
+- note: a few sentences to him, like a message from a friend: natural and casual, straight to the point, no greeting or sign-off, no headings; or "" when there is nothing worth saying.
 - followUp: one question for his next chat with an agent, or "".
 - suggestions: up to ${SUGGEST_MAX} candidate ids worth showing him now (the most useful, due soonest).
 - notebook (at most ${NOTEBOOK_MAX} characters), for tomorrow night: what you watch, what you said tonight, what landed.
@@ -358,11 +359,20 @@ export interface Line {
 }
 
 /** Lengths, numbers, repeats: a line that fails becomes the plain line (never on the lock screen it fails for). */
+/**
+ * A label in front ("From your notes: …", "Reminder - …", "Tip: …") comes off: the buddy talks, it doesn't
+ * file things (Ramin 11-16). The words after it stay, their first letter raised.
+ */
+export function unlabel(text: string): string {
+    const t = text.replace(/^\s*(?:from (?:your |his )?(?:saved )?notes?|from your buddy|reminder|quick reminder|note|quick note|tip|today|tonight|heads[ -]?up|fyi|psst|ps)\s*[:\-\u2013\u2014]\s+/i, '');
+    return t === text ? text : t.charAt(0).toUpperCase() + t.slice(1);
+}
+
 export function guardLines(lines: NightOutput['lines'], ctx: { sources: string; recent: readonly string[]; plain: string }): { lines: Line[]; dropped: Dropped[] } {
     const dropped: Dropped[] = [];
     const out: Line[] = SLOTS.map((slot) => {
         const l = lines.find((x) => x.slot === slot);
-        const text = l ? scrubSecrets(l.text).replace(/\s+/g, ' ').trim() : '';
+        const text = l ? unlabel(scrubSecrets(l.text).replace(/\s+/g, ' ').trim()) : '';
         let why: string | null = null;
         if (!l || !text) why = 'missing';
         else if (text.length > LINE_MAX) why = 'too long';
@@ -380,28 +390,77 @@ export function guardLines(lines: NightOutput['lines'], ctx: { sources: string; 
 export const LOCK_SCHEMA: Record<string, unknown> = {
     type: 'object',
     additionalProperties: false,
-    required: ['lines'],
+    required: ['lines', 'note'],
     properties: {
         lines: {
             type: 'array',
             items: { type: 'object', additionalProperties: false, required: ['slot', 'reveals'], properties: { slot: { type: 'string', enum: [...SLOTS] }, reveals: { type: 'boolean' } } },
         },
+        /** The note, as a phone notification (the lock screen shows those too): true when it reveals. */
+        note: { type: 'boolean' },
     },
 };
 
-const LOCK_SYSTEM = `A line will show on a person's phone lock screen, where anyone nearby can read it. You get the person's private facts and the lines. For each line answer reveals: true when a stranger reading only the line would learn one of those private facts, or anything about health, money, family, other people, guilt, fear, conflicts at work or leaving a job. A line may be shaped by a private fact as long as it does not name it. When unsure, answer true.`;
+const LOCK_SYSTEM = `A line will show on a person's phone lock screen, where anyone nearby can read it. You get the person's private facts and the lines. For each line answer reveals: true when a stranger reading only the line would learn one of those private facts, or anything about health, money, family, other people, guilt, fear, conflicts at work or leaving a job. A line may be shaped by a private fact as long as it does not name it. When unsure, answer true.
+The note (a few sentences) may show the same way, as a phone notification on the lock screen. Answer note with the same test for the whole note: true when it reveals any of that (or when there is no note).`;
 
-export function lockRequest(lines: readonly Line[], privateTexts: readonly string[]): CreateParams {
+/** The lock check for the lines (and the note, when there is one): Haiku, structured, fail closed by the caller. */
+export function lockRequest(lines: readonly Line[], privateTexts: readonly string[], note: string | null = null): CreateParams {
     return {
         model: CHECK_MODEL,
-        max_tokens: 400,
-        output_config: { format: { type: 'json_schema', schema: LOCK_SCHEMA } },
+        // The model thinks by default (adaptive): low effort, and room for it (400 cut the answer off
+        // once the note joined the check, 11-16; a cut answer fails closed).
+        max_tokens: 4000,
+        output_config: { effort: 'low', format: { type: 'json_schema', schema: LOCK_SCHEMA } },
         system: [{ type: 'text', text: LOCK_SYSTEM }],
-        messages: [{ role: 'user', content: [{ type: 'text', text: `<private>\n${privateTexts.join('\n')}\n</private>\n<lines>\n${lines.map((l) => `${l.slot}: ${l.text}`).join('\n')}\n</lines>` }] }],
+        messages: [
+            {
+                role: 'user',
+                content: [{ type: 'text', text: `<private>\n${privateTexts.join('\n') || '(none)'}\n</private>\n<lines>\n${lines.map((l) => `${l.slot}: ${l.text}`).join('\n') || '(none)'}\n</lines>\n<note>\n${note ?? '(none)'}\n</note>` }],
+            },
+        ],
     } as CreateParams;
 }
 
-const zLock = z.object({ lines: z.array(z.object({ slot: z.enum(SLOTS), reveals: z.boolean() })) });
+/** `note` is optional for an older answer: a missing verdict keeps the note's words out of notifications. */
+export const zLock = z.object({ lines: z.array(z.object({ slot: z.enum(SLOTS), reveals: z.boolean() })), note: z.boolean().optional() });
+
+/**
+ * The lock check of a step (the night and the pulses): the lines marked lockOk, when there are private
+ * things to check them against (otherwise their own lockOk stands), and the note always (it may show in
+ * the phone's notification). A failed check keeps every checked line and the note off the lock screen.
+ * `only`: the slots this step wrote (a pulse); the others keep what they had.
+ */
+export async function lockCheck(
+    userId: string,
+    lines: Line[],
+    privateTexts: readonly string[],
+    note: string | null,
+    dropped: Dropped[],
+    only: readonly Slot[] = SLOTS
+): Promise<{ lines: Line[]; noteLockOk: boolean; costUsd: number }> {
+    const toCheck = privateTexts.length ? lines.filter((l) => only.includes(l.slot) && l.lockOk && !l.fallback) : [];
+    if (!toCheck.length && !note) return { lines, noteLockOk: false, costUsd: 0 };
+    let costUsd = 0;
+    try {
+        const check = await callClaude(lockRequest(toCheck, privateTexts.slice(0, 60), note), 'buddy lock check');
+        costUsd = (await recordAiUsage(userId, 'buddy_check', check)).costUsd;
+        const verdict = zLock.parse(parseJson(responseText(check)));
+        const out = lines.map((l) => {
+            if (!toCheck.includes(l)) return l;
+            const v = verdict.lines.find((x) => x.slot === l.slot);
+            if (v && !v.reveals) return l;
+            dropped.push({ what: `lock ${l.slot}`, why: v ? 'names a private thing' : 'not checked' });
+            return { ...l, lockOk: false };
+        });
+        return { lines: out, noteLockOk: !!note && verdict.note === false, costUsd };
+    } catch (err) {
+        // The reason in the log (never his words): a failed check is otherwise silent.
+        console.warn(`[buddy] lock check failed: ${err instanceof Error ? err.message : String(err)}`);
+        if (toCheck.length) dropped.push({ what: 'lock check', why: 'failed: no line on the lock screen today' });
+        return { lines: lines.map((l) => (toCheck.includes(l) ? { ...l, lockOk: false } : l)), noteLockOk: false, costUsd };
+    }
+}
 
 // ─── The step ──────────────────────────────────────────────────────────────
 
@@ -492,31 +551,9 @@ export async function runNight(userId: string, now: Date = new Date()): Promise<
     dropped.push(...guarded.dropped);
     let lines = guarded.lines;
 
-    // The lock check: a line marked lockOk is checked against his private memories; a failed or
-    // missing check keeps every line off the lock screen (fail closed).
-    const privateTexts = input.memories.filter((m) => m.private).map((m) => m.text).concat(input.notes.filter((n) => n.private).map((n) => n.text));
-    const toCheck = lines.filter((l) => l.lockOk && !l.fallback);
-    if (toCheck.length && privateTexts.length) {
-        try {
-            const check = await callClaude(lockRequest(toCheck, privateTexts.slice(0, 60)), 'buddy lock check');
-            cost += (await recordAiUsage(userId, 'buddy_check', check)).costUsd;
-            const verdict = zLock.parse(parseJson(responseText(check)));
-            lines = lines.map((l) => {
-                if (!l.lockOk || l.fallback) return l;
-                const v = verdict.lines.find((x) => x.slot === l.slot);
-                if (v && !v.reveals) return l;
-                dropped.push({ what: `lock ${l.slot}`, why: v ? 'names a private thing' : 'not checked' });
-                return { ...l, lockOk: false };
-            });
-        } catch {
-            dropped.push({ what: 'lock check', why: 'failed: no line on the lock screen today' });
-            lines = lines.map((l) => (l.fallback ? l : { ...l, lockOk: false }));
-        }
-    }
-
     // The note, the follow-up and the portrait: lengths and numbers.
     const guardText = (text: string, max: number, what: string): string | null => {
-        const t = scrubSecrets(text).replace(/[ \t]+/g, ' ').trim();
+        const t = unlabel(scrubSecrets(text).replace(/[ \t]+/g, ' ').trim());
         if (!t) return null;
         if (strayNumbers(t, sources).length) {
             dropped.push({ what, why: 'a number it was not given' });
@@ -529,6 +566,14 @@ export async function runNight(userId: string, now: Date = new Date()): Promise<
     const who = out.who.trim() ? guardText(capWords(out.who, WHO_WORDS), 1200, 'who') : null;
     const heading = out.heading.trim() ? guardText(capWords(out.heading, HEADING_WORDS), 800, 'heading') : null;
     const nowText = guardText(capWords(out.now, NOW_WORDS), 1200, 'now');
+
+    // The lock check: a line marked lockOk is checked against his private memories, and the note
+    // (for the phone's notification) always; a failed or missing check keeps them off the lock
+    // screen (fail closed).
+    const privateTexts = input.memories.filter((m) => m.private).map((m) => m.text).concat(input.notes.filter((n) => n.private).map((n) => n.text));
+    const checked = await lockCheck(userId, lines, privateTexts, note, dropped);
+    lines = checked.lines;
+    cost += checked.costUsd;
 
     // The items it picked go to Suggested.
     const picked = out.suggestions.filter((id) => input.candidates.some((c) => c.id === id)).slice(0, SUGGEST_MAX);
@@ -573,6 +618,7 @@ export async function runNight(userId: string, now: Date = new Date()): Promise<
             kind: 'night',
             lines: lines as unknown as Prisma.InputJsonValue,
             note,
+            noteLockOk: checked.noteLockOk,
             followUp,
             ops: applied as unknown as Prisma.InputJsonValue,
             dropped: dropped as unknown as Prisma.InputJsonValue,

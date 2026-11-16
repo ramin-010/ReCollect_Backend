@@ -7,7 +7,7 @@ import { setAiClientForTests } from '../../src/services/claude/client';
 import { nightIfDue } from '../../src/services/buddy/worker';
 import { FakeClaude, fakeMessage } from '../helpers/claude';
 import { createTestUser } from '../helpers/auth';
-import { api } from '../helpers/learning';
+import { api, chainDays, createChainRows, createSubjectRow, createTopicRow, d } from '../helpers/learning';
 
 const fake = new FakeClaude();
 beforeAll(() => {
@@ -75,6 +75,46 @@ describe('routines', () => {
         fake.push(fakeMessage(night));
         await nightIfDue(user.id, new Date(Date.UTC(2026, 10, 16, 23, 30)));
         expect((await prisma.suggestion.findUniqueOrThrow({ where: { id: later.id } })).status).toBe('candidate');
+    });
+
+    it('the busy-day routine: a busy stretch brings the offer once; after the yes, what will not fit moves to after it (whole chains), with Undo', async () => {
+        const user = await createTestUser();
+        await api(user).patch('/api/buddy/settings', { enabled: true });
+        // Mon 16 Nov, 05:00 in Kolkata; busy until Wednesday. Five reviews due Monday, two on Tuesday.
+        const AT = new Date(Date.UTC(2026, 10, 15, 23, 30));
+        await prisma.user.update({ where: { id: user.id }, data: { busyUntil: d('2026-11-18'), timezone: 'Asia/Kolkata' } });
+        const subject = await createSubjectRow(user.id);
+        const chains = [];
+        for (const [i, start] of ['2026-11-15', '2026-11-15', '2026-11-15', '2026-11-15', '2026-11-15', '2026-11-16', '2026-11-16'].entries()) {
+            const { topic } = await createTopicRow(user.id, subject.id, `Topic ${i + 1}`);
+            chains.push({ topicId: topic.id, rows: await createChainRows(user.id, { topicId: topic.id }, start) });
+        }
+        const before = await Promise.all(chains.map((c) => chainDays({ topicId: c.topicId })));
+
+        fake.push(fakeMessage(night));
+        await nightIfDue(user.id, AT);
+        const offer = await prisma.suggestion.findFirstOrThrow({ where: { userId: user.id, kind: 'routine' } });
+        expect(offer.payload).toEqual({ routine: 'auto_busy' });
+        // Offered once: the next night doesn't ask again.
+        fake.push(fakeMessage(night));
+        await nightIfDue(user.id, new Date(AT.getTime() + 3600_000), { fresh: true });
+        expect(await prisma.suggestion.count({ where: { userId: user.id, kind: 'routine' } })).toBe(1);
+
+        await api(user).post(`/api/suggestions/${offer.id}/accept`);
+        fake.reset();
+        fake.push(fakeMessage(night));
+        await nightIfDue(user.id, new Date(AT.getTime() + 2 * 3600_000), { fresh: true });
+        expect(JSON.stringify(fake.calls[0]!.messages)).toContain("moved 2 reviews that didn't fit his busy days to after 2026-11-18");
+        const after = await Promise.all(chains.map((c) => chainDays({ topicId: c.topicId })));
+        // Monday keeps three (the order: cycle, lateness, then id), Tuesday keeps both; two chains moved whole, past Wednesday.
+        const moved = after.filter((a, i) => a.join() !== before[i]!.join());
+        expect(moved).toHaveLength(2);
+        for (const m of moved) expect(m[0]!.slice(2, 12) > '2026-11-18').toBe(true);
+        for (const m of moved) expect(m.map((x) => x.slice(2, 12))).toEqual([...m.map((x) => x.slice(2, 12))].sort());
+        const edit = await prisma.agentEdit.findFirstOrThrow({ where: { userId: user.id, kind: 'revisions_spread' } });
+        expect(edit.summary).toBe('Moved 2 reviews off your busy days to after 2026-11-18');
+        expect((await api(user).post(`/api/agent/edits/${edit.id}/undo`)).status).toBe(200);
+        expect(await Promise.all(chains.map((c) => chainDays({ topicId: c.topicId })))).toEqual(before);
     });
 
     it("the focus routine: three accepted focus lines bring the offer; the night sets the day's first line from an open week target, with Undo", async () => {

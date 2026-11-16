@@ -127,9 +127,23 @@ export function dayItems(t: Pick<TodayPayload, 'plan' | 'focus' | 'tasks' | 'goa
     };
 }
 
+/** The day in numbers, as the pictures say it: "3 left today · about 21 min", "Done for today", "A free day". */
+export function dayNumbers(a: Pick<Ambient, 'items' | 'counts'>): string {
+    const items = a.items ?? [];
+    if (!items.length) return 'A free day';
+    const open = items.filter((i) => !i.done).length;
+    if (!open) return 'Done for today';
+    const minutes = a.counts?.minutesLeft ?? 0;
+    return `${open} left today${minutes ? ` · about ${minutes} min` : ''}`;
+}
+
+/** The drawing's version (11-16: the lock picture's full ring). */
+const DRAWING = 'ring-1';
+
 /** A short fingerprint of everything the pictures draw (FNV-1a over the words). */
 function pictureKey(a: Omit<Ambient, 'key' | 'updatedAt'>): string {
-    const text = JSON.stringify([a.state, a.date, a.headline, a.lines, a.mode, a.week, a.items, a.counts, a.goal, a.line?.text ?? null]);
+    // DRAWING: bumped when the drawing itself changes, so every phone fetches the new pictures.
+    const text = JSON.stringify([DRAWING, a.state, a.date, a.headline, a.lines, a.mode, a.week, a.items, a.counts, a.goal, a.line?.text ?? null]);
     let h = 2166136261;
     for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 16777619);
     return (h >>> 0).toString(36);
@@ -208,8 +222,10 @@ export const WALLPAPER_FONTS = ['Regular', 'Medium', 'SemiBold', 'Bold'].map((w)
 export type WallpaperScreen = 'home' | 'lock';
 
 /** The wallpaper as SVG (wallpaperArt.ts): the home picture (the sky of the day and its list) or the lock picture (the dial). */
-export function wallpaperSvg(a: Ambient, width: number, height: number, theme: 'light' | 'dark', screen: WallpaperScreen = 'home'): string {
+export function wallpaperSvg(a: Ambient, width: number, height: number, theme: 'light' | 'dark', screen: WallpaperScreen = 'home', look: { style?: string; color?: string } = {}): string {
     const input = {
+        ...(look.style ? { style: look.style } : {}),
+        ...(look.color ? { color: look.color } : {}),
         state: a.state,
         date: a.date,
         headline: a.headline,
@@ -224,6 +240,6 @@ export function wallpaperSvg(a: Ambient, width: number, height: number, theme: '
 }
 
 /** The wallpaper as a PNG, sized for the phone (pixels, not CSS px). */
-export function wallpaperPng(a: Ambient, width: number, height: number, theme: 'light' | 'dark', screen: WallpaperScreen = 'home'): Buffer {
-    return svgToPng(wallpaperSvg(a, width, height, theme, screen), width, height, 1, Math.max(width, height), WALLPAPER_FONTS).png;
+export function wallpaperPng(a: Ambient, width: number, height: number, theme: 'light' | 'dark', screen: WallpaperScreen = 'home', look: { style?: string; color?: string } = {}): Buffer {
+    return svgToPng(wallpaperSvg(a, width, height, theme, screen, look), width, height, 1, Math.max(width, height), WALLPAPER_FONTS).png;
 }

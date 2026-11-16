@@ -194,9 +194,16 @@ describe('the two pictures', () => {
         expect(svg).toContain('about 16 min');
         expect(svg).toContain('182 days to Backend SDE offer');
         expect(svg).not.toContain('Monotonic stack');
-        // Without a line it says the day in plain words, as the main words.
+        // The ring of the day over the line (Ramin 11-16: a whole circle, not the half arc): one segment per thing.
+        expect((svg.match(/<path d="M[^"]+A[^"]+" fill="none" stroke=/g) ?? []).length).toBeGreaterThanOrEqual(3);
+        // Without a line: the dial of the day (what is left inside the ring), as before the buddy.
         const plain = wallpaperSvg(a, 1080, 2340, 'dark', 'lock');
-        expect(plain).toContain('>3 left today · about 16 min<');
+        expect(plain).toContain('>left today<');
+        expect(plain).toContain('>about 16 min<');
+        // A style draws its own backdrop and ring; an unknown style is the sky.
+        const mono = wallpaperSvg({ ...a, line: { dayId: 'd1', slot: 'morning', text: 'Stop before midnight tonight' } }, 1080, 2340, 'dark', 'lock', { style: 'mono', color: 'lime' });
+        expect((mono.match(/<line /g) ?? []).length).toBe(60);
+        expect(wallpaperSvg(a, 1080, 2340, 'dark', 'lock', { style: 'nope' })).toBe(plain);
         // All of it between the clock and the fingerprint.
         const ys = [...svg.matchAll(/<text x="[\d.]+" y="([\d.]+)"/g)].map((m) => Number(m[1]));
         expect(Math.min(...ys)).toBeGreaterThan(2340 * 0.33);

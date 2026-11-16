@@ -3,7 +3,9 @@
 // `ambient` token (ANDROID_APP_SPEC), which fetches the picture a few times a day.
 import os from 'node:os';
 import { requireUser } from '../middlwares/auth';
-import { getAmbient, wallpaperPng } from '../services/ambient/ambient.service';
+import { dayNumbers, getAmbient, wallpaperPng } from '../services/ambient/ambient.service';
+import { phoneBuddy } from '../services/buddy/voice';
+import { WALLPAPER_STYLES } from '../services/ambient/wallpaperStyles';
 import { revokeApiToken } from '../services/apiTokens/apiTokens.service';
 import ErrorResponse from '../utils/errorResponse';
 import { handler, ok } from './learning/common';
@@ -30,13 +32,17 @@ const titlesFrom = (q: unknown) => q !== '0' && q !== 'false';
 
 /**
  * GET /api/ambient/widget[?titles=0] -> the day's lines, plus what the phone app's screen shows: whose
- * day it is (`account`) and where a tap opens Recollect (`appUrl`, the web app; null when unknown).
+ * day it is (`account`), where a tap opens Recollect (`appUrl`, the web app; null when unknown), the
+ * day in numbers for the widget (`numbers`) and the buddy's part of the app's screen (`buddy`: its
+ * note, the lines it said, his thumbs; null while it is off). The widget itself keeps to `line`, the
+ * lock-safe line (none with titles hidden).
  */
 export const ambientWidgetHandler = handler(async (req, res) => {
     const user = requireUser(req);
-    const ambient = await getAmbient(user.id, new Date(), { titles: titlesFrom(req.query.titles) });
+    const now = new Date();
+    const [ambient, buddy] = await Promise.all([getAmbient(user.id, now, { titles: titlesFrom(req.query.titles) }), phoneBuddy(user.id, now)]);
     const appUrl = process.env.FRONTEND_URL?.trim().replace(/\/+$/, '') || null;
-    ok(res, { ...ambient, appUrl, account: { name: user.name, email: user.email } });
+    ok(res, { ...ambient, numbers: dayNumbers(ambient), buddy, appUrl, account: { name: user.name, email: user.email } });
 });
 
 /**
@@ -55,7 +61,15 @@ const size = (v: unknown, fallback: number, min: number, max: number) => {
     return v !== undefined && Number.isFinite(n) ? Math.min(max, Math.max(min, Math.round(n))) : fallback;
 };
 
-/** GET /api/ambient/wallpaper.png?w=1080&h=2340&theme=dark|light[&titles=0][&screen=lock|home] */
+/** `?style=&color=`: a style the server knows (else the sky) and one of its colours (else its first). */
+const word = (v: unknown) => (typeof v === 'string' && /^[a-z]{1,20}$/.test(v) ? v : undefined);
+
+/** GET /api/ambient/styles (the phone app's style picker): the styles and their colours, the sky first. */
+export const ambientStylesHandler = handler(async (_req, res) => {
+    ok(res, WALLPAPER_STYLES);
+});
+
+/** GET /api/ambient/wallpaper.png?w=1080&h=2340&theme=dark|light[&titles=0][&screen=lock|home][&style=bold&color=cobalt] */
 export const ambientWallpaperHandler = handler(async (req, res) => {
     const width = size(req.query.w, 1080, 320, 2160);
     const height = size(req.query.h, 2340, 480, 4680);
@@ -66,5 +80,7 @@ export const ambientWallpaperHandler = handler(async (req, res) => {
     res.setHeader('Content-Type', 'image/png');
     res.setHeader('Cache-Control', 'private, max-age=300');
     res.setHeader('X-Ambient-State', ambient.state);
-    res.send(wallpaperPng(ambient, width, height, theme, screen));
+    const style = word(req.query.style);
+    const color = word(req.query.color);
+    res.send(wallpaperPng(ambient, width, height, theme, screen, { ...(style ? { style } : {}), ...(color ? { color } : {}) }));
 });

@@ -129,7 +129,8 @@ async function buddyVoice(userId: string): Promise<string | null> {
     const state = await prisma.buddyState.findUnique({ where: { userId } });
     if (!state?.enabled || state.paused) return null;
     const character = characterPrompt({ name: state.name, tone: state.tone === 'gentle' ? 'gentle' : 'candid' });
-    return `Here you are also his buddy: answer in this voice, while the rules above decide what you may do.\n\n${character}${state.notebook ? `\n\nYour notebook from last night:\n${state.notebook}` : ''}`;
+    // The voice changes how it talks, never what it checks (11-16: with the friend's voice it answered a goal question from memory).
+    return `Here you are also his buddy: answer in this voice, while the rules above decide what you may do and what you look up. The voice changes only how you talk: still check the live numbers with the tools first (goals, pace, the day, the week), as the rules say, and answer from what they return, not from the notes below.\n\n${character}${state.notebook ? `\n\nYour notebook from last night:\n${state.notebook}` : ''}`;
 }
 
 export async function runAssistant(input: AssistantInput): Promise<AssistantTurn> {

@@ -53,9 +53,82 @@ export async function nextNoteFor(userId: string, after?: string | undefined, no
     return notes.find((n) => n.id !== after) ?? null;
 }
 
-/** The brief's note and follow-up: today's (or last night's) step's. */
-export async function briefNote(userId: string, now: Date = new Date()): Promise<{ note: string | null; followUp: string | null }> {
+/**
+ * The brief's note and follow-up: today's (or last night's) step's. `noteId` is the note's id as
+ * GET /api/buddy/note gives it, so the hooks don't show a note the session started with again.
+ */
+export async function briefNote(userId: string, now: Date = new Date()): Promise<{ note: string | null; followUp: string | null; noteId: string | null; noteDay: string | null }> {
     const { row, stale } = await latestStep(userId, now);
-    if (!row || stale) return { note: null, followUp: null };
-    return { note: row.note, followUp: row.followUp };
+    if (!row || stale) return { note: null, followUp: null, noteId: null, noteDay: null };
+    return { note: row.note, followUp: row.followUp, noteId: row.note ? `${row.id}:note` : null, noteDay: row.note ? fromDbDay(row.day) : null };
+}
+
+// ─── The phone app's screen (B4, app 0.3.0) ────────────────────────────────
+
+export interface PhoneLine {
+    dayId: string;
+    slot: Slot;
+    day: DayString;
+    /** "This morning", "Yesterday evening", "Friday afternoon" (his zone). */
+    when: string;
+    text: string;
+    /** The line for now (the app's card, with its thumbs). */
+    current: boolean;
+}
+
+export interface PhoneBuddy {
+    name: string | null;
+    /** The newest step's note; `lockOk`: the lock check passed it, so a notification may show its words. */
+    note: { id: string; dayId: string; text: string; lockOk: boolean; at: string } | null;
+    /** The lines it has said so far, newest first (7 at most; the code's plain lines left out). */
+    lines: PhoneLine[];
+    /** His thumbs on those steps (the last per target counts). */
+    thumbs: Array<{ dayId: string; target: string; verdict: string }>;
+}
+
+const SLOT_ORDER: readonly Slot[] = ['morning', 'afternoon', 'evening'];
+export const PHONE_LINES_MAX = 7;
+
+function whenWords(day: DayString, slot: Slot, today: DayString): string {
+    if (day === today) return `This ${slot}`;
+    if (day === addDays(today, -1)) return `Yesterday ${slot}`;
+    const weekday = new Intl.DateTimeFormat('en-GB', { weekday: 'long', timeZone: 'UTC' }).format(new Date(`${day}T12:00:00Z`));
+    return `${weekday} ${slot}`;
+}
+
+/**
+ * What the phone app's screen shows (inside the app, behind his phone's lock): the note, the lines said
+ * so far and his thumbs. The widget and the lock picture keep to the lock-safe line (`Ambient.line`).
+ * Null while the buddy is off or paused.
+ */
+export async function phoneBuddy(userId: string, now: Date = new Date()): Promise<PhoneBuddy | null> {
+    const state = await prisma.buddyState.findUnique({ where: { userId }, select: { enabled: true, paused: true, name: true } });
+    if (!state?.enabled || state.paused) return null;
+    const ctx = await loadLearningContext(userId, now);
+    const hour = hourIn(ctx.tz, now);
+    const day = buddyDayOf(ctx.today, hour);
+    const slot = slotAt(hour);
+    const rows = await prisma.buddyDay.findMany({ where: { userId, day: { gte: toDbDay(addDays(day, -3)), lte: toDbDay(day) } }, orderBy: { createdAt: 'desc' } });
+    // The newest step of each day holds what that day showed (a pulse keeps the hours gone).
+    const newest = new Map<DayString, (typeof rows)[number]>();
+    for (const r of rows) if (!newest.has(fromDbDay(r.day))) newest.set(fromDbDay(r.day), r);
+    const lines: PhoneLine[] = [];
+    for (const d of [...newest.keys()].sort().reverse()) {
+        const r = newest.get(d)!;
+        const said = (Array.isArray(r.lines) ? r.lines : []) as unknown as Line[];
+        for (let i = d === day ? SLOT_ORDER.indexOf(slot) : SLOT_ORDER.length - 1; i >= 0; i--) {
+            const l = said.find((x) => x.slot === SLOT_ORDER[i]);
+            if (l && !l.fallback && l.text) lines.push({ dayId: r.id, slot: l.slot, day: d, when: whenWords(d, l.slot, day), text: l.text, current: d === day && l.slot === slot });
+        }
+    }
+    const top = rows[0] && fromDbDay(rows[0].day) === day ? rows[0] : null;
+    const shown = lines.slice(0, PHONE_LINES_MAX);
+    const ids = [...new Set([...shown.map((l) => l.dayId), ...(top ? [top.id] : [])])];
+    const thumbs = ids.length ? await prisma.buddyFeedback.findMany({ where: { userId, buddyDayId: { in: ids } }, orderBy: { createdAt: 'asc' } }) : [];
+    return {
+        name: state.name,
+        note: top?.note ? { id: `${top.id}:note`, dayId: top.id, text: top.note, lockOk: top.noteLockOk, at: top.createdAt.toISOString() } : null,
+        lines: shown,
+        thumbs: thumbs.map((t) => ({ dayId: t.buddyDayId, target: t.target, verdict: t.verdict })),
+    };
 }
