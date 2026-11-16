@@ -234,6 +234,8 @@ export interface PictureLook {
     style?: string;
     color?: string;
     zoom?: number;
+    /** The live lock screen's band for the phone's notification icons (app 0.4.0). */
+    iconSlot?: boolean;
 }
 
 /** The wallpaper as SVG (wallpaperArt.ts): the home picture (the day in numbers) or the lock picture (the ring and the buddy's line, or the dial). */
@@ -242,6 +244,7 @@ export function wallpaperSvg(a: Ambient, width: number, height: number, theme: '
         ...(look.style ? { style: look.style } : {}),
         ...(look.color ? { color: look.color } : {}),
         ...(look.zoom && look.zoom !== 1 ? { zoom: look.zoom } : {}),
+        ...(look.iconSlot ? { iconSlot: true } : {}),
         state: a.state,
         date: a.date,
         headline: a.headline,
@@ -256,6 +259,13 @@ export function wallpaperSvg(a: Ambient, width: number, height: number, theme: '
 }
 
 /** The wallpaper as a PNG, sized for the phone (pixels, not CSS px). */
+/** The picture with the place of the notification icons' band when one was asked for ("cy,size,#AARRGGBB"), else null. */
+export function wallpaperPngWithSlot(a: Ambient, width: number, height: number, theme: 'light' | 'dark', screen: WallpaperScreen = 'home', look: PictureLook = {}): { png: Buffer; slot: string | null } {
+    const svg = wallpaperSvg(a, width, height, theme, screen, look);
+    const slot = /^<svg [^>]*data-icons="([^"]+)"/.exec(svg)?.[1] ?? null;
+    return { png: svgToPng(svg, width, height, 1, Math.max(width, height), WALLPAPER_FONTS).png, slot };
+}
+
 export function wallpaperPng(a: Ambient, width: number, height: number, theme: 'light' | 'dark', screen: WallpaperScreen = 'home', look: PictureLook = {}): Buffer {
     return svgToPng(wallpaperSvg(a, width, height, theme, screen, look), width, height, 1, Math.max(width, height), WALLPAPER_FONTS).png;
 }

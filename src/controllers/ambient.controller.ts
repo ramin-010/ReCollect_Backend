@@ -3,7 +3,7 @@
 // `ambient` token (ANDROID_APP_SPEC), which fetches the picture a few times a day.
 import os from 'node:os';
 import { requireUser } from '../middlwares/auth';
-import { dayBreakdown, dayNumbers, getAmbient, wallpaperPng } from '../services/ambient/ambient.service';
+import { dayBreakdown, dayNumbers, getAmbient, wallpaperPngWithSlot } from '../services/ambient/ambient.service';
 import { pictureZoom } from '../services/ambient/wallpaperArt';
 import { phoneBuddy } from '../services/buddy/voice';
 import { WALLPAPER_STYLES } from '../services/ambient/wallpaperStyles';
@@ -72,7 +72,7 @@ export const ambientStylesHandler = handler(async (_req, res) => {
 });
 
 /**
- * GET /api/ambient/wallpaper.png?w=1080&h=2340&theme=dark|light[&titles=0][&screen=lock|home][&style=peaks&color=dusk][&zoom=1.1]
+ * GET /api/ambient/wallpaper.png?w=1080&h=2340&theme=dark|light[&titles=0][&screen=lock|home][&style=peaks&color=dusk][&zoom=1.1][&icons=1]
  * `zoom` (B8): how much larger the phone shows the picture at rest (1–1.25; Android 11's home screen: 1.1).
  */
 export const ambientWallpaperHandler = handler(async (req, res) => {
@@ -88,5 +88,13 @@ export const ambientWallpaperHandler = handler(async (req, res) => {
     const style = word(req.query.style);
     const color = word(req.query.color);
     const zoom = pictureZoom(req.query.zoom);
-    res.send(wallpaperPng(ambient, width, height, theme, screen, { ...(style ? { style } : {}), ...(color ? { color } : {}), ...(zoom !== 1 ? { zoom } : {}) }));
+    // `icons=1` (the live lock screen, app 0.4.0): a band under the words for the phone's notification
+    // icons; its place in X-Ambient-Icons ("cy,size,#AARRGGBB", picture pixels).
+    const iconSlot = req.query.icons === '1';
+    const { png, slot } = wallpaperPngWithSlot(ambient, width, height, theme, screen, { ...(style ? { style } : {}), ...(color ? { color } : {}), ...(zoom !== 1 ? { zoom } : {}), ...(iconSlot ? { iconSlot } : {}) });
+    if (slot) {
+        res.setHeader('X-Ambient-Icons', slot);
+        res.setHeader('Access-Control-Expose-Headers', 'X-Ambient-Icons');
+    }
+    res.send(png);
 });

@@ -38,6 +38,12 @@ export interface WallpaperInput {
      * the home wallpaper at 1.1× (measured on his phone) and zooms out only while the shade is pulled.
      */
     zoom?: number;
+    /**
+     * The live lock screen (app 0.4.0): a band is left under the words for the phone's own notification
+     * icons, which the app draws there. Its place goes out on the picture (`data-icons`: centre y, icon
+     * size, ink as #AARRGGBB).
+     */
+    iconSlot?: boolean;
 }
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -88,8 +94,28 @@ function forZoom(words: string[], W: number, H: number, zoom: number | undefined
     return `<g transform="matrix(${s.toFixed(5)} 0 0 ${s.toFixed(5)} ${r1((W / 2) * (1 - s))} ${r1((H / 2) * (1 - s))})">${words.join('')}</g>`;
 }
 
-function picture(W: number, H: number, defs: string[], art: string[], words: string[], zoom?: number): string {
-    return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><defs>${defs.join('')}</defs>${art.join('')}${forZoom(words, W, H, zoom)}</svg>`;
+function picture(W: number, H: number, defs: string[], art: string[], words: string[], zoom?: number, slot?: string): string {
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"${slot ? ` data-icons="${slot}"` : ''}><defs>${defs.join('')}</defs>${art.join('')}${forZoom(words, W, H, zoom)}</svg>`;
+}
+
+/** An ink ("#RRGGBB" or "rgba(r,g,b,a)") as Android's #AARRGGBB. */
+export function argbHex(color: string): string {
+    const hex = /^#([0-9a-f]{6})$/i.exec(color);
+    if (hex) return `#FF${hex[1]!.toUpperCase()}`;
+    const m = /^rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)$/i.exec(color.replace(/\s+/g, ''));
+    if (!m) return '#FFFFFFFF';
+    const a = Math.round(Math.min(1, Math.max(0, m[4] === undefined ? 1 : Number(m[4]))) * 255);
+    return `#${[a, Number(m[1]), Number(m[2]), Number(m[3])].map((v) => v.toString(16).padStart(2, '0')).join('').toUpperCase()}`;
+}
+
+/** The band for the phone's notification icons (the live lock screen): its height in the group, and its place. */
+const ICON_SIZE = 0.05;
+function iconBand(W: number): number {
+    return 5 * (W / 100) + W * ICON_SIZE;
+}
+function iconSlotAt(bandTop: number, W: number, ink: string): string {
+    const size = W * ICON_SIZE;
+    return `${r1(bandTop + 5 * (W / 100) + size / 2)},${r1(size)},${argbHex(ink)}`;
 }
 
 interface TextOpts {
@@ -815,7 +841,8 @@ export function drawLock(input: WallpaperInput, width: number, height: number, t
     const reach = ringReach(R, stroke, look.ring);
     const ringH = withRing ? 2 * reach + 8 * u : 0;
     const rows = rowsUnder(input, W, 7 * u);
-    const groupH = ringH + lineH + rows.h;
+    const band = input.iconSlot ? iconBand(W) : 0;
+    const groupH = ringH + lineH + rows.h + band;
     // A little above the middle (the clock sits higher than the fingerprint); never up into the clock.
     const top = Math.max(H * 0.3, H * 0.49 - groupH / 2);
 
@@ -828,7 +855,7 @@ export function drawLock(input: WallpaperInput, width: number, height: number, t
     const lineTop = top + ringH;
     lines.forEach((l, i) => words.push(text(cx, lineTop + size * CAP + i * lh, l, size, look.lineWeight, ink.head, { anchor: 'middle', track: TRACK.line })));
     words.push(...rows.draw(lineTop + lineH, cx, ink));
-    return picture(W, H, defs, art, words, input.zoom);
+    return picture(W, H, defs, art, words, input.zoom, input.iconSlot ? iconSlotAt(lineTop + lineH + rows.h, W, ink.body) : undefined);
 }
 
 /**
@@ -856,7 +883,8 @@ export function drawDial(input: WallpaperInput, width: number, height: number, t
     const nextH = nextLines.length ? 8 * u + second * CAP + (nextLines.length - 1) * nextLh : 0;
     // Under the next step the day's row is quiet (one secondary line is enough).
     const rows = rowsUnder(input, W, nextLines.length ? 5 * u : 8 * u, nextLines.length ? W * TYPE.quiet : second);
-    const groupH = 2 * reach + nextH + rows.h;
+    const band = input.iconSlot ? iconBand(W) : 0;
+    const groupH = 2 * reach + nextH + rows.h + band;
     const top = Math.max(H * 0.3, H * 0.49 - groupH / 2);
     const cy = top + reach;
 
@@ -870,5 +898,5 @@ export function drawDial(input: WallpaperInput, width: number, height: number, t
         y += (nextLines.length - 1) * nextLh;
     }
     words.push(...rows.draw(y, cx, ink));
-    return picture(W, H, defs, art, words, input.zoom);
+    return picture(W, H, defs, art, words, input.zoom, input.iconSlot ? iconSlotAt(y + rows.h, W, ink.body) : undefined);
 }

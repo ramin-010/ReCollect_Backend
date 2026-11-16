@@ -1,7 +1,7 @@
 // The ambient phone's states (ALWAYS_ON_SPEC 6.6): what the wallpaper and widget say, by the hour and mode.
 import { describe, expect, it } from 'vitest';
 import { ambientFor, dayItems, wallpaperSvg } from '../../../src/services/ambient/ambient.service';
-import { pictureZoom, textWidth, wrapText } from '../../../src/services/ambient/wallpaperArt';
+import { argbHex, pictureZoom, textWidth, wrapText } from '../../../src/services/ambient/wallpaperArt';
 import type { Brief } from '../../../src/services/brief/brief.service';
 
 function brief(over: { planned?: number; est?: number; done?: number; focus?: Array<{ text: string; done: boolean }>; tasks?: number; next?: string | null } = {}): Brief {
@@ -233,6 +233,25 @@ describe('the two pictures', () => {
         const ys = [...svg.matchAll(/<text x="[\d.]+" y="([\d.]+)"/g)].map((m) => Number(m[1]));
         expect(Math.min(...ys)).toBeGreaterThan(2340 * 0.33);
         expect(Math.max(...ys)).toBeLessThan(2340 * 0.79);
+    });
+
+    it('the live lock screen (app 0.4.0): a band under the words for the notification icons, its place on the picture', () => {
+        const withLine = { ...a, line: { dayId: 'd1', slot: 'morning', text: 'Stop before midnight tonight' } };
+        const plain = wallpaperSvg(withLine, 1080, 2340, 'dark', 'lock');
+        const live = wallpaperSvg(withLine, 1080, 2340, 'dark', 'lock', { iconSlot: true });
+        expect(plain).not.toContain('data-icons');
+        const [cy, size, ink] = (/data-icons="([^"]+)"/.exec(live)?.[1] ?? '').split(',');
+        expect(Number(size)).toBeCloseTo(54, 0);
+        expect(ink).toMatch(/^#[0-9A-F]{8}$/);
+        // The band sits under the last row, and the group moved up to keep it centred.
+        const lastText = Math.max(...[...live.matchAll(/<text x="[\d.]+" y="([\d.]+)"/g)].map((m) => Number(m[1])));
+        expect(Number(cy)).toBeGreaterThan(lastText);
+        expect(Number(cy)).toBeLessThan(2340 * 0.8);
+        const firstY = (svg: string) => Number(/<text x="[\d.]+" y="([\d.]+)"/.exec(svg)?.[1]);
+        expect(firstY(live)).toBeLessThan(firstY(plain));
+        // The dial (no line) leaves the band too.
+        expect(wallpaperSvg(a, 1080, 2340, 'dark', 'lock', { iconSlot: true })).toMatch(/^<svg [^>]*data-icons="[\d.]+,[\d.]+,#[0-9A-F]{8}"/);
+        expect([argbHex('rgba(255,255,255,0.84)'), argbHex('#F7F5F2'), argbHex('nope')]).toEqual(['#D6FFFFFF', '#FFF7F5F2', '#FFFFFFFF']);
     });
 
     it('lock: a done day is the whole dial lit with a tick; an empty day says so', () => {
