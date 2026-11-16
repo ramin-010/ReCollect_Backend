@@ -58,10 +58,21 @@ export async function bumpDay(userId: string, day: DayString, inc: DayCounts): P
 
 const cut = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
 
-/** Queue a piece of a session's words. Paused: dropped (counted). A retried piece is not queued twice. */
-export async function queueWords(userId: string, input: WordsInput, now: Date = new Date()): Promise<{ queued: number; paused?: true; duplicate?: true }> {
+/**
+ * BUDDY_OFFICE_CAPTURE=off (hosting P1-14; production): words a hook marked as office work are
+ * dropped on arrival, counted, never stored: the second guard after the hooks' own folder rules
+ * (which since B10 send no words from an office folder at all). Unset: kept, as before.
+ */
+export const officeCaptureOff = (env: NodeJS.ProcessEnv = process.env): boolean => /^(off|0|false|no)$/i.test(env['BUDDY_OFFICE_CAPTURE']?.trim() ?? '');
+
+/** Queue a piece of a session's words. Paused, or office words with BUDDY_OFFICE_CAPTURE=off: dropped (counted). A retried piece is not queued twice. */
+export async function queueWords(userId: string, input: WordsInput, now: Date = new Date()): Promise<{ queued: number; paused?: true; office?: true; duplicate?: true }> {
     if (input.messages.length > WORDS_PER_CHUNK) throw badRequest(`At most ${WORDS_PER_CHUNK} messages at once`);
     const { today } = await loadLearningContext(userId, now);
+    if (input.office === true && officeCaptureOff()) {
+        await bumpDay(userId, today, { seen: input.messages.length, dropped: input.messages.length });
+        return { queued: 0, office: true };
+    }
     if (await isBuddyPaused(userId)) {
         await bumpDay(userId, today, { seen: input.messages.length, dropped: input.messages.length });
         return { queued: 0, paused: true };
