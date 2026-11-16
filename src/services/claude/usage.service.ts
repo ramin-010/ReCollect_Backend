@@ -4,6 +4,7 @@
 // already running may finish past it.
 import type { AiFeature } from '@prisma/client';
 import { prisma, type DbClient } from '../../db/prisma';
+import { poke } from '../scheduler/scheduler';
 import { addDays, endOfMonth, resolveTimeZone, startOfDay, startOfMonth, today as todayIn } from '../learning';
 import { aiCapReached } from './errors';
 import { aiModel } from './client';
@@ -126,5 +127,6 @@ export async function setMonthlyCap(userId: string, capUsd: number, now: Date = 
         update: { monthlyCapUsd: cents.toFixed(2) },
         select: { userId: true },
     });
+    poke('buddy', 'capture'); // a raised cap may let the buddy work again (the quiet scheduler)
     return aiUsageFor(userId, now);
 }

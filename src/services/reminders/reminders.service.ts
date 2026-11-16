@@ -14,6 +14,7 @@ import type { Prisma, Reminder } from '@prisma/client';
 import { prisma, type DbClient } from '../../db/prisma';
 import { sendPersonalTaskReminderEmail } from '../../controllers/personalTasks/personalEmails';
 import { sendWorkspaceTaskReminderEmail } from '../../controllers/workspace/workspaceEmails';
+import { poke } from '../scheduler/scheduler';
 
 export const REMINDER_BATCH_SIZE = 50;
 
@@ -34,9 +35,12 @@ export interface CreateTodoReminderInput {
     title: string;
 }
 
-/** A pending, not-yet-emailed todo reminder. */
-export function createTodoReminder(input: CreateTodoReminderInput, db: DbClient = prisma): Promise<Reminder> {
-    return db.reminder.create({
+/**
+ * A pending, not-yet-emailed todo reminder. Every writer of a reminder pokes the quiet scheduler
+ * (hosting P1-11), which re-reads the next due one a moment later (after a caller's transaction).
+ */
+export async function createTodoReminder(input: CreateTodoReminderInput, db: DbClient = prisma): Promise<Reminder> {
+    const row = await db.reminder.create({
         data: {
             userId: input.userId,
             type: 'todo',
@@ -47,11 +51,32 @@ export function createTodoReminder(input: CreateTodoReminderInput, db: DbClient 
             status: 'pending',
         },
     });
+    poke('reminders');
+    return row;
 }
 
 /** Delete every reminder of a todo (before replacing it, or when the todo is deleted). */
-export function deleteTodoReminders(todoId: string, db: DbClient = prisma) {
-    return db.reminder.deleteMany({ where: { todoId } });
+export async function deleteTodoReminders(todoId: string, db: DbClient = prisma) {
+    const result = await db.reminder.deleteMany({ where: { todoId } });
+    if (result.count > 0) poke('reminders');
+    return result;
+}
+
+/**
+ * The quiet scheduler's next moment for reminder emails (hosting P1-11): the earliest pending one
+ * that needs an email (a phone that holds one rings it), or a stale claim's reset. None with
+ * REMINDER_EMAIL=off (the sweep marks the past ones).
+ */
+export async function nextReminderDue(_now: Date = new Date(), db: DbClient = prisma): Promise<Date | null> {
+    if (reminderEmailsOff()) return null;
+    const pending = await db.reminder.findFirst({
+        where: { status: 'pending', emailSent: false, phoneAt: null },
+        orderBy: { reminderDate: 'asc' },
+        select: { reminderDate: true },
+    });
+    const claimed = await db.reminder.findFirst({ where: { status: 'processing' }, orderBy: { updatedAt: 'asc' }, select: { updatedAt: true } });
+    const times = [pending?.reminderDate.getTime(), claimed ? claimed.updatedAt.getTime() + STALE_PROCESSING_MS : undefined].filter((t): t is number => t !== undefined);
+    return times.length ? new Date(Math.min(...times)) : null;
 }
 
 // ─── Cron ──────────────────────────────────────────────────────────────

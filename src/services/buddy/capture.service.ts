@@ -5,6 +5,7 @@
 //   queueWords   POST /api/buddy/words {sessionKey, seq, project?, office?, messages[≤ 50]}   sessions:write → 202
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../db/prisma';
+import { poke } from '../scheduler/scheduler';
 import type { DayString } from '../learning';
 import { badRequest } from '../learning/http';
 import { loadLearningContext, toDbDay } from '../learningDb/common';
@@ -94,5 +95,6 @@ export async function queueWords(userId: string, input: WordsInput, now: Date = 
         throw err;
     }
     await bumpDay(userId, today, { seen: messages.length, chunks: 1, secrets });
+    poke('capture'); // digested a few seconds from now (the quiet scheduler; poll mode: the next minute)
     return { queued: messages.length };
 }

@@ -12,6 +12,7 @@ import { markdownToDocJson } from '../../src/services/docs/markdown/docMarkdown'
 import { setAiClientForTests } from '../../src/services/claude/client';
 import { FALLBACK_BETA } from '../../src/services/recall/prompts';
 import { pollRecallBatches, submitNightlyRecallBatch } from '../../src/services/recall/batch.service';
+import { setActiveScheduler } from '../../src/services/scheduler/scheduler';
 import { api, createChainRows, createLearner, createSubjectRow, d } from '../helpers/learning';
 import { asAgent, createTestToken } from '../helpers/agent';
 import { DEFAULT_COST_USD, FakeClaude, erroredLine, fakeMessage, gradeOutput, sampleQuestions, succeededLine } from '../helpers/claude';
@@ -464,7 +465,12 @@ describe('the nightly Message Batch', () => {
         const capped = await dueTopic({ seenToday: true, title: 'Capped user' });
         await prisma.aiSettings.create({ data: { userId: capped.user.id, monthlyCapUsd: '0' } });
 
+        const pokes: string[] = [];
+        setActiveScheduler({ poke: (name) => void pokes.push(name) });
         const submitted = await submitNightlyRecallBatch();
+        setActiveScheduler(null);
+        // The quiet scheduler polls an open batch (hosting P1-11).
+        expect(pokes).toEqual(['recallPoll']);
         const expected = [a.rev.id, tomorrow.rev.id, overdueTwice.chain[0]!.id];
         expect(submitted.requests).toBe(3);
         const batch = fake.batches.get(submitted.batchId!)!;

@@ -6,12 +6,13 @@ import cron from 'node-cron';
 import type { BuddyChunk } from '@prisma/client';
 import { prisma } from '../../db/prisma';
 import { isAiConfigured } from '../claude/client';
-import { loadLearningContext, toDbDay } from '../learningDb/common';
+import { addDays, endOfMonth, startOfDay, type DayString } from '../learning';
+import { fromDbDay, loadLearningContext, toDbDay } from '../learningDb/common';
 import { bumpDay } from './capture.service';
 import { digestChunk } from './digest';
 import { buddyMaySpend } from './spend';
 import { runNight, type BuddyDayJson } from './think';
-import { pulseIfDue } from './pulse';
+import { PULSE_HOURS, pulseDue, pulseIfDue } from './pulse';
 import { chapterIfDue, yearIfDue } from './chapter';
 
 export const CHUNK_MAX_AGE_MS = 48 * 3600_000;
@@ -110,6 +111,53 @@ export async function nightIfDue(userId: string, now: Date = new Date(), opts: {
         if (!opts.fresh && tries < NIGHT_TRIES) await prisma.buddyState.updateMany({ where: { userId, lastNightDay: day }, data: { lastNightDay: null } });
         throw err;
     }
+}
+
+// ─── The next moments (the quiet scheduler, hosting P1-11) ──────────────────
+
+/** Waiting pieces (the AI down, a cap reached) are tried again this often while any wait. */
+export const CAPTURE_RETRY_MS = 15 * 60_000;
+
+/** The queue's next moment: none without pieces or without the AI; else a retry for the ones that wait. */
+export async function nextCaptureDue(now: Date = new Date()): Promise<Date | null> {
+    if (!isAiConfigured()) return null;
+    const waiting = await prisma.buddyChunk.findFirst({ select: { id: true } });
+    return waiting ? new Date(now.getTime() + CAPTURE_RETRY_MS) : null;
+}
+
+/** `hour`:00 on `day` in `tz`. */
+const atHour = (day: DayString, tz: string, hour: number) => new Date(startOfDay(day, tz).getTime() + hour * 3600_000);
+
+/**
+ * The buddy's next moment for one user: the night after 04:00 his time (once a day), then a pulse
+ * at 12:00 and 18:00 when something new arrived. A buddy that may not spend waits for a change
+ * (a poke from his settings) or, at a cap, for the next month; a buddy that is off has none.
+ */
+export async function nextBuddyMomentFor(userId: string, now: Date = new Date()): Promise<Date | null> {
+    const ctx = await loadLearningContext(userId, now);
+    const gate = await buddyMaySpend(userId, now);
+    if (gate === 'buddy_cap' || gate === 'account_cap') return atHour(addDays(endOfMonth(ctx.today), 1), ctx.tz, 0);
+    if (gate !== 'ok') return null;
+    const state = await prisma.buddyState.findUnique({ where: { userId }, select: { lastNightDay: true } });
+    const hour = hourIn(ctx.tz, now);
+    const nightDone = state?.lastNightDay && fromDbDay(state.lastNightDay) === ctx.today;
+    if (!nightDone) return hour >= NIGHT_HOUR ? now : atHour(ctx.today, ctx.tz, NIGHT_HOUR);
+    if ((await pulseDue(userId, now)).due) return now;
+    const pulseLater = PULSE_HOURS.find((h) => h > hour);
+    // Something new before the next pulse hour reaches the scheduler as a poke (a digest, a thumb).
+    return pulseLater !== undefined ? atHour(ctx.today, ctx.tz, pulseLater) : atHour(addDays(ctx.today, 1), ctx.tz, NIGHT_HOUR);
+}
+
+/** The earliest next moment over every user whose buddy is on. */
+export async function nextBuddyDue(now: Date = new Date()): Promise<Date | null> {
+    if (!isAiConfigured()) return null;
+    const users = await prisma.buddyState.findMany({ where: { enabled: true, paused: false }, select: { userId: true } });
+    let soonest: Date | null = null;
+    for (const { userId } of users) {
+        const at = await nextBuddyMomentFor(userId, now);
+        if (at && (!soonest || at < soonest)) soonest = at;
+    }
+    return soonest;
 }
 
 /** Every user whose buddy is on gets the night when it is due, and the pulses at 12:00 and 18:00 when something new arrived. */

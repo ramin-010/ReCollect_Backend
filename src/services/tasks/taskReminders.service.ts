@@ -12,6 +12,7 @@ import { badRequest, conflict, notFound } from '../learning/http';
 import { loadLearningContext } from '../learningDb/common';
 import { createTodoReminder } from '../reminders/reminders.service';
 import { createTask } from './tasks.service';
+import { poke } from '../scheduler/scheduler';
 
 const LIST_MAX = 50;
 const YEAR_MS = 366 * 86_400_000;
@@ -61,10 +62,11 @@ const zoneOf = async (userId: string) => (await prisma.user.findUnique({ where: 
 const SELECT = { id: true, todoId: true, reminderDate: true, status: true, todo: { select: { title: true } } } as const;
 
 /** GET /api/reminders: the ones still to come on his personal tasks, soonest first. */
-export async function listReminders(userId: string): Promise<ReminderJson[]> {
+export async function listReminders(userId: string, now: Date = new Date()): Promise<ReminderJson[]> {
     const tz = await zoneOf(userId);
     const rows = await prisma.reminder.findMany({
-        where: { userId, status: { in: ['pending', 'processing'] }, todo: { workspaceId: null } },
+        // A past one his phone held has rung there, though its row is marked sent only by the next pass.
+        where: { userId, status: { in: ['pending', 'processing'] }, todo: { workspaceId: null }, NOT: { phoneAt: { not: null }, reminderDate: { lte: now } } },
         select: SELECT,
         orderBy: [{ reminderDate: 'asc' }, { id: 'asc' }],
         take: LIST_MAX,
@@ -108,6 +110,7 @@ export async function cancelReminder(userId: string, id: string): Promise<Remind
     if (row.status !== 'pending') throw conflict(`That reminder is ${row.status === 'cancelled' ? 'already cancelled' : 'already sent'}`, 'NOT_PENDING');
     await prisma.reminder.update({ where: { id }, data: { status: 'cancelled' }, select: { id: true } });
     await prisma.todo.updateMany({ where: { id: row.todoId, reminderDate: row.reminderDate }, data: { reminderDate: null } });
+    poke('reminders');
     return json({ ...row, status: 'cancelled' }, await zoneOf(userId));
 }
 
@@ -118,6 +121,7 @@ export async function restoreReminder(userId: string, id: string, now: Date = ne
     if (row.reminderDate.getTime() <= now.getTime()) throw conflict("Can't undo: that reminder's time has passed", 'PASSED');
     await prisma.reminder.update({ where: { id }, data: { status: 'pending', emailSent: false, phoneAt: null }, select: { id: true } });
     await prisma.todo.updateMany({ where: { id: row.todoId }, data: { reminderDate: row.reminderDate } });
+    poke('reminders');
 }
 
 /** Undo of a set: the reminder is cancelled; a task made for it is deleted too. */
@@ -126,10 +130,12 @@ export async function unsetReminder(userId: string, id: string, createdTaskId: s
     if (!row) return;
     if (createdTaskId && createdTaskId === row.todoId) {
         await prisma.todo.deleteMany({ where: { id: createdTaskId, userId, workspaceId: null } });
+        poke('reminders');
         return;
     }
     if (row.status === 'pending') await prisma.reminder.update({ where: { id }, data: { status: 'cancelled' }, select: { id: true } });
     await prisma.todo.updateMany({ where: { id: row.todoId, reminderDate: row.reminderDate }, data: { reminderDate: null } });
+    poke('reminders');
 }
 
 /** The words for a reminder's time in his zone ("Sat 15 Nov, 19:00"). */

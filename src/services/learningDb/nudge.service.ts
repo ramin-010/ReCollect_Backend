@@ -10,7 +10,7 @@
 // account email. The link is FRONTEND_URL (the app URL the other emails use).
 import cron from 'node-cron';
 import { prisma } from '../../db/prisma';
-import { isDeliverableEmail, isNudgeDue, nudgeSubject, resolveTimeZone, revisionMinutes, today as todayIn, type GoalForecast } from '../learning';
+import { isDeliverableEmail, isNudgeDue, nextNudgeAt, nudgeSubject, resolveTimeZone, revisionMinutes, today as todayIn, type GoalForecast } from '../learning';
 import { sendMorningNudgeEmail, type MorningNudgeEmail } from '../../utils/emailService';
 import { contextOf, fromDbDayOrNull, learningUserSelect, toDbDay } from './common';
 import { forecastOf, goalInclude } from './goals.service';
@@ -130,6 +130,25 @@ export async function runMorningNudgePass(now: Date = new Date(), send: NudgeSen
         }
     }
     return result;
+}
+
+/** The quiet scheduler's next moment for the morning email (hosting P1-11): the soonest nudge time among those who get one. */
+export async function nextNudgeEmailDue(now: Date = new Date()): Promise<Date | null> {
+    const users = await prisma.user.findMany({
+        where: {
+            nudgeEmailEnabled: true,
+            isGhost: false,
+            OR: [{ revisions: { some: {} } }, { goals: { some: {} } }, { focusItems: { some: {} } }],
+        },
+        select: { email: true, reminderEmail: true, timezone: true, nudgeTime: true, lastNudgeDay: true },
+    });
+    let soonest: Date | null = null;
+    for (const u of users) {
+        if (!isDeliverableEmail(u.reminderEmail?.trim() || u.email)) continue;
+        const at = nextNudgeAt({ now, tz: resolveTimeZone(u.timezone), nudgeTime: u.nudgeTime, lastNudgeDay: fromDbDayOrNull(u.lastNudgeDay) });
+        if (!soonest || at < soonest) soonest = at;
+    }
+    return soonest;
 }
 
 let passRunning = false;

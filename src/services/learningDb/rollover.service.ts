@@ -309,6 +309,25 @@ export async function runLearningRolloverPass(now: Date = new Date()): Promise<{
     return { checked: users.length, rolledOver, failed };
 }
 
+/**
+ * The quiet scheduler's next moment for the rollover (hosting P1-11): now for anyone whose day
+ * already changed, else the soonest local midnight among the learners.
+ */
+export async function nextRolloverDue(now: Date = new Date()): Promise<Date | null> {
+    const users = await prisma.user.findMany({
+        where: { OR: [{ timeBlocks: { some: {} } }, { revisions: { some: {} } }] },
+        select: { timezone: true, learningRolledOverDay: true },
+    });
+    let soonest: Date | null = null;
+    for (const user of users) {
+        if (needsRollover(user, now)) return now;
+        const tz = resolveTimeZone(user.timezone);
+        const midnight = startOfDay(addDays(todayIn(tz, now), 1), tz);
+        if (!soonest || midnight < soonest) soonest = midnight;
+    }
+    return soonest;
+}
+
 let passRunning = false;
 
 /** Every 15 minutes (and once at boot): the learning rollover for users whose day changed. */

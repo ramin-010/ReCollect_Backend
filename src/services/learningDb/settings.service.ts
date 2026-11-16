@@ -3,6 +3,7 @@
 // are returned but never set through PATCH.
 import type { RoutineMode } from '@prisma/client';
 import { prisma } from '../../db/prisma';
+import { poke } from '../scheduler/scheduler';
 import { isValidTimeZone, minutesToTime, resolveTimeZone, timeToMinutes, today as todayIn, type DayString } from '../learning';
 import { LearningError } from '../learning/errors';
 import { serializeLearningSettings, type LearningSettingsJson } from '../../db/serializers/learning';
@@ -71,5 +72,8 @@ export async function updateLearningSettings(userId: string, input: LearningSett
         }
         return updated;
     });
+    // The quiet scheduler's per-user times (hosting P1-11): local midnight, the nudge, the buddy's hours.
+    if (input.timezone !== undefined) poke('rollover', 'nudge', 'buddy');
+    else if (input.nudgeTime !== undefined || input.nudgeEmailEnabled !== undefined) poke('nudge');
     return serializeLearningSettings(row);
 }

@@ -74,6 +74,12 @@ function getOrCreate(): AppPrismaClient {
 
 export const prisma: AppPrismaClient = getOrCreate();
 
+/** The pool behind the client: the awake meter (hosting P1-15) counts the queries it hands out. */
+export function pgPool(): Pool | undefined {
+    getOrCreate();
+    return globalForPrisma.__recollectPgPool;
+}
+
 /** Close the client and its pool (tests, graceful shutdown). The next import creates a fresh one. */
 export async function disconnectPrisma(): Promise<void> {
     const client = globalForPrisma.__recollectPrisma;

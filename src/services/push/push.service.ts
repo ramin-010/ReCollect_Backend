@@ -5,9 +5,10 @@
 import { prisma } from '../../db/prisma';
 import { currentLine } from '../buddy/voice';
 import { buddySettings } from '../buddy/state.service';
-import { isNudgeDue, resolveTimeZone, today as todayIn } from '../learning';
+import { isNudgeDue, nextNudgeAt, resolveTimeZone, today as todayIn } from '../learning';
 import { fromDbDayOrNull, toDbDay } from '../learningDb/common';
 import { buildMorningNudge } from '../learningDb/nudge.service';
+import { poke } from '../scheduler/scheduler';
 
 // web-push 3.6.7 (MPL-2.0): no types shipped; the three calls we use.
 interface WebPush {
@@ -49,7 +50,23 @@ export async function saveSubscription(userId: string, sub: PushSubscriptionInpu
         create: { userId, endpoint: sub.endpoint, p256dh: sub.keys.p256dh, auth: sub.keys.auth },
         update: { userId, p256dh: sub.keys.p256dh, auth: sub.keys.auth },
     });
+    poke('nudge'); // a morning notification may now be due for him (the quiet scheduler)
     return { saved: true };
+}
+
+/** The quiet scheduler's next moment for the morning notification (hosting P1-11): the soonest nudge time among subscribers. */
+export async function nextMorningPushDue(now: Date = new Date()): Promise<Date | null> {
+    if (!vapidPublicKey()) return null;
+    const users = await prisma.user.findMany({
+        where: { isGhost: false, pushSubscriptions: { some: {} } },
+        select: { timezone: true, nudgeTime: true, lastPushDay: true },
+    });
+    let soonest: Date | null = null;
+    for (const u of users) {
+        const at = nextNudgeAt({ now, tz: resolveTimeZone(u.timezone), nudgeTime: u.nudgeTime, lastNudgeDay: fromDbDayOrNull(u.lastPushDay) });
+        if (!soonest || at < soonest) soonest = at;
+    }
+    return soonest;
 }
 
 export async function removeSubscription(userId: string, endpoint: string): Promise<{ removed: number }> {

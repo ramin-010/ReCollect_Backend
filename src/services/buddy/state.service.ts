@@ -6,6 +6,7 @@
 //   PATCH /api/buddy/settings   updateBuddySettings   (cookie only)
 import type { BuddyState, Prisma } from '@prisma/client';
 import { prisma } from '../../db/prisma';
+import { poke } from '../scheduler/scheduler';
 import { badRequest } from '../learning/http';
 import { fromDbDayOrNull } from '../learningDb/common';
 import type { DayString } from '../learning';
@@ -82,5 +83,6 @@ export async function updateBuddySettings(userId: string, patch: BuddySettingsPa
         create: { ...(data as Prisma.BuddyStateUncheckedCreateInput), userId },
         update: data,
     });
+    poke('buddy', 'capture'); // on, off, paused or a new cap: what the buddy may do now (hosting P1-11)
     return serializeBuddyState(row);
 }

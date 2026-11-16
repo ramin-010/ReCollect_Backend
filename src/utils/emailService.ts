@@ -363,3 +363,44 @@ export const sendMorningNudgeEmail = async (to: { name: string; email: string },
     return false;
   }
 };
+
+// ─── The database's awake time (hosting P1-15) ──────────────────────────────
+
+export interface AwakeAlertEmail {
+  alert: '60' | '80' | '90' | 'pace';
+  month: string;
+  hours: number;
+  allowanceHours: number;
+  percent: number;
+  projectedHours: number;
+}
+
+/** The subject and plain text of an awake-time alert (to OWNER_EMAIL). */
+export function awakeAlertText(info: AwakeAlertEmail): { subject: string; text: string } {
+  const subject = info.alert === 'pace'
+    ? `Recollect's database: on pace for ${info.projectedHours} of ${info.allowanceHours} free hours this month`
+    : `Recollect's database: ${info.alert}% of this month's free hours used`;
+  const text = [
+    `${info.month}: the database has been awake about ${info.hours} h of the ${info.allowanceHours} h the free plan allows (${info.percent}%).`,
+    `At this pace the month ends near ${info.projectedHours} h. When the hours run out, Neon suspends the database until next month.`,
+    `Neon's console has the exact figure. To slow it down: a longer phone refresh or sweep, the paid plan for the rest of the month, or the database on the server.`,
+  ].join('\n\n');
+  return { subject, text };
+}
+
+export const sendAwakeAlertEmail = async (to: string, info: AwakeAlertEmail): Promise<boolean> => {
+  try {
+    const transporter = createTransporter();
+    const { subject, text } = awakeAlertText(info);
+    await transporter.sendMail({
+      from: `"ReCollect" <${process.env.EMAIL_FROM || 'noreply@recollect.com'}>`,
+      to,
+      subject,
+      text,
+    });
+    return true;
+  } catch (error) {
+    console.error('Failed to send the awake-time alert:', error instanceof Error ? error.message : String(error));
+    return false;
+  }
+};

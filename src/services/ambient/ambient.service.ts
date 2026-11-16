@@ -10,6 +10,7 @@ import { dayOf } from '../learning/time';
 import path from 'node:path';
 import { svgToPng } from '../docs/diagram/png';
 import { prisma } from '../../db/prisma';
+import { poke } from '../scheduler/scheduler';
 import { drawLock, drawWallpaper, kindWords } from './wallpaperArt';
 
 export type AmbientState = 'morning' | 'working' | 'evening' | 'done' | 'rest';
@@ -284,6 +285,7 @@ export async function markPhoneHeld(userId: string, ids: readonly string[], now:
         where: { id: { in: [...ids] }, userId, status: 'pending', reminderDate: { gt: now }, todo: { is: { workspaceId: null } } },
         data: { phoneAt: now },
     });
+    if (count > 0) poke('reminders'); // the phone has them: no email, so the next due one may be later
     return { held: count };
 }
 

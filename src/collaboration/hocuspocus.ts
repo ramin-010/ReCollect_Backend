@@ -1,3 +1,5 @@
+import type { IncomingMessage, Server as HttpServer } from 'node:http';
+import type { Duplex } from 'node:stream';
 import { Server } from '@hocuspocus/server';
 import jwt from 'jsonwebtoken';
 import dotenv from 'dotenv';
@@ -201,6 +203,9 @@ export const hocuspocusServer = new Server({
   port: parseInt(process.env.COLLAB_PORT || '1234'),
   debounce: 2000,
   maxDebounce: 10000,
+  // The server's own shutdown (src/lifecycle/shutdown.ts, hosting P1-2) stores the live documents;
+  // Hocuspocus's signal handlers (set by its listen()) would race it.
+  stopOnSignals: false,
   
   async onAuthenticate({ token, documentName, request, connectionConfig }) {
     // CSWSH Protection: Validate Origin header before any auth logic.
@@ -323,7 +328,48 @@ export const hocuspocusServer = new Server({
   },
 });
 
+/** COLLAB_ATTACH=1 (production, hosting P1-1): live editing shares the API's listener at /collab. */
+export const collabAttached = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|true|on|yes)$/i.test(env['COLLAB_ATTACH']?.trim() ?? '');
+
+/** The path live editing answers on when attached (the frontend's NEXT_PUBLIC_COLLAB_URL ends with it). */
+export const COLLAB_PATH = '/collab';
+
+/**
+ * Hosting P1-1: WebSocket upgrades on the API's own server. `/collab` (any query: share links add
+ * ?shareToken=) goes to Hocuspocus's WebSocket server, exactly as its own server hands one over
+ * (@hocuspocus/server 3.4.3, Server.ts setupHttpUpgrade); any other path is refused. Hocuspocus's
+ * `address` option is never relied on (its listen() passes it where Node expects `host`).
+ */
+export function attachCollaborationServer(server: HttpServer): void {
+  server.on('upgrade', (request: IncomingMessage, socket: Duplex, head: Buffer) => {
+    let path = '';
+    try {
+      path = new URL(request.url ?? '', 'http://localhost').pathname.replace(/\/+$/, '');
+    } catch {
+      path = '';
+    }
+    if (path !== COLLAB_PATH) {
+      socket.destroy();
+      return;
+    }
+    const wss = hocuspocusServer.webSocketServer;
+    hocuspocusServer.hocuspocus
+      .hooks('onUpgrade', { request, socket, head, instance: hocuspocusServer.hocuspocus })
+      .then(() => {
+        wss.handleUpgrade(request, socket, head, (ws: unknown) => {
+          wss.emit('connection', ws, request);
+        });
+      })
+      .catch(() => socket.destroy());
+  });
+}
+
+/** Standalone (dev and tests): Hocuspocus's own listener on COLLAB_PORT (1234). Attached: nothing to start. */
 export function startCollaborationServer() {
+  if (collabAttached()) {
+    console.log(`🔄 Collaboration attached to the API at ${COLLAB_PATH} (COLLAB_ATTACH=1)`);
+    return;
+  }
   hocuspocusServer.listen();
   console.log(`🔄 Collaboration server running on ws://localhost:${process.env.COLLAB_PORT || '1234'}`);
 }

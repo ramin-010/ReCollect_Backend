@@ -1,5 +1,5 @@
 
-export { startCollaborationServer, registerDocumentHandler } from './hocuspocus';
+export { attachCollaborationServer, collabAttached, COLLAB_PATH, hocuspocusServer, startCollaborationServer, registerDocumentHandler } from './hocuspocus';
 export type { DocumentHandler, CollabAccess, CollabUser, CollabDocument } from './hocuspocus';
 
 import { registerDocHandler } from './docHandler';

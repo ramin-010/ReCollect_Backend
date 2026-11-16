@@ -15,6 +15,7 @@ import cron from 'node-cron';
 import Anthropic from '@anthropic-ai/sdk';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../../db/prisma';
+import { poke } from '../scheduler/scheduler';
 import { addDays, resolveTimeZone, today as todayIn } from '../learning';
 import { fromDbDay, toDbDay } from '../learningDb/common';
 import { aiModel, getAiClient, isAiConfigured, type BatchRequest, type BatchResultLine } from '../claude/client';
@@ -127,6 +128,7 @@ export async function submitNightlyRecallBatch(now: Date = new Date()): Promise<
         await client.cancelBatch(batch.id).catch((e: unknown) => console.error(`[recall] cancelling batch ${batch.id} failed: ${e instanceof Error ? e.message : String(e)}`));
         throw err;
     }
+    poke('recallPoll'); // a batch is open: the quiet scheduler polls it every 10 minutes until it ends
     return { batchId: batch.id, requests: planned.length };
 }
 
@@ -235,9 +237,32 @@ export async function pollRecallBatches(now: Date = new Date()): Promise<{ open:
 let submitting = false;
 let polling = false;
 
+// ─── The quiet scheduler's moments (hosting P1-11) ───────────────────────────
+
+/** While a batch is open it is polled this often; with none open there is no poll at all. */
+export const RECALL_POLL_MS = 10 * 60_000;
+
+export async function nextRecallPollDue(now: Date = new Date()): Promise<Date | null> {
+    if (!isAiConfigured()) return null;
+    const open = await prisma.aiBatch.findFirst({ where: { endedAt: null }, select: { id: true } });
+    return open ? new Date(now.getTime() + RECALL_POLL_MS) : null;
+}
+
+/** RECALL_NIGHTLY_BATCH=off stops the nightly questions. */
+export const recallNightlyOn = (): boolean => process.env.RECALL_NIGHTLY_BATCH?.trim().toLowerCase() !== 'off';
+
+/** The next 02:30 on the server's clock (the cron's '30 2 * * *'); no query. */
+export function nextRecallNightly(now: Date = new Date()): Date | null {
+    if (!recallNightlyOn() || !isAiConfigured()) return null;
+    const at = new Date(now);
+    at.setHours(2, 30, 0, 0);
+    if (at <= now) at.setDate(at.getDate() + 1);
+    return at;
+}
+
 /** The two crons (src/index.ts). They do nothing while CLAUDE_API_KEY is missing. */
 export function startRecallCrons(): void {
-    const nightly = process.env.RECALL_NIGHTLY_BATCH?.trim().toLowerCase() !== 'off';
+    const nightly = recallNightlyOn();
     if (nightly) {
         cron.schedule('30 2 * * *', async () => {
             if (submitting || !isAiConfigured()) return;

@@ -7,6 +7,8 @@ import { handler, ok } from './learning/common';
 import { aiBadRequest, aiNotConfigured } from '../services/claude/errors';
 import { isAiConfigured } from '../services/claude/client';
 import { aiUsageFor, MAX_MONTHLY_CAP_USD, setMonthlyCap } from '../services/claude/usage.service';
+import { ownerEmail } from '../config/owner';
+import { awakeSummary } from '../services/scheduler/awake';
 import { answerRecall, finishRecall, startRecall } from '../services/recall/recall.service';
 
 /** Parse with zod; the first issue becomes a 400 INVALID_INPUT (AiHttpError). Also used by ./aiNotes.controller.ts. */
@@ -57,7 +59,12 @@ export const finish = handler(async (req, res) => {
 
 /** GET /api/ai/usage → AiUsage (this local month) */
 export const usage = handler(async (req, res) => {
-    ok(res, await aiUsageFor(requireUser(req).id));
+    const user = requireUser(req);
+    const usage = await aiUsageFor(user.id);
+    // The database's awake hours this month (hosting P1-15, quiet mode only), for the owner's eyes.
+    const owner = ownerEmail();
+    const awake = !owner || user.email.trim().toLowerCase() === owner ? awakeSummary() : null;
+    ok(res, awake ? { ...usage, awake } : usage);
 });
 
 const settingsSchema = z.object({ capUsd: z.number().finite().min(0).max(MAX_MONTHLY_CAP_USD) });

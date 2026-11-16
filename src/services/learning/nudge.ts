@@ -4,7 +4,7 @@
  *
  * Tone (recollect/PRODUCT.md): calm, plain, the next small step. Never guilt.
  */
-import { dayOf, isValidTime, minutesOfDay, timeToMinutes, type DayString } from './time';
+import { addDays, dayOf, isValidTime, minutesOfDay, startOfDay, timeToMinutes, type DayString } from './time';
 import type { PlanMode } from './plan';
 
 export const DEFAULT_NUDGE_TIME = '08:30';
@@ -23,6 +23,19 @@ export function isNudgeDue(input: NudgeDueInput): boolean {
   if (input.lastNudgeDay === today) return false;
   const time = isValidTime(input.nudgeTime) ? input.nudgeTime : DEFAULT_NUDGE_TIME;
   return minutesOfDay(input.now, input.tz) >= timeToMinutes(time);
+}
+
+/**
+ * When the nudge is next due (the quiet scheduler, hosting P1-11): `now` when isNudgeDue, else
+ * today's nudge time when it is still ahead, else tomorrow's.
+ */
+export function nextNudgeAt(input: NudgeDueInput): Date {
+  if (isNudgeDue(input)) return input.now;
+  const today = dayOf(input.now, input.tz);
+  const minutes = timeToMinutes(isValidTime(input.nudgeTime) ? input.nudgeTime : DEFAULT_NUDGE_TIME);
+  const at = (day: DayString) => new Date(startOfDay(day, input.tz).getTime() + minutes * 60_000);
+  const todays = at(today);
+  return input.lastNudgeDay !== today && todays > input.now ? todays : at(addDays(today, 1));
 }
 
 export interface NudgeSubjectInput {

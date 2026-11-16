@@ -44,25 +44,49 @@ const zPulse = z.object({ lines: z.array(z.object({ slot: z.enum(SLOTS), text: z
 
 const hourIn = (tz: string, at: Date) => Number(new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour: '2-digit', hour12: false }).format(at)) % 24;
 
-/** A pulse for one user when one is due (12:00 and 18:00) and something new arrived; null otherwise. */
-export async function pulseIfDue(userId: string, now: Date = new Date()): Promise<{ ran: boolean; reason: string; costUsd?: number }> {
+/** The hours a pulse may run, his time: 12:00 (the afternoon and evening lines) and 18:00 (the evening's). */
+export const PULSE_HOURS = [12, 18] as const;
+
+type StepRow = Awaited<ReturnType<typeof prisma.buddyDay.findMany>>[number];
+export type PulseDue =
+    | { due: false; reason: string }
+    | {
+          due: true;
+          ctx: Awaited<ReturnType<typeof loadLearningContext>>;
+          steps: StepRow[];
+          slots: Slot[];
+          last: StepRow;
+          notes: Awaited<ReturnType<typeof prisma.observation.findMany>>;
+          thumbs: Awaited<ReturnType<typeof prisma.buddyFeedback.findMany>>;
+      };
+
+/** Whether a pulse is due for this user now: noon or later, a night today, a slot not pulsed yet, and something new since. */
+export async function pulseDue(userId: string, now: Date = new Date()): Promise<PulseDue> {
     const ctx = await loadLearningContext(userId, now);
     const hour = hourIn(ctx.tz, now);
-    if (hour < 12) return { ran: false, reason: 'not yet noon' };
+    if (hour < PULSE_HOURS[0]) return { due: false, reason: 'not yet noon' };
     const steps = await prisma.buddyDay.findMany({ where: { userId, day: toDbDay(ctx.today) }, orderBy: { createdAt: 'asc' } });
     const night = steps.find((s) => s.kind === 'night');
-    if (!night) return { ran: false, reason: 'no night today' };
+    if (!night) return { due: false, reason: 'no night today' };
     const pulses = steps.filter((s) => s.kind === 'pulse');
     const ranAt = (h: number) => pulses.some((p) => hourIn(ctx.tz, p.createdAt) >= h);
     const slots: Slot[] = hour >= 18 ? (ranAt(18) ? [] : ['evening']) : ranAt(12) ? [] : ['afternoon', 'evening'];
-    if (!slots.length) return { ran: false, reason: 'already pulsed' };
+    if (!slots.length) return { due: false, reason: 'already pulsed' };
 
     const last = steps[steps.length - 1]!;
     const [notes, thumbs] = await Promise.all([
         prisma.observation.findMany({ where: { userId, createdAt: { gt: last.createdAt } }, orderBy: { createdAt: 'desc' }, take: 30 }),
         prisma.buddyFeedback.findMany({ where: { userId, createdAt: { gt: last.createdAt } } }),
     ]);
-    if (!notes.length && !thumbs.length) return { ran: false, reason: 'nothing new' };
+    if (!notes.length && !thumbs.length) return { due: false, reason: 'nothing new' };
+    return { due: true, ctx, steps, slots, last, notes, thumbs };
+}
+
+/** A pulse for one user when one is due (12:00 and 18:00) and something new arrived; null otherwise. */
+export async function pulseIfDue(userId: string, now: Date = new Date()): Promise<{ ran: boolean; reason: string; costUsd?: number }> {
+    const due = await pulseDue(userId, now);
+    if (!due.due) return { ran: false, reason: due.reason };
+    const { ctx, steps, slots, last, notes, thumbs } = due;
 
     const state = await prisma.buddyState.findUnique({ where: { userId } });
     const signals = await buddySignals(userId, now);

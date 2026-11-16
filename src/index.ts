@@ -7,55 +7,55 @@ import { refuseUnsafeProductionStart } from './config/productionCheck';
 refuseUnsafeProductionStart();
 
 import app from './app';
-import { startCronScheduler } from './services/cronScheduler';
-import { startOtpCleanupCron } from './services/auth/otp.service';
-import { startLearningCron } from './services/learningDb/rollover.service';
-import { startMorningNudgeCron } from './services/learningDb/nudge.service';
-import { startRecallCrons } from './services/recall/batch.service';
 import { startSearchTextPass } from './services/docs/docSearch.service';
-import { startTrashCron } from './services/docs/trash.service';
-import { startBuddyWorker } from './services/buddy/worker';
-import { initializeCollaboration, startCollaborationServer } from './collaboration';
+import { schedulerMode, startBackgroundJobs, stopBackgroundJobs } from './services/scheduler/jobs';
+import { flushAwakeMeter, startAwakeMeter } from './services/scheduler/awake';
+import { attachCollaborationServer, collabAttached, hocuspocusServer, initializeCollaboration, startCollaborationServer } from './collaboration';
+import { disconnectPrisma } from './db/prisma';
+import { installShutdown } from './lifecycle/shutdown';
 
 // All data lives in Postgres (Prisma). It connects lazily on the first query; see src/db/prisma.ts.
 if (!process.env.DATABASE_URL) {
     throw new Error('DATABASE_URL is missing (Postgres). Locally: `npm run db:start`, then set it in backend/.env.');
 }
 
-// Reminder emails: the cron polls Postgres every minute for due reminders.
-startCronScheduler();
+// The database's awake time (hosting P1-15): a hosted database that sleeps when idle (Neon) bills
+// the minutes it is awake. Counted from the pool's queries, kept in RECOLLECT_STATE_DIR. Quiet mode
+// only: in poll mode the database never sleeps (a query every minute), so there is nothing to watch.
+if (schedulerMode() === 'quiet') startAwakeMeter();
 
-// Postgres has no TTL index: delete expired OTPs periodically (the endpoints also reject expired
-// rows). Share links expired no more: a published doc's link lives until it is unpublished.
-startOtpCleanupCron();
-
-// Learning rollover: every 15 min (and once now) for users whose local day changed: streak settling,
-// and (routine on only) day slots, backfill, triage healing. Idempotent.
-startLearningCron();
-
-// Morning nudge email (daily loop v2): every 15 min, one digest per learner per local day, at or
-// after their nudgeTime. Idempotent (User.lastNudgeDay).
-startMorningNudgeCron();
-
-// Recall mode (Claude API): tomorrow's questions as one Message Batch at 02:30 server time, and a
-// poll every 10 min that stores ended batches. Both idle without CLAUDE_API_KEY;
-// RECALL_NIGHTLY_BATCH=off stops the nightly submission.
-startRecallCrons();
+// The background jobs (src/services/scheduler/jobs.ts), in SCHEDULER_MODE:
+//   poll (default): the crons as before: reminder emails every minute, expired sign-in codes every
+//     5 min, the learning rollover and the morning nudge every 15 min (the rollover also once now),
+//     the Recall batch at 02:30 and its poll every 10 min, the trash hourly, the buddy's queue every
+//     minute and its nights every 15 min.
+//   quiet (production on a database that sleeps): the same passes, run when something is due.
+startBackgroundJobs();
 
 // Doc search: once now, the words of every doc that has none (after the migration, an import, or
 // content saved since the last search). Each search also writes them for the searcher's docs.
 startSearchTextPass();
 
-// The trash: docs deleted 30 days ago are deleted for good (hourly).
-startTrashCron();
-// The buddy's capture queue: his typed words → the gate → the digest, every minute (BUDDY_MEMORY_PLAN §3.1).
-startBuddyWorker();
-
-const PORT = process.env.PORT
-app.listen(PORT, () => {
-    console.log(`Server runnin on : http://localhost:${PORT}`);
+// Hosting P1-1: HOST picks the interface (production: 127.0.0.1, behind the tunnel); unset, every
+// interface as before. COLLAB_ATTACH=1 serves live editing on this same listener at /collab; unset,
+// Hocuspocus keeps its own port (COLLAB_PORT, 1234), as the dev setup expects.
+const PORT = Number(process.env.PORT ?? 0); // unset: any free port, as before
+const HOST = process.env.HOST?.trim() || undefined;
+const onListening = () => {
+    console.log(`Server runnin on : http://${HOST ?? 'localhost'}:${PORT}`);
 
     // Initialize and start collaboration server for real-time editing
     initializeCollaboration();
     startCollaborationServer();
-})
+};
+const server = HOST ? app.listen(PORT, HOST, onListening) : app.listen(PORT, onListening);
+if (collabAttached()) attachCollaborationServer(server);
+
+// Hosting P1-2: SIGTERM / SIGINT stop accepting, end the jobs, store the live documents, close the pool.
+installShutdown({
+    server,
+    stopJobs: stopBackgroundJobs,
+    storeDocuments: () => hocuspocusServer.destroy(),
+    flushState: flushAwakeMeter,
+    closeDatabase: disconnectPrisma,
+});

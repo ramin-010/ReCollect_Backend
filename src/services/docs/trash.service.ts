@@ -78,19 +78,24 @@ export async function purgeTrash(now: Date = new Date()): Promise<number> {
     return deleted;
 }
 
+/** The hourly cron's work (poll mode), and part of the quiet scheduler's sweep (hosting P1-11). */
+export async function trashHousekeeping(): Promise<void> {
+    const deleted = await purgeTrash();
+    if (deleted > 0) console.log(`[trash] deleted ${deleted} doc(s) after ${TRASH_DAYS} days in the trash`);
+    // The manager's conversations go after 90 days without a message (the same hourly job).
+    const threads = await pruneThreads();
+    if (threads > 0) console.log(`[assistant] deleted ${threads} old conversation(s)`);
+    // Old agent edit logs and the snapshots only they needed (D5).
+    const pruned = await pruneAgentHistory();
+    if (pruned.edits + pruned.snapshots > 0) console.log(`[agent] pruned ${pruned.edits} old edit(s), ${pruned.snapshots} snapshot(s)`);
+    // Sign-in codes and refresh tokens that can't be used any more.
+    await pruneOAuth();
+}
+
 export function startTrashCron() {
     const task = cron.schedule('23 * * * *', async () => {
         try {
-            const deleted = await purgeTrash();
-            if (deleted > 0) console.log(`[trash] deleted ${deleted} doc(s) after ${TRASH_DAYS} days in the trash`);
-            // The manager's conversations go after 90 days without a message (the same hourly job).
-            const threads = await pruneThreads();
-            if (threads > 0) console.log(`[assistant] deleted ${threads} old conversation(s)`);
-            // Old agent edit logs and the snapshots only they needed (D5).
-            const pruned = await pruneAgentHistory();
-            if (pruned.edits + pruned.snapshots > 0) console.log(`[agent] pruned ${pruned.edits} old edit(s), ${pruned.snapshots} snapshot(s)`);
-            // Sign-in codes and refresh tokens that can't be used any more.
-            await pruneOAuth();
+            await trashHousekeeping();
         } catch (err) {
             console.error('[trash] purge failed:', err);
         }
