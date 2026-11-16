@@ -16,6 +16,9 @@ import { sendPersonalTaskReminderEmail } from '../../controllers/personalTasks/p
 import { sendWorkspaceTaskReminderEmail } from '../../controllers/workspace/workspaceEmails';
 
 export const REMINDER_BATCH_SIZE = 50;
+
+/** REMINDER_EMAIL=off: no reminder emails at all (his phone rings for them; app 0.5.0). Default: an email for any reminder no phone holds. */
+export const reminderEmailsOff = (): boolean => /^(off|0|false|no)$/i.test(process.env['REMINDER_EMAIL'] ?? '');
 export const STALE_PROCESSING_MS = 5 * 60 * 1000;
 
 /** The message stored with a todo reminder (unchanged). */
@@ -86,7 +89,8 @@ export async function resetStaleProcessingReminders(now: Date, db: DbClient = pr
 /** Ids of due reminders, oldest due first, at most `limit`. */
 export async function findDueReminderIds(now: Date, db: DbClient = prisma, limit = REMINDER_BATCH_SIZE): Promise<string[]> {
     const rows = await db.reminder.findMany({
-        where: { status: 'pending', emailSent: false, reminderDate: { lte: now } },
+        // A reminder his phone holds rings there (app 0.5.0): no email for it.
+        where: { status: 'pending', emailSent: false, reminderDate: { lte: now }, phoneAt: null },
         select: { id: true },
         orderBy: [{ reminderDate: 'asc' }, { id: 'asc' }],
         take: limit,
@@ -160,6 +164,13 @@ export async function processDueReminders(
     db: DbClient = prisma
 ): Promise<ReminderRunResult> {
     await resetStaleProcessingReminders(now, db);
+    // Past reminders his phone held rang there: done (lists show them sent).
+    await db.reminder.updateMany({ where: { status: 'pending', phoneAt: { not: null }, reminderDate: { lte: now } }, data: { status: 'sent' } });
+    if (reminderEmailsOff()) {
+        // No emails: a past reminder no phone held is marked failed, so turning emails on later sends no flood of old ones.
+        const { count } = await db.reminder.updateMany({ where: { status: 'pending', reminderDate: { lte: now } }, data: { status: 'failed' } });
+        return { due: count, sent: 0, failed: count, skipped: 0 };
+    }
 
     const dueIds = await findDueReminderIds(now, db);
     if (dueIds.length > 0) {

@@ -3,13 +3,14 @@
 // `ambient` token (ANDROID_APP_SPEC), which fetches the picture a few times a day.
 import os from 'node:os';
 import { requireUser } from '../middlwares/auth';
-import { dayBreakdown, dayNumbers, getAmbient, wallpaperPngWithSlot } from '../services/ambient/ambient.service';
+import { dayBreakdown, dayNumbers, getAmbient, markPhoneHeld, upcomingAlarms, wallpaperPngWithSlot } from '../services/ambient/ambient.service';
 import { pictureZoom } from '../services/ambient/wallpaperArt';
 import { phoneBuddy } from '../services/buddy/voice';
 import { WALLPAPER_STYLES } from '../services/ambient/wallpaperStyles';
 import { revokeApiToken } from '../services/apiTokens/apiTokens.service';
 import ErrorResponse from '../utils/errorResponse';
-import { handler, ok } from './learning/common';
+import { z } from 'zod';
+import { handler, ok, parse } from './learning/common';
 
 /**
  * GET /api/ambient/addresses (cookie only) -> [{ url, kind }]: where the phone app can reach this
@@ -42,9 +43,10 @@ const titlesFrom = (q: unknown) => q !== '0' && q !== 'false';
 export const ambientWidgetHandler = handler(async (req, res) => {
     const user = requireUser(req);
     const now = new Date();
-    const [ambient, buddy] = await Promise.all([getAmbient(user.id, now, { titles: titlesFrom(req.query.titles) }), phoneBuddy(user.id, now)]);
+    const titles = titlesFrom(req.query.titles);
+    const [ambient, buddy, alarms] = await Promise.all([getAmbient(user.id, now, { titles }), phoneBuddy(user.id, now), upcomingAlarms(user.id, now, titles !== false)]);
     const appUrl = process.env.FRONTEND_URL?.trim().replace(/\/+$/, '') || null;
-    ok(res, { ...ambient, numbers: dayNumbers(ambient), breakdown: dayBreakdown(ambient), buddy, appUrl, account: { name: user.name, email: user.email } });
+    ok(res, { ...ambient, numbers: dayNumbers(ambient), breakdown: dayBreakdown(ambient), buddy, alarms, appUrl, account: { name: user.name, email: user.email } });
 });
 
 /**
@@ -67,6 +69,12 @@ const size = (v: unknown, fallback: number, min: number, max: number) => {
 const word = (v: unknown) => (typeof v === 'string' && /^[a-z]{1,20}$/.test(v) ? v : undefined);
 
 /** GET /api/ambient/styles (the phone app's style picker): the styles and their colours, the sky first. */
+/** POST /api/ambient/reminders/scheduled {ids} (the phone app's token): the reminders it will ring for; no email goes for them (app 0.5.0). */
+export const ambientRemindersHeldHandler = handler(async (req, res) => {
+    const input = parse(z.object({ ids: z.array(z.string().trim().min(1).max(64)).max(50) }).strict(), req.body);
+    ok(res, await markPhoneHeld(requireUser(req).id, input.ids));
+});
+
 export const ambientStylesHandler = handler(async (_req, res) => {
     ok(res, WALLPAPER_STYLES);
 });

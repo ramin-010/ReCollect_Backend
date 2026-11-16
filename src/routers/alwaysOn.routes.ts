@@ -3,7 +3,7 @@
 import express, { RequestHandler } from 'express';
 import authMiddleware from '../middlwares/auth';
 import { cookieOnly, requireScope } from '../middlwares/scopes';
-import { ambientAddressesHandler, ambientDisconnectHandler, ambientStylesHandler, ambientWallpaperHandler, ambientWidgetHandler } from '../controllers/ambient.controller';
+import { ambientAddressesHandler, ambientDisconnectHandler, ambientRemindersHeldHandler, ambientStylesHandler, ambientWallpaperHandler, ambientWidgetHandler } from '../controllers/ambient.controller';
 import { pushStatusHandler, removePushSubscriptionHandler, savePushSubscriptionHandler, testPushHandler } from '../controllers/push.controller';
 
 const router = express.Router();
@@ -15,6 +15,8 @@ router.get('/ambient/wallpaper.png', auth, requireScope('read', 'ambient'), ambi
 router.get('/ambient/styles', auth, requireScope('read', 'ambient'), ambientStylesHandler);
 // The phone app's Disconnect ends its own token.
 router.post('/ambient/disconnect', auth, requireScope('ambient'), ambientDisconnectHandler);
+// App 0.5.0: the reminders the phone will ring for (no email for them).
+router.post('/ambient/reminders/scheduled', auth, requireScope('ambient'), ambientRemindersHeldHandler);
 // Settings → Phone app: where the phone can reach this server.
 router.get('/ambient/addresses', auth, cookieOnly, ambientAddressesHandler);
 

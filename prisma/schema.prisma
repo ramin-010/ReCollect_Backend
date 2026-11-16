@@ -617,6 +617,9 @@ model Reminder {
   todoId       String
   todo         Todo           @relation(fields: [todoId], references: [id], onDelete: Cascade)
   reminderDate DateTime
+  /// The phone app holds this reminder (app 0.5.0): it rings there at its time, so no email goes. A new
+  /// time is a new row (the writers delete and create), and an undone cancel clears it.
+  phoneAt      DateTime?
   message      String         @default("")
   emailSent    Boolean        @default(false)
   status       ReminderStatus @default(pending)

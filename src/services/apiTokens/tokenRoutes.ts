@@ -132,6 +132,7 @@ export const TOKEN_ROUTES: readonly TokenRoute[] = [
     route('GET', '/api/ambient/wallpaper.png', 'read', 'ambient'),
     route('GET', '/api/ambient/styles', 'read', 'ambient'),
     route('POST', '/api/ambient/disconnect', 'ambient'),
+    route('POST', '/api/ambient/reminders/scheduled', 'ambient'),
     // The buddy (BUDDY_MEMORY_PLAN §7): a note about Ramin, his memories, an agent's forget.
     route('POST', '/api/buddy/remember', 'sessions:write'),
     route('GET', '/api/buddy/memories', 'read'),
@@ -207,6 +208,7 @@ export const SELF_LOGGED: Readonly<Record<string, string>> = {
     'POST /api/suggestions': 'a pending suggestion is its own visible record (Home → Suggested, naming who proposed it): nothing changes until Ramin accepts it, and he can dismiss it',
     'POST /api/actions': 'a pending action is its own visible record (Home → Suggested, "Do it", naming who asked): nothing happens until Ramin taps it, and he can dismiss it',
     'POST /api/ambient/disconnect': "the phone app ends its own token and nothing else: Settings → Agents shows it as ended",
+    'POST /api/ambient/reminders/scheduled': "the phone app says which of Ramin's reminders it will ring for: no email goes for those; nothing else changes",
     'POST /api/buddy/remember': 'a memory is its own visible record (/you, naming the agent that saved it and its notes); Ramin edits, marks wrong or forgets any, and no agent can change one he touched',
     'POST /api/buddy/tell': "the phone app hands on Ramin's own words: a note for tonight he sees on /you, nothing changes by it",
     'POST /api/buddy/feedback': "the phone app hands on Ramin's thumb on a line: a signal for the next night, nothing changes by it",

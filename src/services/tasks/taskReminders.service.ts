@@ -116,7 +116,7 @@ export async function restoreReminder(userId: string, id: string, now: Date = ne
     const row = await prisma.reminder.findFirst({ where: { id, userId }, select: { status: true, reminderDate: true, todoId: true } });
     if (!row || row.status !== 'cancelled') throw conflict("Can't undo: that reminder has changed since", 'CHANGED');
     if (row.reminderDate.getTime() <= now.getTime()) throw conflict("Can't undo: that reminder's time has passed", 'PASSED');
-    await prisma.reminder.update({ where: { id }, data: { status: 'pending', emailSent: false }, select: { id: true } });
+    await prisma.reminder.update({ where: { id }, data: { status: 'pending', emailSent: false, phoneAt: null }, select: { id: true } });
     await prisma.todo.updateMany({ where: { id: row.todoId }, data: { reminderDate: row.reminderDate } });
 }
 

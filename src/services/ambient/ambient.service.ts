@@ -241,7 +241,50 @@ export async function todayReminders(userId: string, now: Date, tz: string, titl
     return rows
         .filter((r) => r.todo?.status !== 'complete' && dayOf(r.reminderDate, tz) === today)
         .slice(0, 3)
-        .map((r) => ({ at: clockWords(r.reminderDate, tz), text: titles ? (r.message?.trim() || r.todo?.title?.trim() || 'A reminder') : 'A reminder' }));
+        .map((r) => ({ at: clockWords(r.reminderDate, tz), text: titles ? reminderWords(r) : 'A reminder' }));
+}
+
+/** A reminder's words: its task's title (the stored message is "Reminder: <title>", and the picture and the phone say "reminder" already). */
+function reminderWords(r: { message: string | null; todo: { title: string | null } | null }): string {
+    return r.todo?.title?.trim() || r.message?.replace(/^\s*reminder:\s*/i, '').trim() || 'A reminder';
+}
+
+/** One reminder for the phone to ring (app 0.5.0). */
+export interface AmbientAlarm {
+    id: string;
+    /** ISO */
+    when: string;
+    text: string;
+}
+
+/** How far ahead the phone sets alarms: past the next refresh by a margin, so a day's reminders are held all day. */
+export const ALARM_HOURS = 26;
+
+/**
+ * His reminders still to come in the next 26 hours that the phone app rings for: his own (not a workspace task's, which emails
+ * its assignees), pending, a finished task's left out; 20 at most. With titles hidden, plain words.
+ */
+export async function upcomingAlarms(userId: string, now: Date, titles = true): Promise<AmbientAlarm[]> {
+    const rows = await prisma.reminder.findMany({
+        where: { userId, status: 'pending', reminderDate: { gt: now, lte: new Date(now.getTime() + ALARM_HOURS * 3600_000) }, todo: { is: { workspaceId: null } } },
+        include: { todo: { select: { title: true, status: true } } },
+        orderBy: { reminderDate: 'asc' },
+        take: 24,
+    });
+    return rows
+        .filter((r) => r.todo?.status !== 'complete')
+        .slice(0, 20)
+        .map((r) => ({ id: r.id, when: r.reminderDate.toISOString(), text: titles ? reminderWords(r) : 'A reminder' }));
+}
+
+/** The phone app holds these reminders (it set their alarms): no email goes for them. His own pending future ones only. */
+export async function markPhoneHeld(userId: string, ids: readonly string[], now: Date = new Date()): Promise<{ held: number }> {
+    if (!ids.length) return { held: 0 };
+    const { count } = await prisma.reminder.updateMany({
+        where: { id: { in: [...ids] }, userId, status: 'pending', reminderDate: { gt: now }, todo: { is: { workspaceId: null } } },
+        data: { phoneAt: now },
+    });
+    return { held: count };
 }
 
 export async function getAmbient(userId: string, now: Date = new Date(), options: AmbientOptions = {}): Promise<Ambient> {

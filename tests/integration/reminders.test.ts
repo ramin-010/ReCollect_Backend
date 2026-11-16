@@ -44,6 +44,29 @@ describe('processDueReminders', () => {
         expect(mailsTo(owner.email)).toHaveLength(1);
     });
 
+    it('app 0.5.0: no email for a reminder his phone holds (marked sent once past); REMINDER_EMAIL=off sends none and marks the rest failed', async () => {
+        const owner = await createTestUser();
+        const held = await createTodoReminder({ userId: owner.id, todoId: (await prisma.todo.create({ data: { userId: owner.id, title: 'Call the bank' } })).id, reminderDate: past(), title: 'Call the bank' });
+        await prisma.reminder.update({ where: { id: held.id }, data: { phoneAt: new Date(Date.now() - 3600_000) } });
+        const plain = await createTodoReminder({ userId: owner.id, todoId: (await prisma.todo.create({ data: { userId: owner.id, title: 'Pay the rent' } })).id, reminderDate: past(), title: 'Pay the rent' });
+
+        expect(await processDueReminders(new Date())).toEqual({ due: 1, sent: 1, failed: 0, skipped: 0 });
+        expect(mailsTo(owner.email).map((m) => m.subject)).toEqual(['Task Due: Pay the rent']);
+        expect(await prisma.reminder.findUniqueOrThrow({ where: { id: held.id } })).toMatchObject({ status: 'sent', emailSent: false });
+        expect(await prisma.reminder.findUniqueOrThrow({ where: { id: plain.id } })).toMatchObject({ status: 'sent', emailSent: true });
+
+        // Emails off: nothing goes; a past reminder no phone held is marked failed (no flood if emails come back on).
+        const later = await createTodoReminder({ userId: owner.id, todoId: (await prisma.todo.create({ data: { userId: owner.id, title: 'Water the plants' } })).id, reminderDate: past(), title: 'Water the plants' });
+        process.env.REMINDER_EMAIL = 'off';
+        try {
+            expect(await processDueReminders(new Date())).toEqual({ due: 1, sent: 0, failed: 1, skipped: 0 });
+        } finally {
+            delete process.env.REMINDER_EMAIL;
+        }
+        expect(mailsTo(owner.email)).toHaveLength(1);
+        expect((await prisma.reminder.findUniqueOrThrow({ where: { id: later.id } })).status).toBe('failed');
+    });
+
     it('emails every assignee instead of the owner', async () => {
         const owner = await createTestUser();
         const a = await createTestUser();

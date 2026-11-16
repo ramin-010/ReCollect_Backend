@@ -7,6 +7,7 @@ import request from 'supertest';
 import { describe, expect, it, vi } from 'vitest';
 import app from '../../src/app';
 import { prisma } from '../../src/db/prisma';
+import { createTodoReminder } from '../../src/services/reminders/reminders.service';
 import { authCookie, createTestUser } from '../helpers/auth';
 import { api } from '../helpers/learning';
 import { asAgent, createTestToken } from '../helpers/agent';
@@ -82,6 +83,40 @@ describe('the ambient phone (6.6)', () => {
         const list = await request(app).get('/api/ambient/addresses').set('Cookie', authCookie(user));
         expect(list.body.data[list.body.data.length - 1]).toMatchObject({ kind: 'usb' });
         expect((await bearer('/api/ambient/addresses')).status).toBe(403);
+    });
+
+    it("reminders ring on the phone (app 0.5.0): the widget lists his own to come; the phone says which it holds (its own token, his own reminders only)", async () => {
+        const user = await createTestUser();
+        const phone = (await createTestToken(user, ['ambient'], 'Phone app')).token;
+        const get = (path: string) => request(app).get(path).set('Authorization', `Bearer ${phone}`);
+        const inMin = (m: number) => new Date(Date.now() + m * 60_000);
+        const todo = (title: string, over: Record<string, unknown> = {}) => prisma.todo.create({ data: { userId: user.id, title, ...over } });
+        const mine = await createTodoReminder({ userId: user.id, todoId: (await todo('Call the bank')).id, reminderDate: inMin(30), title: 'Call the bank' });
+        await createTodoReminder({ userId: user.id, todoId: (await todo('Done already', { status: 'complete' })).id, reminderDate: inMin(40), title: 'Done already' });
+        await createTodoReminder({ userId: user.id, todoId: (await todo('Too far ahead')).id, reminderDate: inMin(27 * 60), title: 'Too far ahead' });
+        // A workspace task's reminder emails its assignees: never on his phone.
+        const ws = await prisma.workspace.create({ data: { name: 'Team', ownerId: user.id } });
+        const shared = await createTodoReminder({ userId: user.id, todoId: (await todo('Team standup notes', { workspaceId: ws.id })).id, reminderDate: inMin(35), title: 'Team standup notes' });
+
+        const widget = (await get('/api/ambient/widget')).body.data;
+        expect(widget.alarms).toEqual([{ id: mine.id, when: mine.reminderDate.toISOString(), text: 'Call the bank' }]);
+        // The home picture's reminder says the task's words, not the stored "Reminder: ...".
+        expect(widget.reminders?.[0]?.text ?? 'Call the bank').toBe('Call the bank');
+        expect((await get('/api/ambient/widget?titles=0')).body.data.alarms).toEqual([{ id: mine.id, when: mine.reminderDate.toISOString(), text: 'A reminder' }]);
+
+        // The phone holds it: only his own pending future reminders of his own tasks are marked.
+        const other = await createTestUser();
+        const theirs = await createTodoReminder({ userId: other.id, todoId: (await prisma.todo.create({ data: { userId: other.id, title: 'Theirs' } })).id, reminderDate: inMin(30), title: 'Theirs' });
+        const held = await request(app).post('/api/ambient/reminders/scheduled').set('Authorization', `Bearer ${phone}`).send({ ids: [mine.id, theirs.id, shared.id] });
+        expect(held.status).toBe(200);
+        expect(held.body.data).toEqual({ held: 1 });
+        expect((await prisma.reminder.findUniqueOrThrow({ where: { id: mine.id } })).phoneAt).toBeInstanceOf(Date);
+        expect((await prisma.reminder.findUniqueOrThrow({ where: { id: theirs.id } })).phoneAt).toBeNull();
+        expect((await prisma.reminder.findUniqueOrThrow({ where: { id: shared.id } })).phoneAt).toBeNull();
+        // Only the phone's own kind of token (ambient) says it; a reader token may not.
+        const reader = (await createTestToken(user, ['read'])).token;
+        expect((await request(app).post('/api/ambient/reminders/scheduled').set('Authorization', `Bearer ${reader}`).send({ ids: [mine.id] })).status).toBe(403);
+        expect((await request(app).post('/api/ambient/reminders/scheduled').set('Authorization', `Bearer ${phone}`).send({ ids: 'x' })).status).toBe(400);
     });
 
     it("the app's Disconnect ends its own token; nothing else can call it", async () => {
