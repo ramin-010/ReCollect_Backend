@@ -44,7 +44,7 @@ const zWrite = z
         cleared: z.array(z.string().trim().min(1).max(400)).max(50).optional(),
         topicStatus: z.enum(['planned', 'in_progress', 'done', 'skipped']).optional(),
         source: z.enum(['agent', 'hook']).optional(),
-        /** What the chat learned about Ramin (the buddy, BUDDY_MEMORY_PLAN §3.1 B): at most 3 notes. */
+        /** What the chat learned about the user (the buddy, BUDDY_MEMORY_PLAN §3.1 B): at most 3 notes. */
         learned: z.array(zLearnedNote).max(LEARNED_PER_WRITE).optional(),
     })
     .strict();

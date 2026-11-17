@@ -95,12 +95,12 @@ export const TOKEN_ROUTES: readonly TokenRoute[] = [
     route('PUT', '/api/sessions/by-key/:key', 'sessions:write'),
     route('GET', '/api/sessions', 'read'),
     route('GET', '/api/projects', 'read'),
-    route('GET', '/api/brief', 'read'), // the brief: where Ramin stands (SYNC_SPINE_SPEC 1.3)
+    route('GET', '/api/brief', 'read'), // the brief: where the user stands (SYNC_SPINE_SPEC 1.3)
 
     // The week and suggestions (LOOP_COMPLETE_SPEC 1.6): agents read and set targets, and propose;
-    // only Ramin accepts (the accept / dismiss / decide routes are not listed).
+    // only the user accepts (the accept / dismiss / decide routes are not listed).
     route('GET', '/api/week', 'read'),
-    route('GET', '/api/mirror', 'read'), // where Ramin stands, per goal and subject (1.7)
+    route('GET', '/api/mirror', 'read'), // where the user stands, per goal and subject (1.7)
     // Personal tasks (4.1): never workspace tasks, attachments or a delete.
     route('GET', '/api/tasks', 'read'),
     route('POST', '/api/tasks', 'tasks:write'),
@@ -133,7 +133,7 @@ export const TOKEN_ROUTES: readonly TokenRoute[] = [
     route('GET', '/api/ambient/styles', 'read', 'ambient'),
     route('POST', '/api/ambient/disconnect', 'ambient'),
     route('POST', '/api/ambient/reminders/scheduled', 'ambient'),
-    // The buddy (BUDDY_MEMORY_PLAN §7): a note about Ramin, his memories, an agent's forget.
+    // The buddy (BUDDY_MEMORY_PLAN §7): a note about the user, his memories, an agent's forget.
     route('POST', '/api/buddy/remember', 'sessions:write'),
     route('GET', '/api/buddy/memories', 'read'),
     route('POST', '/api/buddy/memories/:id/close', 'sessions:write'),
@@ -204,16 +204,16 @@ export const LOGGED: Readonly<Record<string, AgentEditKind>> = {
 export const SELF_LOGGED: Readonly<Record<string, string>> = {
     'POST /api/canvas/layout': 'stateless: lays a board out and stores nothing',
     'POST /api/canvas/render': 'stateless: draws a board as SVG or PNG and stores nothing',
-    'PUT /api/sessions/by-key/:key': 'the session list is its own log (each entry names its writer; Ramin edits or deletes any); a topic change it asks for is logged as topic_update',
-    'POST /api/suggestions': 'a pending suggestion is its own visible record (Home → Suggested, naming who proposed it): nothing changes until Ramin accepts it, and he can dismiss it',
-    'POST /api/actions': 'a pending action is its own visible record (Home → Suggested, "Do it", naming who asked): nothing happens until Ramin taps it, and he can dismiss it',
+    'PUT /api/sessions/by-key/:key': 'the session list is its own log (each entry names its writer; the user edits or deletes any); a topic change it asks for is logged as topic_update',
+    'POST /api/suggestions': 'a pending suggestion is its own visible record (Home → Suggested, naming who proposed it): nothing changes until the user accepts it, and he can dismiss it',
+    'POST /api/actions': 'a pending action is its own visible record (Home → Suggested, "Do it", naming who asked): nothing happens until the user taps it, and he can dismiss it',
     'POST /api/ambient/disconnect': "the phone app ends its own token and nothing else: Settings → Agents shows it as ended",
-    'POST /api/ambient/reminders/scheduled': "the phone app says which of Ramin's reminders it will ring for: no email goes for those; nothing else changes",
-    'POST /api/buddy/remember': 'a memory is its own visible record (/you, naming the agent that saved it and its notes); Ramin edits, marks wrong or forgets any, and no agent can change one he touched',
-    'POST /api/buddy/tell': "the phone app hands on Ramin's own words: a note for tonight he sees on /you, nothing changes by it",
-    'POST /api/buddy/feedback': "the phone app hands on Ramin's thumb on a line: a signal for the next night, nothing changes by it",
+    'POST /api/ambient/reminders/scheduled': "the phone app says which of the user's reminders it will ring for: no email goes for those; nothing else changes",
+    'POST /api/buddy/remember': 'a memory is its own visible record (/you, naming the agent that saved it and its notes); the user edits, marks wrong or forgets any, and no agent can change one he touched',
+    'POST /api/buddy/tell': "the phone app hands on the user's own words: a note for tonight he sees on /you, nothing changes by it",
+    'POST /api/buddy/feedback': "the phone app hands on the user's thumb on a line: a signal for the next night, nothing changes by it",
     'POST /api/buddy/words': 'the hooks queue his own typed words for the buddy: scrubbed, digested into notes he sees on /you and suggestions he decides on, then deleted; nothing in the app changes by it',
-    'POST /api/buddy/work': "an agent logs a day's work on Ramin's word: the lines are their own visible record (/you › Your work, each removable and never written again once removed); nothing else changes",
+    'POST /api/buddy/work': "an agent logs a day's work on the user's word: the lines are their own visible record (/you › Your work, each removable and never written again once removed); nothing else changes",
 };
 
 /** The path of a URL without its query string. */

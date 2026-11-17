@@ -1,7 +1,7 @@
 // The trash (MANAGER_AND_DOCS_PLAN §3.2): a deleted doc waits TRASH_DAYS before it is gone for good.
 // Moving a doc to the trash and restoring it are its owner's (someone it is shared with leaves it
 // instead); for agents both are logged and undoable. Emptying the trash is permanent: in the app it
-// asks first, and for agents and the manager it is an action that needs Ramin's tap
+// asks first, and for agents and the manager it is an action that needs the user's tap
 // (../actions/actions.service.ts). A trashed doc is out of the library's lists and out of search;
 // its page still opens, saying it is in the trash. Raw SQL for trashedAt, so updatedAt stays: a
 // restored doc sorts where it was.

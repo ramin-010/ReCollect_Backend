@@ -93,7 +93,7 @@ describe('Tidy up reads the board in its arrows’ order', () => {
 describe('the canvas tools (POST /api/canvas/layout and /render)', () => {
     it('tidyBoard keeps every id, zone, parent and box size, and lays the board out again with routes', async () => {
         const board = await laid(fixture('url-shortener'));
-        // As Ramin left it: boxes dragged about, one resized, the routes gone.
+        // As the user left it: boxes dragged about, one resized, the routes gone.
         const messy: Board = {
             nodes: board.nodes.map((n, i) => ({ ...n, x: n.x + (i % 3) * 37, y: n.y + (i % 2) * 51, ...(n.id === 'db' ? { w: 260, h: 120 } : {}) })),
             edges: board.edges.map(({ route: _route, ...e }) => ({ ...e, path: 'straight' as const })),

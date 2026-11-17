@@ -1,4 +1,4 @@
-// Tasks, light (LOOP_COMPLETE_SPEC 4.1): agents list, add and change Ramin's **personal** tasks
+// Tasks, light (LOOP_COMPLETE_SPEC 4.1): agents list, add and change the user's **personal** tasks
 // (never workspace tasks, never attachments, never a delete). The app keeps its own /api/todos.
 //
 //   listTasks   GET   /api/tasks?due=today|week|overdue|all   read

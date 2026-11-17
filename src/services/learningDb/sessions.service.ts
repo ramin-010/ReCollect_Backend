@@ -10,7 +10,7 @@
 //   listProjects / updateProject   GET /api/projects · PATCH /api/projects/:id
 //
 // Session writes are not AgentEdit rows: the list is their log (each row says who wrote it, and
-// Ramin can change or delete any). A topic change a token's session asks for goes through the path
+// the user can change or delete any). A topic change a token's session asks for goes through the path
 // update and IS logged (topic_update, undoable), only when it changes something.
 import { randomInt } from 'node:crypto';
 import { Prisma, type PracticeOutcome, type SessionKind, type SessionSource, type TopicStatus, type WeakSpotSource } from '@prisma/client';
@@ -29,7 +29,7 @@ export const SESSION_TITLE_MAX = 200;
 export const WEAK_SPOT_MAX_CHARS = 160;
 export const WEAK_SPOTS_PER_WRITE = 10;
 export const MINUTES_MAX = 600;
-/** What a checkpoint may say it learned about Ramin at once (the buddy's notes). */
+/** What a checkpoint may say it learned about the user at once (the buddy's notes). */
 export const LEARNED_PER_WRITE = 3;
 /**
  * A chat's checkpoint without minutes (LOOP_COMPLETE_SPEC S1.1 #5): the first write counts the time
@@ -261,7 +261,7 @@ export interface SessionInput {
     topicStatus?: TopicStatus | undefined;
     /** Tokens only: 'hook' for a Claude Code hook; else an agent. */
     source?: 'agent' | 'hook' | undefined;
-    /** Notes about Ramin for the buddy (BUDDY_MEMORY_PLAN §3.1 B), tagged with the session's project and subject. */
+    /** Notes about the user for the buddy (BUDDY_MEMORY_PLAN §3.1 B), tagged with the session's project and subject. */
     learned?: NoteInput[] | undefined;
 }
 
@@ -528,7 +528,7 @@ export async function createSession(userId: string, input: SessionInput & { titl
     return serializeSession(await prisma.workSession.findUniqueOrThrow({ where: { id: made.id }, include: SESSION_INCLUDE }));
 }
 
-/** PATCH /api/sessions/:id: Ramin corrects an entry (any writer's). */
+/** PATCH /api/sessions/:id: the user corrects an entry (any writer's). */
 export async function updateSession(
     userId: string,
     id: string,

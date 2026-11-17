@@ -1,5 +1,5 @@
 // Stage 4's backend for the manager (MANAGER_AND_DOCS_PLAN §3.2–3.3): the trash, actions that need
-// Ramin's tap (level 3), and the agent writes it opened (revisions done or moved, a few settings,
+// the user's tap (level 3), and the agent writes it opened (revisions done or moved, a few settings,
 // projects), each logged with an Undo.
 import { describe, expect, it } from 'vitest';
 import { prisma } from '../../src/db/prisma';
@@ -65,7 +65,7 @@ describe('actions that need his tap (level 3)', () => {
         const doc = await prisma.doc.create({ data: { userId: user.id, title: 'Old draft' } });
         await api(user).post(`/api/docs/${doc.id}/trash`);
 
-        const asked = await agent.post('/api/actions', { action: 'empty_trash', reason: 'Ramin asked to clean up' });
+        const asked = await agent.post('/api/actions', { action: 'empty_trash', reason: 'The user asked to clean up' });
         expect(asked.status).toBe(201);
         expect(asked.body.data).toMatchObject({ kind: 'action', text: 'Empty the trash: delete 1 doc for good ("Old draft")', proposedBy: 'agent', agentName: 'Claude Code' });
         expect(await prisma.doc.count({ where: { id: doc.id } })).toBe(1);

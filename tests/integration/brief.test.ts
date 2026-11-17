@@ -1,4 +1,4 @@
-// The brief (SYNC_SPINE_SPEC 1.3): one call that says where Ramin stands; a fresh session key that
+// The brief (SYNC_SPINE_SPEC 1.3): one call that says where the user stands; a fresh session key that
 // the first checkpoint's minutes come from; a key reused; a project's last session.
 import { describe, expect, it } from 'vitest';
 import { createTestUser } from '../helpers/auth';

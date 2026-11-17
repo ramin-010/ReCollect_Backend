@@ -1,4 +1,4 @@
-// The mirror (LOOP_COMPLETE_SPEC 1.7): where Ramin stands, per goal and per subject, worked out by
+// The mirror (LOOP_COMPLETE_SPEC 1.7): where the user stands, per goal and per subject, worked out by
 // code from the record (paths, sessions, weak spots, Recall, the week). The coach, the brief and the
 // "Where you stand" page read these numbers; models only put them into words.
 //

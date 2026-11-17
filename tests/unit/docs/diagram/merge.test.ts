@@ -1,4 +1,4 @@
-// Edits that keep Ramin's arrangement (src/services/docs/diagram/merge.ts, update.ts, edit.ts):
+// Edits that keep the user's arrangement (src/services/docs/diagram/merge.ts, update.ts, edit.ts):
 // boxes that stay keep their place, new boxes go beside what they connect to without overlapping
 // anything, zones grow, arrows keep their ids and (while their ends stay) their routes.
 import { describe, expect, it } from 'vitest';
@@ -17,7 +17,7 @@ async function edited(old: Board, extra: string, direction: 'LR' | 'TB' = 'LR') 
     const next = await laid(`${printDiagram(old)}\n${extra}`);
     return mergeBoards(old, next, direction);
 }
-/** Ramin moves a box (and the browser drops the routes of its arrows). */
+/** The user moves a box (and the browser drops the routes of its arrows). */
 function move(board: Board, id: string, dx: number, dy: number): Board {
     return {
         nodes: board.nodes.map((n) => (n.id === id ? { ...n, x: n.x + dx, y: n.y + dy } : n)),
@@ -46,7 +46,7 @@ function crowded(board: Board, placed: readonly string[], clear = 15.5): string[
 const BASE = 'flowchart LR\n  user([User]) -->|HTTPS| lb[Load balancer]\n  lb --> api[API]\n  api -->|SQL| db[(Postgres)]';
 
 describe('mergeBoards', () => {
-    it("keeps every box Ramin placed exactly where he put it, and puts two new boxes beside what they connect to, clear of everything", async () => {
+    it("keeps every box the user placed exactly where he put it, and puts two new boxes beside what they connect to, clear of everything", async () => {
         let old = await laid(BASE);
         old = move(old, 'db', 0, 240);
         old = move(old, 'lb', 30, -60);

@@ -39,7 +39,7 @@ describe('scrubSecrets', () => {
         'Rename getUserProfileSettingsFromDatabaseQuickly to something shorter',
         'The cuid cmwgckra20005vsxb6xgigs5r is a topic id',
         'A UUID 11111111-2222-4333-8444-555555555555 in a log',
-        'E:/PERSONAL_PROJECTS/second_brain/backend/src/services/buddy/memory.service.ts',
+        'D:/projects/notes-app/backend/src/services/buddy/memory.service.ts',
     ];
     for (const text of kept) it(`keeps: ${text.slice(0, 40)}`, () => expect(scrubSecrets(text)).toBe(text));
 

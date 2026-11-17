@@ -29,7 +29,7 @@ const signals = (over: Partial<BuddySignals> = {}): BuddySignals => ({
     week: { minutes: 745, minutesBefore: 520, activeDays: 6, activeDaysBefore: 5, lateNights: 3, reviewsDone: 9, tasksDone: 4 },
     partOfDay: { morning: 90, afternoon: 200, evening: 255, night: 200 },
     topProjects: [{ name: 'second_brain', minutes: 610 }],
-    goals: [{ title: 'Backend SDE offer', daysLeft: 181, milestones: '0 of 6', forecast: 'no_data', next: 'Resume and LinkedIn fixed (due 2026-11-22)', paths: ['System Design: 6 of 9 topics, 0 a week, needs 0.1, behind'] }],
+    goals: [{ title: 'A backend role', daysLeft: 181, milestones: '0 of 6', forecast: 'no_data', next: 'Portfolio and CV ready (due 2026-11-22)', paths: ['System Design: 6 of 9 topics, 0 a week, needs 0.1, behind'] }],
     weekTargets: { done: 1, total: 3, open: ['Finish message queues', 'Two mock problems'] },
     recall: { finished: 1, weakTopics: ['Monotonic stack'] },
     suggestions30: {},

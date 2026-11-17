@@ -1,6 +1,6 @@
 // The manager (MANAGER_AND_DOCS_PLAN §3.4): one message in, a tool loop on Claude over the
 // catalogue (./catalogue.ts: the MCP tools themselves, acting through this API as "Ask AI"), the
-// answer out. Claude Sonnet 5.5 at low effort (Ramin's choice, ASSISTANT_MODEL overrides); the tool
+// answer out. Claude Sonnet 5.5 at low effort (the owner's choice, ASSISTANT_MODEL overrides); the tool
 // list and the rules are the cached start, the brief follows them. At most MAX_ROUNDS model calls
 // per message; the monthly cap is checked before each; every call is metered as `assistant`. A
 // level-3 tool only asks (Home → Suggested, "Do it"), and the rules tell the model to say so.
@@ -9,6 +9,7 @@
 // inside a doc (DOCS_EDITOR_V2_PLAN phase 5), the same loop has the doc in hand instead of the brief.
 import type Anthropic from '@anthropic-ai/sdk';
 import { characterPrompt } from '../buddy/character';
+import { personName } from '../buddy/state.service';
 import { prisma } from '../../db/prisma';
 import { getAiClient, type BetaMessage } from '../claude/client';
 import { isUnderCap, recordAiUsage } from '../claude/usage.service';
@@ -28,7 +29,7 @@ const HISTORY_MESSAGES = 20;
 export const assistantModel = (): string => process.env['ASSISTANT_MODEL']?.trim() || ASSISTANT_DEFAULT_MODEL;
 
 export const ASSISTANT_RULES = [
-    "You are Ask AI, the manager inside Recollect: Ramin's learning app and the record of his work. You act for him through the tools; they read and change his plan, docs, tasks, settings and record. Answer in short plain sentences.",
+    "You are Ask AI, the manager inside Recollect: the user's learning app and the record of his work. You act for him through the tools; they read and change his plan, docs, tasks, settings and record. Answer in short plain sentences.",
     'Levels: a read tool changes nothing; a change happens at once and he can undo it from Home → From your agent; an action that needs his tap (empty_trash) only asks: it waits under Suggested on his Home until he taps "Do it". Never say such an action is done.',
     'Numbers about him come from tools, never from memory. Search before you create (search_docs before a new doc). When you changed something, end with what changed, one line each. If a tool fails, say what failed and what you did instead.',
     'Use the tool made for a job instead of many small calls: a pile of overdue reviews is one spread_backlog call (it spreads them by his daily budget); never move reviews one by one to spread them.',
@@ -128,7 +129,7 @@ async function editSince(userId: string, since: Date): Promise<string | null> {
 async function buddyVoice(userId: string): Promise<string | null> {
     const state = await prisma.buddyState.findUnique({ where: { userId } });
     if (!state?.enabled || state.paused) return null;
-    const character = characterPrompt({ name: state.name, tone: state.tone === 'gentle' ? 'gentle' : 'candid' });
+    const character = characterPrompt({ name: state.name, tone: state.tone === 'gentle' ? 'gentle' : 'candid', person: await personName(userId) });
     // The voice changes how it talks, never what it checks (11-16: with the friend's voice it answered a goal question from memory).
     return `Here you are also his buddy: answer in this voice, while the rules above decide what you may do and what you look up. The voice changes only how you talk: still check the live numbers with the tools first (goals, pace, the day, the week), as the rules say, and answer from what they return, not from the notes below.\n\n${character}${state.notebook ? `\n\nYour notebook from last night:\n${state.notebook}` : ''}`;
 }

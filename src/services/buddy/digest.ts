@@ -82,7 +82,7 @@ export function gateRequest(messages: readonly ChunkMessage[], opts: { work?: bo
     const numbered = messages.map((m, i) => `[${i + 1}] ${m.text.replace(/\s+/g, ' ').slice(0, 1500)}`).join('\n');
     return {
         model: GATE_MODEL,
-        // Haiku 5.5 at high effort (Ramin 11-16: the gate decides what of his chats reaches the buddy; it
+        // Haiku 5.5 at high effort (the owner, 11-16: the gate decides what of his chats reaches the buddy; it
         // runs on every chunk, so Haiku, thinking hard), with room to think so the labels are never cut off.
         max_tokens: Math.min(12_000, 3000 + 120 * messages.length),
         output_config: { effort: 'high', format: { type: 'json_schema', schema: opts.work ? GATE_SCHEMA_WORK : GATE_SCHEMA } },
@@ -139,7 +139,7 @@ export const DIGEST_SCHEMA: Record<string, unknown> = {
     },
 };
 
-export const DIGEST_SYSTEM = `You are the listening part of Ramin's personal buddy in Recollect, the app where he keeps what he learns and plans. He is a software engineer who spends his day with AI agents: coding, studying, brainstorming, and sometimes sharing what weighs on him. You read the messages he typed in one of those chats and write down what is worth remembering about him, and the things he wants kept or done.
+export const DIGEST_SYSTEM = `You are the listening part of a personal buddy in Recollect, the app where its user keeps what he learns and plans. He is a software engineer who spends his day with AI agents: coding, studying, brainstorming, and sometimes sharing what weighs on him. You read the messages he typed in one of those chats and write down what is worth remembering about him, and the things he wants kept or done.
 
 You get, in tags:
 - <chat>: his messages in order. Lines marked KEEP are the ones to read for notes and items; lines marked context are only there so the KEEP lines make sense. "agent:" is the start of the agent's reply.

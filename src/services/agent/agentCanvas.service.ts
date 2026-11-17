@@ -5,7 +5,7 @@
 //
 // An update is an edited fence by another road: the board printed in the text form, the change
 // applied (a whole new diagram, or add / remove / rename), then parse, ELK, and a merge that keeps
-// what Ramin arranged, written as a diff in one live change (logged; Undo takes it back exactly).
+// what the user arranged, written as a diff in one live change (logged; Undo takes it back exactly).
 import type { JSONContent } from '@tiptap/core';
 import ErrorResponse from '../../utils/errorResponse';
 import { canvasHeight, coerceBoard, isJsonCanvasText, readBoard, writeBoardDiff } from '../docs/canvas';
@@ -27,7 +27,7 @@ export interface UpdateCanvasInput extends CanvasEdits {
     diagram?: string | undefined;
     /**
      * Lay the whole board out again (a new direction, a board that reads badly) instead of keeping
-     * every box where it is; the boxes Ramin moved lose their places (Undo brings them back).
+     * every box where it is; the boxes the user moved lose their places (Undo brings them back).
      */
     relayout?: boolean | undefined;
 }
@@ -55,7 +55,7 @@ function countMermaid(json: JSONContent): number {
 
 /**
  * POST /api/agent/docs/:id/canvas/:canvasId {diagram} or {add?, remove?, rename?}: the board
- * changed in place, keeping its id and what Ramin arranged → { id, canvasId, editId, canvases: [report] }.
+ * changed in place, keeping its id and what the user arranged → { id, canvasId, editId, canvases: [report] }.
  * editId is null when nothing changed (no edit is logged then). 404 for a canvas the doc doesn't
  * show; 400 for a diagram that can't be read (`add line 2: …` for an added line).
  */
@@ -109,7 +109,7 @@ const PREVIEW_MAX_SIDE = 3000;
 
 /**
  * GET /api/agent/docs/:id/preview?canvasId=&theme= → { canvasId, width, height, png (Base64), report }:
- * a board of the doc as Ramin sees it (the first canvas without an id), drawn by the server.
+ * a board of the doc as the user sees it (the first canvas without an id), drawn by the server.
  */
 export async function previewCanvasForAgent(userId: string, docId: string, canvasId: string | undefined, theme: Theme = 'light') {
     const doc = await findAccessibleDoc(docId, userId);

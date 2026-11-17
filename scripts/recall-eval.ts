@@ -1,6 +1,6 @@
 // The Recall test set (LOOP_COMPLETE_SPEC 1.7): a fixed list of about 20 real notes, questions written
-// by the current prompt, mechanical checks, and a sheet Ramin can read. No prompt tuning before this
-// exists; run it after every prompt change. **Spends real AI money (about $1 a run): ask Ramin first.**
+// by the current prompt, mechanical checks, and a sheet the owner can read. No prompt tuning before this
+// exists; run it after every prompt change. **Spends real AI money (about $1 a run): ask the owner first.**
 //
 //   npx ts-node --transpile-only scripts/recall-eval.ts --pick 20 [--email dev@recollect.local]
 //        choose the notes once (topics with a note of enough text, spread over subjects) and write

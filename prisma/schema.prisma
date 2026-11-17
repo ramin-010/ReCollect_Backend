@@ -101,7 +101,7 @@ model User {
   nudgeEmailEnabled Boolean   @default(true)
   /// 'HH:mm', the user's local time for the morning email.
   nudgeTime         String    @default("08:30")
-  /// "About me, for my agents" (SYNC_SPINE_SPEC 1.3): how Ramin learns and works, read first by every chat's brief.
+  /// "About me, for my agents" (SYNC_SPINE_SPEC 1.3): how the user learns and works, read first by every chat's brief.
   agentProfile      String?   @db.VarChar(600)
   /// Local day the morning email was last sent (idempotency).
   lastNudgeDay      DateTime? @db.Date
@@ -1095,7 +1095,7 @@ enum AgentEditKind {
   reminder_cancel
   /// Overdue reviews an agent spread over the next days (Undo puts each back on its old day).
   revisions_spread
-  /// A memory about Ramin an agent closed (forget; Undo makes it active again).
+  /// A memory about the user an agent closed (forget; Undo makes it active again).
   memory_close
 }
 
@@ -1429,7 +1429,7 @@ model CoachNote {
 // ─── The record (SYNC_SPINE_SPEC 1.2) ─────────────────────────────────────────
 // One WorkSession per piece of work, written by an agent (checkpoint), a Claude Code hook, or by
 // hand. Session writes are not AgentEdit rows: the list is their log (each row says who wrote it,
-// and Ramin can change or delete any). Weak spots go from study chats to Recall and back.
+// and the user can change or delete any). Weak spots go from study chats to Recall and back.
 
 enum SessionKind {
   study
@@ -1574,7 +1574,7 @@ enum SuggestionKind {
   week_target
   focus_line
   profile_edit
-  /// An action that needs Ramin's tap (the manager, stage 4): no handler yet.
+  /// An action that needs the user's tap (the manager, stage 4): no handler yet.
   action
   /// The buddy's items from his chats (BUDDY_MEMORY_PLAN §3.6): a personal task, a note for his inbox, a decision for the journal.
   task
@@ -1781,7 +1781,7 @@ model PushSubscription {
 }
 
 // ====================================================================
-// THE BUDDY (context/specs/BUDDY_MEMORY_PLAN.md): what Recollect learns about Ramin from his chats,
+// THE BUDDY (context/specs/BUDDY_MEMORY_PLAN.md): what Recollect learns about the user from his chats,
 // keeps (notes → memories → a portrait), thinks about and says. Code: src/services/buddy/.
 // ====================================================================
 
@@ -1814,7 +1814,7 @@ enum MemoryStatus {
   faded
   /// No longer true (changed, done, dropped or forgotten by an agent), closed with its day and reason.
   closed
-  /// Ramin marked it wrong: kept so the same idea is not learned again.
+  /// The user marked it wrong: kept so the same idea is not learned again.
   wrong
 }
 
@@ -1824,7 +1824,7 @@ enum BuddySource {
   hook
   /// An agent's remember / checkpoint.learned.
   agent
-  /// Ramin, in the app (/you).
+  /// The user, in the app (/you).
   app
   /// "Tell your buddy".
   tell
@@ -1840,7 +1840,7 @@ model BuddyState {
   user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   /// The thinking steps (they cost AI money) run only while enabled and not paused.
   enabled      Boolean   @default(false)
-  /// Ramin's switch: no capture and no thinking while on.
+  /// The user's switch: no capture and no thinking while on.
   paused       Boolean   @default(false)
   /// What he calls it ("your buddy" while null).
   name         String?   @db.VarChar(40)
@@ -1863,7 +1863,7 @@ model BuddyState {
   updatedAt    DateTime  @updatedAt
 }
 
-/// A note about Ramin: raw, dated, append-only (≤ 300 characters). The night step folds notes into
+/// A note about the user: raw, dated, append-only (≤ 300 characters). The night step folds notes into
 /// memories (memoryId); a note saved by an agent or by him becomes a memory at once.
 model Observation {
   id          String      @id @default(cuid())
@@ -1889,7 +1889,7 @@ model Observation {
   @@index([memoryId])
 }
 
-/// What the buddy knows about Ramin: the curated list (plan §3.2). His word wins: a memory he
+/// What the buddy knows about the user: the curated list (plan §3.2). His word wins: a memory he
 /// added, edited, pinned or marked wrong is `byUser` and no model changes it.
 model Memory {
   id           String                   @id @default(cuid())
@@ -1996,7 +1996,7 @@ model BuddyDay {
   /// lock screen shows too). False when it named a private thing, wasn't checked, or the check failed.
   noteLockOk    Boolean       @default(false)
   followUp      String?       @db.VarChar(300)
-  /// One thought for his home screen today (Ramin 11-16: the home screen lists what matters, such as
+  /// One thought for his home screen today (the owner, 11-16: the home screen lists what matters, such as
   /// reminders or a suggestion or insight from the buddy, never the lock screen's line), or none.
   insight       String?       @db.VarChar(200)
   /// The lock check passed the thought: the home picture may show it (others see a home screen too).

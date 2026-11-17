@@ -1,5 +1,5 @@
 // An edited diagram merged into the board it came from (AGENT_DIAGRAMS_PLAN §4.3, step 2): what
-// Ramin arranged stays where he put it, and only what is new gets placed, next to what it connects
+// the user arranged stays where they put it, and only what is new gets placed, next to what it connects
 // to. The text decides what is on the board; the old board decides where the old things are.
 //
 //   kept      a node of both boards with the same zone (and still a zone, or still not one): its

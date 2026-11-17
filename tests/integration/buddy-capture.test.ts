@@ -95,8 +95,11 @@ describe('the capture queue', () => {
 
         const usage = (await api(user).get('/api/buddy/usage')).body.data;
         expect(usage.month.capUsd).toBe(25);
-        expect(usage.days[0]).toMatchObject({ seen: 3, kept: 1, chunks: 1, notes: 1, items: 1 });
-        expect(Object.keys(usage.days[0].steps).sort()).toEqual(['buddy_digest', 'buddy_gate']);
+        // Words land on the real day, the drain on 2026-11-16: sum the days so the date of the run doesn't matter.
+        const days = usage.days as Array<Record<string, number> & { steps: Record<string, unknown> }>;
+        const total = (k: string) => days.reduce((s, d) => s + (d[k] ?? 0), 0);
+        expect({ seen: total('seen'), kept: total('kept'), chunks: total('chunks'), notes: total('notes'), items: total('items') }).toEqual({ seen: 3, kept: 1, chunks: 1, notes: 1, items: 1 });
+        expect([...new Set(days.flatMap((d) => Object.keys(d.steps)))].sort()).toEqual(['buddy_digest', 'buddy_gate']);
     });
 
     it('plain coding requests end at the gate (no digest call); a later item waits as a candidate; a repeat bumps the memory it repeats', async () => {

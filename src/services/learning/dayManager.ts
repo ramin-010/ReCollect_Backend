@@ -37,7 +37,7 @@
  *     12 h before the cascade point as the next day, so a 00:30 block after a
  *     22:00 one keeps its length instead of collapsing to 5 minutes.
  *   - "Delay +30m" pushes the rest of the day back by 30 minutes (durations
- *     and gaps kept) instead of shrinking the first block (Ramin's choice).
+ *     and gaps kept) instead of shrinking the first block (the owner's choice).
  *   - Saving stamps actual start / end times (`stampActualTimes`), which
  *     Revise never set.
  */

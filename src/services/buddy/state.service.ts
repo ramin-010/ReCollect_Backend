@@ -51,6 +51,12 @@ export async function buddySettings(userId: string): Promise<BuddySettingsJson> 
     return serializeBuddyState(await prisma.buddyState.findUnique({ where: { userId } }));
 }
 
+/** The account's own name, for the buddy's prompts (characterPrompt takes its first word). */
+export async function personName(userId: string): Promise<string | null> {
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { name: true } });
+    return user?.name ?? null;
+}
+
 export async function isBuddyPaused(userId: string): Promise<boolean> {
     const s = await prisma.buddyState.findUnique({ where: { userId }, select: { paused: true } });
     return s?.paused ?? false;

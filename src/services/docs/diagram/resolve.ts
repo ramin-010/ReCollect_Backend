@@ -75,7 +75,7 @@ export function diagramRequestOf(canvas: JSONContent): DiagramRequest | undefine
  * JSON form are reported too, as they are).
  */
 export async function resolveDiagrams(json: JSONContent, options: { checkMermaid?: boolean } = {}): Promise<CanvasReport[]> {
-    // A ```mermaid block Mermaid can't parse: 400, before any layout, so an agent fixes it. Ramin's
+    // A ```mermaid block Mermaid can't parse: 400, before any layout, so an agent fixes it. The user's
     // own paste and AI practice notes skip it: the browser shows Mermaid's error on the block, and a
     // refusal there would lose a paste or a note already paid for.
     if (options.checkMermaid !== false) await checkMermaidBlocks(json);

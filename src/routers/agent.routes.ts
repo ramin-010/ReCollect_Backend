@@ -42,7 +42,7 @@ router.post('/docs/:id/append', requireScope('docs:write'), idempotency, appendT
 router.post('/docs/:id/replace-section', requireScope('docs:write'), idempotency, replaceSection);
 router.post('/docs/:id/trash', requireScope('docs:write'), idempotency, trashDoc);
 router.post('/docs/:id/restore', requireScope('docs:write'), idempotency, restoreDoc);
-// A canvas board by id: change it in place (keeps what Ramin arranged), or see it as a PNG.
+// A canvas board by id: change it in place (keeps what the user arranged), or see it as a PNG.
 router.post('/docs/:id/canvas/:canvasId', requireScope('docs:write'), idempotency, updateCanvas);
 router.get('/docs/:id/preview', requireScope('read'), previewCanvas);
 // The new editor's blocks by id (DocOps, phase 3): outline, read, insert, update, move, delete.

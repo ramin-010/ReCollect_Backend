@@ -1,4 +1,4 @@
-// GET /api/brief (SYNC_SPINE_SPEC 1.3): where Ramin stands, in one call (any token with read).
+// GET /api/brief (SYNC_SPINE_SPEC 1.3): where the user stands, in one call (any token with read).
 import { z } from 'zod';
 import { requireUser } from '../../middlwares/auth';
 import { getBrief } from '../../services/brief/brief.service';

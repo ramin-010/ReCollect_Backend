@@ -1,10 +1,10 @@
 // A canvas updated in place (AGENT_DIAGRAMS_PLAN step 2): an edited text fence that names a board
-// (`%% id: cv_…`) keeps that board's id, and Ramin's arrangement, in two cases: replace_section
+// (`%% id: cv_…`) keeps that board's id, and the user's arrangement, in two cases: replace_section
 // when the replaced section holds that board, and update_canvas. Everywhere else a fence is a new
 // canvas, as before.
 //
 // The layout of the new text is ELK's (asynchronous, done first); merging it into the board as it
-// is now happens inside the live doc's change (synchronous), so a box Ramin moved a moment ago
+// is now happens inside the live doc's change (synchronous), so a box the user moved a moment ago
 // keeps that place too. The board is then written as a diff (../canvas.ts writeBoardDiff).
 import type { JSONContent } from '@tiptap/core';
 import * as Y from 'yjs';

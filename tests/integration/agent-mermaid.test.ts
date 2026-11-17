@@ -81,7 +81,7 @@ describe('a broken ```mermaid block is refused on every agent write, and nothing
         expect(replaced.body.message).toBe(MESSAGE);
         expect(await prisma.doc.findUniqueOrThrow({ where: { id: doc.id } })).toEqual(before);
 
-        // Ramin's own paste is lenient (the browser shows Mermaid's error on the block; see markdown-paste.test.ts).
+        // The user's own paste is lenient (the browser shows Mermaid's error on the block; see markdown-paste.test.ts).
         const pasted = await api(user).post('/api/agent/markdown', { markdown: BROKEN });
         expect(pasted.status).toBe(200);
     });

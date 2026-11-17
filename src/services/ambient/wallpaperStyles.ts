@@ -1,4 +1,4 @@
-// The phone pictures' styles (Ramin 11-16: "more concepts", then "only one or two were good; take
+// The phone pictures' styles (the owner, 11-16: "more concepts", then "only one or two were good; take
 // references; dark ones only"): a small set of dark concepts after the looks wallpapers use now (a grainy
 // light, a layered night landscape, a glass orb, a dot-matrix screen, a silk ribbon of lines). Each style draws only the backdrop and says its inks and its ring's
 // look; the lock and home pictures keep one layout (wallpaperArt.ts), so the words sit in the same calm
@@ -165,7 +165,7 @@ function aurora(c: Ctx, color: StyleColor): StyleLook {
     const { W, H } = c;
     const lights = (AURORA.find((a) => a.id === color.id) ?? AURORA[0]!).lights;
     const rand = rng(`${c.date}|aurora|${color.id}|${c.screen}`);
-    const dark = true; // dark only (Ramin 11-16: "I prefer the darker wallpapers")
+    const dark = true; // dark only (the owner, 11-16: "I prefer the darker wallpapers")
     const ground = dark ? '#06070D' : '#F6F6FA';
     const defs: string[] = [];
     const art: string[] = [`<rect width="${W}" height="${H}" fill="${ground}"/>`];
@@ -391,7 +391,7 @@ function flow(c: Ctx, color: StyleColor): StyleLook {
 
 const strip = (cs: StyleColor[]): StyleColor[] => cs.map(({ id, name, swatch }) => ({ id, name, swatch }));
 
-/** Every style but the sky (its own code in wallpaperArt.ts), with its colours. All dark (Ramin 11-16). */
+/** Every style but the sky (its own code in wallpaperArt.ts), with its colours. All dark (the owner, 11-16). */
 const DRAW: Record<string, { info: StyleInfo; draw: (c: Ctx, color: StyleColor) => StyleLook }> = {
     glow: { info: { id: 'glow', name: 'Glow', blurb: 'One warm light rising out of the dark, with film grain', colors: strip(GLOW) }, draw: glow },
     peaks: { info: { id: 'peaks', name: 'Peaks', blurb: 'A night landscape, ridge behind ridge, under a crescent', colors: strip(PEAKS) }, draw: peaks },

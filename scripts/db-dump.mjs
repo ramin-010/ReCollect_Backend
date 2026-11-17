@@ -1,4 +1,4 @@
-// A local backup of the dev database (LOOP_COMPLETE_SPEC S1.2): Ramin's real data lives on this disk.
+// A local backup of the dev database (LOOP_COMPLETE_SPEC S1.2): the owner's real data lives on this disk.
 //   npm run db:dump                    a dump now
 //   node scripts/db-dump.mjs --daily   only when there is none for today (start-recollect.ps1 runs this)
 // Writes backend/.devdb/dumps/recollect_dev-<YYYY-MM-DD>[-HHmm].dump (pg_dump custom format; restore with

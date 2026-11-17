@@ -161,7 +161,7 @@ describe('update_doc', () => {
         expect(await topicRow(caching!._id)).toMatchObject({ docId: null, status: 'planned', title: 'Caching' });
     });
 
-    it("Undo of a rename keeps Ramin's own later rename", async () => {
+    it("Undo of a rename keeps the user's own later rename", async () => {
         const user = await createTestUser();
         const agent = await agentFor(user);
         const made = (await agent.post('/api/agent/docs', { title: 'Draft', markdown: 'x' })).body.data;

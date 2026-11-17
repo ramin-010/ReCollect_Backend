@@ -1,5 +1,5 @@
 // POST /api/actions (level 3, MANAGER_AND_DOCS_PLAN §3.2): an agent or the manager asks for an
-// action that needs Ramin's tap; it is checked and kept as a pending suggestion (Home → Suggested,
+// action that needs the user's tap; it is checked and kept as a pending suggestion (Home → Suggested,
 // "Do it"). Accepting it (POST /api/suggestions/:id/accept, cookie only) runs it.
 import { z } from 'zod';
 import { isTokenRequest, requireUser } from '../middlwares/auth';

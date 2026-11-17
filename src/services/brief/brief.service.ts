@@ -1,4 +1,4 @@
-// The brief (SYNC_SPINE_SPEC 1.3, ECOSYSTEM_PLAN change 3): the ONE picture of where Ramin stands,
+// The brief (SYNC_SPINE_SPEC 1.3, ECOSYSTEM_PLAN change 3): the ONE picture of where the user stands,
 // composed on the server from the services that already own each part. Agents read it with
 // get_brief at the start of a chat (a Claude Code hook prints it); Home, the coach and Ask AI are to
 // read it too. No query logic of its own: Today's payload (goals, plan, focus, next up), the
@@ -75,7 +75,7 @@ const brief = (s: SessionJson): BriefSession => ({
     score: s.score,
 });
 
-/** Where Ramin stands, now. `key` reuses a session key (a Claude Code session's); else a fresh one. */
+/** Where the user stands, now. `key` reuses a session key (a Claude Code session's); else a fresh one. */
 /**
  * A work folder's brief (BUDDY_MEMORY_PLAN §4.3): his goal is a new job, so an office chat gets only
  * the day, this project's own line and the session key: no profile, goals, plan, sessions from

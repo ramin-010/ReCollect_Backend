@@ -1,5 +1,5 @@
 // Canvas boards by id (AGENT_DIAGRAMS_PLAN steps 2–3): an edited fence through replace_section and
-// update_canvas keep what Ramin arranged and give the same board; Undo restores it exactly; the
+// update_canvas keep what the user arranged and give the same board; Undo restores it exactly; the
 // agent can see a board (preview); "Tidy up" and "Save as" (/api/canvas) for the browser.
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import * as Y from 'yjs';
@@ -49,9 +49,9 @@ async function storedBoard(docId: string, canvasId: string): Promise<{ board: Bo
     return out;
 }
 
-/** Ramin drags boxes in the browser: the records change, and the routes of their arrows go. */
+/** The user drags boxes in the browser: the records change, and the routes of their arrows go. */
 async function ramMoves(docId: string, canvasId: string, moves: Record<string, [number, number]>) {
-    await withLiveDoc(docId, 'Ramin', (live) =>
+    await withLiveDoc(docId, 'Alex', (live) =>
         live.apply(() => {
             const names = canvasMapNames(canvasId);
             const nodes = live.doc.getMap<NodeRecord>(names.nodes);
@@ -81,7 +81,7 @@ async function docWithBoard(user: { id: string }, agent: Awaited<ReturnType<type
 const readText = async (agent: Awaited<ReturnType<typeof agentFor>>, docId: string) => (await agent.get(`/api/agent/docs/${docId}`)).body.data.markdown as string;
 const ADDED = '  api --> cache[(Redis)]\n  cache -.-> replica[(Replica)]';
 
-describe('an edited fence keeps what Ramin arranged (step 2)', () => {
+describe('an edited fence keeps what the user arranged (step 2)', () => {
     it('replace_section with the fence it read: same canvas id, his moves kept, two new boxes placed; Undo restores the board exactly', async () => {
         const user = await createTestUser();
         const agent = await agentFor(user);
@@ -137,7 +137,7 @@ describe('an edited fence keeps what Ramin arranged (step 2)', () => {
         expect(await storedBoard(b.docId, b.canvasId)).toEqual(await storedBoard(a.docId, a.canvasId));
     });
 
-    it('update_canvas with relayout: a new direction is laid out fresh (Ramin’s moves give way), the same as a new board of that text', async () => {
+    it('update_canvas with relayout: a new direction is laid out fresh (the user’s moves give way), the same as a new board of that text', async () => {
         const user = await createTestUser();
         const agent = await agentFor(user);
         const { docId, canvasId } = await docWithBoard(user, agent);
@@ -162,7 +162,7 @@ describe('an edited fence keeps what Ramin arranged (step 2)', () => {
         expect(after.nodes.map(({ id, x, y: top }) => [id, x, top])).toEqual(freshBoard.nodes.map(({ id, x, y: top }) => [id, x, top]));
     });
 
-    it('update_canvas add / remove / rename: arrows of a removed box go, a renamed box stays put, nothing of Ramin’s moves; Undo restores it all', async () => {
+    it('update_canvas add / remove / rename: arrows of a removed box go, a renamed box stays put, nothing of the user’s moves; Undo restores it all', async () => {
         const user = await createTestUser();
         const agent = await agentFor(user);
         const { docId, canvasId } = await docWithBoard(user, agent);

@@ -143,7 +143,7 @@ export function createApp(): Application {
     app.use('/api/recall', recallRoutes);
     app.use('/api/ai', aiRouter);
     app.use('/api/assistant', assistantRoutes);
-    // The buddy (BUDDY_MEMORY_PLAN): what it knows about Ramin, its settings, the ways in.
+    // The buddy (BUDDY_MEMORY_PLAN): what it knows about the user, its settings, the ways in.
     app.use('/api/buddy', buddyRoutes);
     // Stage 6 (ALWAYS_ON_SPEC): the phone's wallpaper + widget, and the morning notification.
     app.use('/api', alwaysOnRoutes);

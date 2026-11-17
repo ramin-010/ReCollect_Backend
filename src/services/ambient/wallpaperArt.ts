@@ -1,7 +1,7 @@
 // The phone's pictures (ANDROID_APP_SPEC; BUDDY_MEMORY_PLAN §3.4 and §11.1). The backdrop is the sky
 // of the day (its light follows the day's state: dawn, daylight, dusk, a starry night, a soft mist on a
 // light day) or one of the dark styles (wallpaperStyles.ts). Over it, one type system for every picture
-// (B8, Ramin 11-16: "how you use the font, spacing, weights… make it better"): three sizes of words
+// (B8, the owner, 11-16: "how you use the font, spacing, weights… make it better"): three sizes of words
 // and the numerals, gaps in units of 1 % of the width, Inter throughout. The home picture is drawn for
 // the zoom the phone shows it at. Every day draws a slightly different backdrop (the date seeds it).
 // Pure: SVG text in, out.
@@ -28,7 +28,7 @@ export interface WallpaperInput {
      * the lock check passed; without one the lock picture is the dial of the day.
      */
     line?: string | null;
-    /** The lock picture's day mark: the ring of the day over the line (default; Ramin 11-16), or none. */
+    /** The lock picture's day mark: the ring of the day over the line (default; the owner, 11-16), or none. */
     dayMark?: 'ring' | 'none';
     /** The picture's style (wallpaperStyles.ts; "sky" or none: the sky of the day) and its colour. */
     style?: string;
@@ -570,7 +570,7 @@ function bell(x: number, top: number, size: number, color: string): string {
 }
 
 /**
- * Today's reminders under the day's number (Ramin 11-16): a bell, the time and the words, one row each
+ * Today's reminders under the day's number (the owner, 11-16): a bell, the time and the words, one row each
  * in the secondary size; nothing at all when there are none. The block's height counts its gap above.
  */
 function reminderRows(list: ReadonlyArray<{ at: string; text: string }>, W: number, x: number, usable: number, ink: Sky['ink']): Block {
@@ -604,7 +604,7 @@ function bubble(x: number, top: number, size: number, color: string): string {
 }
 
 /**
- * The buddy's thought for the home screen (Ramin 11-16: "reminders or a suggestion or an insight from
+ * The buddy's thought for the home screen (the owner, 11-16: "reminders or a suggestion or an insight from
  * the buddy… helpful, meaningful and mindful"): its mark in the reminders' icon column and the words
  * wrapped after it (three balanced lines at most; the quiet size only if three won't hold them). The
  * block's height counts its gap above: a step after the reminders, the reminders' own gap after the day.
@@ -705,7 +705,7 @@ function homeHero(input: WallpaperInput, W: number, x: number, usable: number, i
  * the left, above the dock: the date as a small eyebrow, the day's number with "left today" and the
  * time beside it, today's reminders still to come and the buddy's thought when there are any, then the
  * week's dots. Laid out in what the phone shows (its zoom), its bottom at 74 % of the height. No list
- * of the day's things (Ramin 11-16: on a phone the number is enough) and never the lock screen's line.
+ * of the day's things (the owner, 11-16: on a phone the number is enough) and never the lock screen's line.
  */
 export function drawWallpaper(input: WallpaperInput, width: number, height: number, theme: Theme): string {
     const W = width;
@@ -884,7 +884,7 @@ function softLight(defs: string[], look: Look, cx: number, cy: number, rx: numbe
 }
 
 /**
- * The lock picture (B4; Ramin 11-16: "a whole circle like initially, not half"; B8: one type system):
+ * The lock picture (B4; the owner, 11-16: "a whole circle like initially, not half"; B8: one type system):
  * the ring of the day with what is left inside it, the buddy's line under it as the main words, then
  * one row of the day in words and the goal's days, quieter. The group is centred in the calm band
  * between the clock and the fingerprint. Without a line (the buddy off, or no line passed its lock

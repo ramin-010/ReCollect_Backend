@@ -4,7 +4,7 @@
 // portrait, a line for each part of the day or silence, a thought for his home screen (or none), a
 // note (or its silence), a follow-up for his next chat, which items to show, its notebook, and on
 // Sundays the week's coach note. Code checks every op and every line before anything is written; a
-// line that fails a guard is left out (Ramin 11-16: the buddy never forces a line; the lock screen
+// line that fails a guard is left out (the owner, 11-16: the buddy never forces a line; the lock screen
 // then shows the dial of the day).
 import type { Memory, MemoryKind, Prisma } from '@prisma/client';
 import { z } from 'zod';
@@ -18,6 +18,7 @@ import { fromDbDay, loadLearningContext, toDbDay } from '../learningDb/common';
 import { coachWindow } from '../coach/evidence';
 import { numbersIn } from '../coach/check';
 import { characterPrompt } from './character';
+import { personName } from './state.service';
 import { LASTING_KINDS, MEMORY_KINDS, cleanNoteText, memoryKey, normalizeTags } from './memory.service';
 import { buddySignals, type BuddySignals } from './signals';
 import { scrubSecrets } from './scrub';
@@ -27,7 +28,7 @@ import { workForNight } from './work';
 import { runRoutines } from './routines';
 
 export const THINK_MODEL = process.env['BUDDY_THINK_MODEL'] || 'claude-opus-5-5';
-// The lock check decides what strangers may read on his phone: Sonnet 5.5 (Ramin 11-16: "that check is crucial"; a few calls a day).
+// The lock check decides what strangers may read on his phone: Sonnet 5.5 (the owner, 11-16: "that check is crucial"; a few calls a day).
 export const CHECK_MODEL = process.env['BUDDY_CHECK_MODEL'] || 'claude-sonnet-5-5';
 const EPHEMERAL = { type: 'ephemeral' } as const;
 export const SLOTS = ['morning', 'afternoon', 'evening'] as const;
@@ -135,6 +136,8 @@ export interface NightMemoryRow {
 export interface NightInput {
     name: string | null;
     tone: 'candid' | 'gentle';
+    /** The account's own name (the buddy's prompt uses its first word; none: "the user"). */
+    person?: string | null;
     signals: BuddySignals;
     portrait: { who: string | null; heading: string | null; now: string | null };
     memories: NightMemoryRow[];
@@ -183,7 +186,7 @@ export function nightRequest(input: NightInput): CreateParams {
         max_tokens: 16_000,
         thinking: { type: 'adaptive' },
         output_config: { effort: 'medium', format: { type: 'json_schema', schema: NIGHT_SCHEMA } },
-        system: [{ type: 'text', text: `${characterPrompt({ name: input.name, tone: input.tone })}\n\n${NIGHT_JOB}`, cache_control: EPHEMERAL }],
+        system: [{ type: 'text', text: `${characterPrompt({ name: input.name, tone: input.tone, person: input.person })}\n\n${NIGHT_JOB}`, cache_control: EPHEMERAL }],
         messages: [{ role: 'user', content: [{ type: 'text', text: nightTask(input) }] }],
     } as CreateParams;
 }
@@ -386,7 +389,7 @@ export { unlabel };
 /**
  * Lengths, numbers, repeats. Only the lines that pass come back, one per slot at most: a slot the
  * model left silent ("" or none) stays silent, and so does one whose line fails (counted in dropped).
- * A silent slot shows the dial of the day on the lock screen (Ramin 11-16: never a forced line).
+ * A silent slot shows the dial of the day on the lock screen (the owner, 11-16: never a forced line).
  */
 export function guardLines(lines: NightOutput['lines'], ctx: { sources: string; recent: readonly string[] }): { lines: Line[]; dropped: Dropped[] } {
     const dropped: Dropped[] = [];
@@ -549,6 +552,7 @@ export async function loadNightInput(userId: string, now: Date): Promise<NightIn
     return {
         name: state?.name ?? null,
         tone: state?.tone === 'gentle' ? 'gentle' : 'candid',
+        person: await personName(userId),
         signals,
         portrait: { who: state?.who ?? null, heading: state?.heading ?? null, now: state?.now ?? null },
         memories: [...lasting, ...working].map(row),

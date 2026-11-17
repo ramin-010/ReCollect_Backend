@@ -111,7 +111,7 @@ router.get('/sessions', sessionAuth, sessions.listSessionsHandler);
 router.patch('/sessions/:id', sessionAuth, sessions.updateSessionHandler);
 router.delete('/sessions/:id', sessionAuth, sessions.deleteSessionHandler);
 router.get('/projects', sessionAuth, sessions.listProjectsHandler);
-// The brief (SYNC_SPINE_SPEC 1.3): where Ramin stands, in one call.
+// The brief (SYNC_SPINE_SPEC 1.3): where the user stands, in one call.
 router.get('/brief', auth, brief.getBriefHandler);
 
 // The week and suggestions (LOOP_COMPLETE_SPEC 1.6). Accepting a suggestion is the app's only (tokens
@@ -133,7 +133,7 @@ router.post('/week/targets', auth, idempotency, agentLog.logWeekTargetCreate, we
 router.patch('/week/targets/:id', auth, idempotency, agentLog.logWeekTargetUpdate, week.updateWeekTargetHandler);
 router.get('/suggestions', auth, week.listSuggestionsHandler);
 router.post('/suggestions', auth, idempotency, week.proposeSuggestionHandler);
-// Level 3 (MANAGER_AND_DOCS_PLAN §3.2): an action kept for Ramin's tap; only accepting it runs it.
+// Level 3 (MANAGER_AND_DOCS_PLAN §3.2): an action kept for the user's tap; only accepting it runs it.
 router.post('/actions', auth, idempotency, actions.requestActionHandler);
 router.post('/suggestions/decide', auth, week.decideSuggestionsHandler);
 router.post('/suggestions/:id/accept', auth, week.acceptSuggestionHandler);

@@ -16,13 +16,13 @@ describe('SIGNUP_MODE (P1-3)', () => {
         expect(signupMode({ SIGNUP_MODE: 'Allowlist' })).toBe('allowlist');
         expect(signupMode({ SIGNUP_MODE: 'closed' })).toBe('closed');
         expect(signupMode({ SIGNUP_MODE: 'clsoed' })).toBe('closed');
-        expect(signupAllowlist({ SIGNUP_ALLOWLIST: ' Ramin@Example.org, second@example.org  third@example.org' })).toEqual(['ramin@example.org', 'second@example.org', 'third@example.org']);
+        expect(signupAllowlist({ SIGNUP_ALLOWLIST: ' Alex@Example.org, second@example.org  third@example.org' })).toEqual(['alex@example.org', 'second@example.org', 'third@example.org']);
 
         expect(signupAllowed('anyone@example.org', {})).toBe(true);
-        const allow = { SIGNUP_MODE: 'allowlist', SIGNUP_ALLOWLIST: 'ramin@example.org' };
-        expect(signupAllowed(' RAMIN@example.org ', allow)).toBe(true);
+        const allow = { SIGNUP_MODE: 'allowlist', SIGNUP_ALLOWLIST: 'alex@example.org' };
+        expect(signupAllowed(' ALEX@example.org ', allow)).toBe(true);
         expect(signupAllowed('stranger@example.org', allow)).toBe(false);
-        expect(signupAllowed('ramin@example.org', { SIGNUP_MODE: 'closed', SIGNUP_ALLOWLIST: 'ramin@example.org' })).toBe(false);
+        expect(signupAllowed('alex@example.org', { SIGNUP_MODE: 'closed', SIGNUP_ALLOWLIST: 'alex@example.org' })).toBe(false);
         expect(() => assertSignupAllowed('stranger@example.org', allow)).toThrow(expect.objectContaining({ statusCode: 403 }));
     });
 });
@@ -69,9 +69,9 @@ describe('the limiter (P1-4)', () => {
     it('per email, whatever the address (through the tunnel, each visitor has their own)', async () => {
         const app = appWith('login', { TRUST_CF_IP: '1' });
         for (let i = 0; i < DOORS.login.perEmail; i++) {
-            expect((await request(app).post('/door').set('CF-Connecting-IP', `198.51.100.${i + 1}`).send({ email: 'Ramin@Example.org' })).status).toBe(400);
+            expect((await request(app).post('/door').set('CF-Connecting-IP', `198.51.100.${i + 1}`).send({ email: 'Alex@Example.org' })).status).toBe(400);
         }
-        expect((await request(app).post('/door').set('CF-Connecting-IP', '198.51.100.99').send({ email: 'ramin@example.org' })).status).toBe(429);
+        expect((await request(app).post('/door').set('CF-Connecting-IP', '198.51.100.99').send({ email: 'alex@example.org' })).status).toBe(429);
         expect((await request(app).post('/door').set('CF-Connecting-IP', '198.51.100.99').send({ email: 'someone@example.org' })).status).toBe(400);
     });
 
@@ -93,7 +93,7 @@ describe('the limiter (P1-4)', () => {
 describe('AI_ALLOWED_EMAILS and AI_MAX_CAP_USD (P1-5)', () => {
     it('the list, lower-cased; unset: everyone', () => {
         expect(aiAllowedEmails({})).toBeNull();
-        expect(aiAllowedEmails({ AI_ALLOWED_EMAILS: ' Ramin@Example.org ,' })).toEqual(['ramin@example.org']);
+        expect(aiAllowedEmails({ AI_ALLOWED_EMAILS: ' Alex@Example.org ,' })).toEqual(['alex@example.org']);
     });
 
     it("the cap's bound: AI_MAX_CAP_USD when it is a number from 0, else today's 1000", () => {

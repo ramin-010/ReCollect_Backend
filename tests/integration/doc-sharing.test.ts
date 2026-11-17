@@ -106,7 +106,7 @@ describe('publish', () => {
 
 describe('the public page', () => {
     it('anyone reads it without a login: the title, the owner, the blocks (old content converted) and the boards it shows', async () => {
-        const owner = await person('Ramin');
+        const owner = await person('Alex');
         const doc = await ownedDoc(owner, 'Rate limiter', [para('Token bucket per user.'), { type: 'canvas', attrs: { canvasId: 'cv_shownBoard01', height: 440 } }]);
         // A board the doc shows, and one left in its maps by a deleted canvas.
         const y = new Y.Doc();
@@ -119,7 +119,7 @@ describe('the public page', () => {
         const res = await request(app).get(`/api/public/docs/${slug}`);
         expect(res.status).toBe(200);
         expect(res.headers['cache-control']).toBe('no-store');
-        expect(res.body.data).toMatchObject({ title: 'Rate limiter', owner: { name: 'Ramin' }, access: 'anonymous', docId: null, coverImage: null });
+        expect(res.body.data).toMatchObject({ title: 'Rate limiter', owner: { name: 'Alex' }, access: 'anonymous', docId: null, coverImage: null });
         const page = pageDoc(res.body.data.state);
         expect(page.getXmlFragment(BLOCKS_FRAGMENT).toString()).toContain('Token bucket per user.');
         expect(page.share.has('default')).toBe(false);

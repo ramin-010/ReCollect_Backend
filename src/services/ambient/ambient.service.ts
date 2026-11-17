@@ -38,12 +38,12 @@ export interface Ambient {
      */
     line?: { dayId: string; slot: string; text: string } | null;
     /**
-     * Today's reminders still to come (Ramin 11-16: "the home screen could show my reminders; if there
+     * Today's reminders still to come (the owner, 11-16: "the home screen could show my reminders; if there
      * are none it stays clean"), soonest first, three at most; with titles hidden, plain words.
      */
     reminders?: AmbientReminder[];
     /**
-     * The buddy's thought for the home screen today (Ramin 11-16: the home screen lists what matters,
+     * The buddy's thought for the home screen today (the owner, 11-16: the home screen lists what matters,
      * reminders or a suggestion or insight from the buddy; the lock screen keeps the line): only one the
      * lock check passed, never with titles hidden; none: the picture stays as it is.
      */

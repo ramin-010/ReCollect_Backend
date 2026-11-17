@@ -2,7 +2,7 @@
 // out. Pure: backend/scripts/import-revise.ts reads Revise (read-only), prints the plan, and writes
 // it with --apply.
 //
-// Ramin's rulings (2026-11-14 night): read the live Revise database; Revise's topics (the canvases,
+// The owner's rulings (2026-11-14 night): read the live Revise database; Revise's topics (the canvases,
 // their revisions, mentions and links) are not imported. What comes over:
 //   Capture NOTE / LINK → Capture, with its revisions (the 1/3/7/21 schedule and what was done)
 //   Capture TASK        → a personal Todo (done or not, the due day and time, weekly/monthly goal)
@@ -91,7 +91,7 @@ export interface ReviseData {
     quickNotes: ReviseQuickNote[];
     /** Reminders on captures: how many, and how many still ahead. */
     reminders: { total: number; ahead: number };
-    /** What is never imported, counted: topics (by Ramin's ruling) and what has no place here. */
+    /** What is never imported, counted: topics (by the owner's ruling) and what has no place here. */
     left: Record<string, number>;
 }
 

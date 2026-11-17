@@ -357,7 +357,7 @@ export async function undoDocUpdate(userId: string, edit: Pick<AgentEdit, 'docId
     const title = data['title'] as { from?: unknown; to?: unknown } | undefined;
     if (title && typeof title.from === 'string' && typeof title.to === 'string') {
         const doc = await findAccessibleDoc(edit.docId, userId);
-        // Renamed again since (by Ramin): his title stays.
+        // Renamed again since (by the user): his title stays.
         if (doc && currentContent(doc).title === title.to) await setDocTitle(edit.docId, 'undo', title.from);
     }
 }
@@ -545,7 +545,7 @@ function headingNotFound(heading: string, blocks: readonly JSONContent[]): Error
  * it replaces the heading too (so it can rename it); otherwise the heading stays and only the
  * body is replaced. 404 (listing the doc's headings) when there is no such heading.
  * A canvas fence whose `%% id` names a canvas of the replaced section updates that board in
- * place (same id, Ramin's arrangement kept; ../docs/diagram/update.ts); other canvases are new.
+ * place (same id, the user's arrangement kept; ../docs/diagram/update.ts); other canvases are new.
  */
 export async function replaceSectionForAgent(actor: AgentActor, docId: string, heading: string, markdown: string) {
     if (!normalizeHeading(heading)) throw new ErrorResponse(400, 'heading is required');

@@ -1,6 +1,6 @@
 // Sharing endpoints (MANAGER_AND_DOCS_PLAN §2): publish + people + requests. Cookie only (agents read
 // sharing through /api/agent/docs/:id/sharing; publishing and adding people are actions that need
-// Ramin's tap, POST /api/actions). The rules: src/services/docs/docSharing.service.ts.
+// the user's tap, POST /api/actions). The rules: src/services/docs/docSharing.service.ts.
 import type { Request, Response, NextFunction, RequestHandler } from 'express';
 import ErrorResponse from '../utils/errorResponse';
 import { requireUser } from '../middlwares/auth';

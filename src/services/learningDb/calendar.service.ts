@@ -1,4 +1,4 @@
-// The revision calendar (Ramin's Revise had it: a month to pick a day, that day's load beside it,
+// The revision calendar (Revise had it: a month to pick a day, that day's load beside it,
 // "Move here"; 2026-11-15). For each day: the pending reviews scheduled on it with their minutes,
 // and the open personal tasks due on it, against his daily budget, so a move can be judged before
 // it is made. Read only; moving is the existing reschedule.

@@ -49,7 +49,7 @@ export async function currentLine(userId: string, now: Date = new Date()): Promi
 }
 
 /**
- * The thought for his home screen today (Ramin 11-16: the home screen shows what matters, reminders or
+ * The thought for his home screen today (the owner, 11-16: the home screen shows what matters, reminders or
  * a suggestion or insight from the buddy, never the lock screen's line): only one the lock check passed.
  */
 export async function currentInsight(userId: string, now: Date = new Date()): Promise<{ dayId: string; text: string } | null> {

@@ -1,4 +1,4 @@
-// Actions that need Ramin's tap (MANAGER_AND_DOCS_PLAN §3.2, level 3): whatever leaves the app or
+// Actions that need the user's tap (MANAGER_AND_DOCS_PLAN §3.2, level 3): whatever leaves the app or
 // can't be undone. An agent or the manager asks (POST /api/actions); the action is checked now and
 // kept as a pending Suggestion of kind `action` holding the exact call; Home's Suggested shows it
 // with "Do it" and Dismiss, and only his tap (accepting it, cookie only) runs it. A level-3 tool
@@ -115,7 +115,7 @@ export interface ActionRequest {
 
 /**
  * POST /api/actions: checks the action and its input now, then keeps it as a pending suggestion
- * of kind `action` (nothing happens until Ramin taps "Do it"). The answer is the pending card.
+ * of kind `action` (nothing happens until the user taps "Do it"). The answer is the pending card.
  */
 export async function requestAction(userId: string, agentName: string, body: ActionRequest, now: Date = new Date()) {
     if (!isActionName(body.action)) throw badRequest(`No action "${body.action}". Actions: ${ACTION_NAMES.join(', ')}`, 'UNKNOWN_ACTION');
@@ -130,7 +130,7 @@ export async function requestAction(userId: string, agentName: string, body: Act
         return prisma.suggestion.update({ where: { id: same.id }, data: { text, reason: body.reason ? body.reason.slice(0, 200) : same.reason } });
     }
     const waiting = await prisma.suggestion.count({ where: { userId, kind: 'action', status: 'pending', agentName } });
-    if (waiting >= ACTIONS_PENDING_MAX) throw conflict(`${ACTIONS_PENDING_MAX} of your actions are still waiting for Ramin's tap`, 'ACTION_LIMIT');
+    if (waiting >= ACTIONS_PENDING_MAX) throw conflict(`${ACTIONS_PENDING_MAX} of your actions are still waiting for the user's tap`, 'ACTION_LIMIT');
     const ctx = await loadLearningContext(userId, now);
     const expires: DayString = addDays(ctx.today, ACTION_DAYS);
     return prisma.suggestion.create({

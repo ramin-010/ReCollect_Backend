@@ -32,7 +32,7 @@ const base: WallpaperInput = {
     week,
     items,
     counts: { reviews: { done: 1, total: 3 }, focus: { done: 1, total: 1 }, tasks: { done: 0, total: 1 }, minutesLeft: 13 },
-    goal: { title: 'Backend SDE offer at ₹15–20 LPA', daysLeft: 181, done: 1, total: 6 },
+    goal: { title: 'A backend role', daysLeft: 181, done: 1, total: 6 },
     line: 'Two reviews before lunch and the day is yours. Easy win.',
 };
 

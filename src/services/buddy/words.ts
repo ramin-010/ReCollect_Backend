@@ -3,7 +3,7 @@
 
 /**
  * A label in front ("From your notes: …", "Reminder - …", "Tip: …") comes off: the buddy talks, it doesn't
- * file things (Ramin 11-16). The words after it stay, their first letter raised. Applied where a line or
+ * file things (the owner, 11-16). The words after it stay, their first letter raised. Applied where a line or
  * note is written and again where one is read (B8: lines saved before the voice fix still had labels).
  */
 export function unlabel(text: string): string {

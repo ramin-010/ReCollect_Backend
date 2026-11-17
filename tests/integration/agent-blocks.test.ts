@@ -111,7 +111,7 @@ describe('block tools', () => {
         const edit = await prisma.agentEdit.findUniqueOrThrow({ where: { id: res.body.data.editId } });
         expect(edit).toMatchObject({ kind: 'doc_blocks', docId: doc.id, summary: 'Added 2 blocks after block p1 in "Heaps"' });
 
-        // Agents can't undo; Ramin can.
+        // Agents can't undo; the user can.
         expect((await agent.post(`/api/agent/edits/${edit.id}/undo`)).status).toBe(403);
         expect((await api(user).post(`/api/agent/edits/${edit.id}/undo`)).status).toBe(200);
         expect(await storedShape(doc.id)).toBe(['heading:Heaps', 'paragraph:A heap is a tree.', 'bulletListItem:push', '  paragraph:O(log n)', 'paragraph:'].join('\n'));

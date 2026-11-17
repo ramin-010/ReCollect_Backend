@@ -15,6 +15,7 @@ import { withRefusalFallbacks, type CreateParams } from '../recall/prompts';
 import type { DayString } from '../learning';
 import { dayRange, loadLearningContext } from '../learningDb/common';
 import { characterPrompt } from './character';
+import { personName } from './state.service';
 import { MEMORY_KINDS } from './memory.service';
 import { scrubSecrets } from './scrub';
 import { LASTING_MAX, THINK_MODEL, applyOps, checkOps, strayNumbers, type NightOp } from './think';
@@ -122,8 +123,9 @@ export async function runMonth(userId: string, now: Date = new Date(), month?: s
     const facts = await monthFacts(userId, period, ctx.tz);
     const from = dayRange(monthStart(period), ctx.tz).gte;
     const to = dayRange(monthStart(nextMonth(period)), ctx.tz).gte;
-    const [state, memories, steps] = await Promise.all([
+    const [state, person, memories, steps] = await Promise.all([
         prisma.buddyState.findUnique({ where: { userId } }),
+        personName(userId),
         prisma.memory.findMany({ where: { userId, status: 'active' }, orderBy: [{ lasting: 'desc' }, { lastSeenDay: 'desc' }], take: 220 }),
         prisma.buddyDay.findMany({ where: { userId, kind: 'night', createdAt: { gte: from, lt: to } }, select: { note: true }, orderBy: { createdAt: 'asc' }, take: 31 }),
     ]);
@@ -143,7 +145,7 @@ export async function runMonth(userId: string, now: Date = new Date(), month?: s
         max_tokens: 12_000,
         thinking: { type: 'adaptive' },
         output_config: { effort: 'medium', format: { type: 'json_schema', schema: CHAPTER_SCHEMA } },
-        system: [{ type: 'text', text: `${characterPrompt({ name: state?.name ?? null, tone: state?.tone === 'gentle' ? 'gentle' : 'candid' })}\n\n${CHAPTER_JOB}`, cache_control: EPHEMERAL }],
+        system: [{ type: 'text', text: `${characterPrompt({ name: state?.name ?? null, tone: state?.tone === 'gentle' ? 'gentle' : 'candid', person })}\n\n${CHAPTER_JOB}`, cache_control: EPHEMERAL }],
         messages: [{ role: 'user', content: [{ type: 'text', text }] }],
     } as CreateParams;
     const message = await callClaude(withRefusalFallbacks(request), 'buddy chapter');
@@ -234,13 +236,14 @@ export async function runYear(userId: string, now: Date = new Date(), year?: str
     if (!months.length) return null;
     const facts = yearFacts(period, months.map((m) => m.facts as unknown as MonthFacts));
     const state = await prisma.buddyState.findUnique({ where: { userId } });
+    const person = await personName(userId);
     const text = [`<year>${period}</year>`, `<numbers>\n${JSON.stringify(facts)}\n</numbers>`, `<months>\n${months.map((m) => `${m.period}: ${m.text}`).join('\n')}\n</months>`, 'Write the year’s chapter.'].join('\n\n');
     const request = {
         model: THINK_MODEL,
         max_tokens: 8000,
         thinking: { type: 'adaptive' },
         output_config: { effort: 'medium', format: { type: 'json_schema', schema: YEAR_SCHEMA } },
-        system: [{ type: 'text', text: `${characterPrompt({ name: state?.name ?? null, tone: state?.tone === 'gentle' ? 'gentle' : 'candid' })}\n\n${YEAR_JOB}`, cache_control: EPHEMERAL }],
+        system: [{ type: 'text', text: `${characterPrompt({ name: state?.name ?? null, tone: state?.tone === 'gentle' ? 'gentle' : 'candid', person })}\n\n${YEAR_JOB}`, cache_control: EPHEMERAL }],
         messages: [{ role: 'user', content: [{ type: 'text', text }] }],
     } as CreateParams;
     const message = await callClaude(withRefusalFallbacks(request), 'buddy year');

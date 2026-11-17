@@ -156,7 +156,7 @@ describe('which endpoints accept a token (tokenRoutes.ts)', () => {
         ['GET', '/api/docs/abc123/requests'],
         ['POST', '/api/create-doc-link'],
         ['POST', '/api/docs/ai/generate'],
-        // learning: deletes, Ramin's own actions, private notes, settings
+        // learning: deletes, the user's own actions, private notes, settings
         ['DELETE', '/api/goals/g1'],
         ['PATCH', '/api/quick-notes/q1'],
         ['DELETE', '/api/quick-notes/q1'],

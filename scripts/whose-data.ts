@@ -5,7 +5,7 @@
 //     --email <address>       another account
 //     --windows <file.json>   [{ "from": ISO, "to": ISO, "what": "…" }]: times when test runs or QA scripts
 //                             wrote with a real token or in the browser (they look like real use otherwise)
-//     --apply --remove seed,test[,agent,app]   delete those groups (only after Ramin said so)
+//     --apply --remove seed,test[,agent,app]   delete those groups (only after the owner said so)
 //     --keep <id,id…>         never delete these items, whatever their group
 //
 // Groups:

@@ -1,4 +1,4 @@
-// The buddy's memory (BUDDY_MEMORY_PLAN §3.2): notes about Ramin (Observation, raw and dated) and
+// The buddy's memory (BUDDY_MEMORY_PLAN §3.2): notes about the user (Observation, raw and dated) and
 // the curated memories they become (Memory). Code computes; models (B2+) only propose.
 //
 //   rememberNotes        POST /api/buddy/remember, PUT /api/sessions/by-key/:key {learned}   an agent's or his own note
@@ -149,7 +149,7 @@ export type NoteOutcome =
     | { status: 'saved'; memory: MemoryJson }
     /** It repeated a memory, which is now seen again (a faded or closed one is active again). */
     | { status: 'seen'; memory: MemoryJson }
-    /** It repeated a memory Ramin marked wrong: not saved. */
+    /** It repeated a memory the user marked wrong: not saved. */
     | { status: 'wrong'; memory: MemoryJson }
     /** Nothing left after the scrub. */
     | { status: 'empty' };
@@ -173,7 +173,7 @@ async function sameMemory(userId: string, text: string): Promise<Memory | null> 
 }
 
 /**
- * Save notes about Ramin. Each becomes a note (Observation) and a memory at once (until the night
+ * Save notes about the user. Each becomes a note (Observation) and a memory at once (until the night
  * step exists, plan B1; a note that repeats one bumps it). Paused: nothing is saved.
  */
 export async function rememberNotes(writer: NoteWriter, notes: readonly NoteInput[], now: Date = new Date()): Promise<NotesResult> {
@@ -393,7 +393,7 @@ export async function updateMemoryByUser(userId: string, id: string, patch: User
             ...(patch.lasting !== undefined ? { lasting: patch.lasting } : {}),
             ...(patch.tags !== undefined ? { tags: normalizeTags(patch.tags) } : {}),
             ...(patch.status === 'active' ? { status: 'active', closedDay: null, closeReason: null } : {}),
-            ...(closing ? { status: patch.status === 'wrong' ? ('wrong' as const) : ('closed' as const), closedDay: toDbDay(today), closeReason: patch.status === 'wrong' ? 'Marked wrong by Ramin' : 'No longer true (Ramin)', pinned: false } : {}),
+            ...(closing ? { status: patch.status === 'wrong' ? ('wrong' as const) : ('closed' as const), closedDay: toDbDay(today), closeReason: patch.status === 'wrong' ? 'Marked wrong by the user' : 'No longer true (closed by the user)', pinned: false } : {}),
         },
     });
     return serializeMemory(updated);
@@ -411,7 +411,7 @@ export async function deleteMemory(userId: string, id: string): Promise<{ delete
 /** An agent's forget: the memory is closed (Undo makes it active again). His own memories are his. */
 export async function closeMemoryByAgent(actor: AgentActor, id: string, reason: string | undefined, now: Date = new Date()): Promise<{ memory: MemoryJson; editId: string }> {
     const m = await ownMemory(actor.userId, id);
-    if (m.byUser) throw new ErrorResponse(403, 'Ramin wrote or changed this memory himself: only he can change it (on /you)');
+    if (m.byUser) throw new ErrorResponse(403, 'The user wrote or changed this memory: only they can change it (on /you)');
     if (m.status !== 'active' && m.status !== 'faded') throw new ErrorResponse(409, `This memory is already ${m.status}`);
     const { today } = await loadLearningContext(actor.userId, now);
     const closeReason = (reason ? scrubSecrets(reason).replace(/\s+/g, ' ').trim() : '').slice(0, CLOSE_REASON_MAX) || `Forgotten by ${actor.agentName}`;

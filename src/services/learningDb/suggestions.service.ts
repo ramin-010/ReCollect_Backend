@@ -1,6 +1,6 @@
 // Suggestions (LOOP_COMPLETE_SPEC 1.6, ECOSYSTEM_PLAN change 9): every proposal from the app, the
 // coach or an agent is one row, shown in one place on Home ("Suggested") and accepted with one tap.
-// Accepting is always Ramin's (cookie only); an agent can propose, never accept.
+// Accepting is always the user's (cookie only); an agent can propose, never accept.
 //
 //   listSuggestions    GET  /api/suggestions?status=pending        read
 //   proposeSuggestion  POST /api/suggestions                       learning:write (SELF_LOGGED)
@@ -108,7 +108,7 @@ export async function proposeSuggestion(userId: string, agentName: string | null
     checkPayload(input.kind, input.payload ?? {});
     if (agentName) {
         const waiting = await prisma.suggestion.count({ where: { userId, status: 'pending', proposedBy: 'agent', agentName } });
-        if (waiting >= AGENT_PENDING_MAX) throw conflict(`${AGENT_PENDING_MAX} of your suggestions are still waiting for Ramin`, 'SUGGESTION_LIMIT');
+        if (waiting >= AGENT_PENDING_MAX) throw conflict(`${AGENT_PENDING_MAX} of your suggestions are still waiting for the user`, 'SUGGESTION_LIMIT');
     }
     const row = await prisma.suggestion.create({
         data: {

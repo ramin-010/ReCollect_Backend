@@ -28,7 +28,7 @@ const counts = (items: AmbientItem[], minutesLeft: number) => {
     const of = (k: AmbientItem['kind']) => ({ done: items.filter((i) => i.kind === k && i.done).length, total: items.filter((i) => i.kind === k).length });
     return { reviews: of('review'), focus: of('focus'), tasks: of('task'), minutesLeft };
 };
-const goal = { title: 'Backend SDE offer at ₹15–20 LPA', daysLeft: 182, done: 1, total: 6 };
+const goal = { title: 'A backend role', daysLeft: 182, done: 1, total: 6 };
 const base = { date: 'Sunday 15 November', mode: 'normal' as const, updatedAt: new Date().toISOString(), goal };
 const day = (items: AmbientItem[], minutesLeft: number) => ({ items, counts: counts(items, minutesLeft) });
 

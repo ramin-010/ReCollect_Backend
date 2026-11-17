@@ -12,6 +12,7 @@ import { parseJson, responseText } from '../recall/output';
 import { withRefusalFallbacks, type CreateParams } from '../recall/prompts';
 import { loadLearningContext, toDbDay } from '../learningDb/common';
 import { characterPrompt } from './character';
+import { personName } from './state.service';
 import { buddySignals } from './signals';
 import { scrubSecrets } from './scrub';
 import { FORMS, INSIGHT_MAX, LINE_MAX, SLOTS, guardInsight, guardLines, lockCheck, strayNumbers, unlabel, type Dropped, type Line, type Slot } from './think';
@@ -89,6 +90,7 @@ export async function pulseIfDue(userId: string, now: Date = new Date()): Promis
     const { ctx, steps, slots, last, notes, thumbs } = due;
 
     const state = await prisma.buddyState.findUnique({ where: { userId } });
+    const person = await personName(userId);
     const signals = await buddySignals(userId, now);
     const current = (Array.isArray(last.lines) ? last.lines : []) as unknown as Line[];
     const said = steps.flatMap((s) => [
@@ -108,7 +110,7 @@ export async function pulseIfDue(userId: string, now: Date = new Date()): Promis
         max_tokens: 4000,
         thinking: { type: 'adaptive' },
         output_config: { effort: 'low', format: { type: 'json_schema', schema: PULSE_SCHEMA } },
-        system: [{ type: 'text', text: `${characterPrompt({ name: state?.name ?? null, tone: state?.tone === 'gentle' ? 'gentle' : 'candid' })}\n\n${PULSE_JOB}`, cache_control: EPHEMERAL }],
+        system: [{ type: 'text', text: `${characterPrompt({ name: state?.name ?? null, tone: state?.tone === 'gentle' ? 'gentle' : 'candid', person })}\n\n${PULSE_JOB}`, cache_control: EPHEMERAL }],
         messages: [{ role: 'user', content: [{ type: 'text', text }] }],
     } as CreateParams;
     let cost = 0;

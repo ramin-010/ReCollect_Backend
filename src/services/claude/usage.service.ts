@@ -11,7 +11,7 @@ import { aiCapReached } from './errors';
 import { aiModel } from './client';
 import { costOfCall, roundUsd, type CallUsage, type UsageTotals } from './pricing';
 
-/** Ramin, 2026-11-14 night: $50 a month (Recall and the Ask AI manager). */
+/** The owner, 2026-11-14 night: $50 a month (Recall and the Ask AI manager). */
 export const DEFAULT_MONTHLY_CAP_USD = 50;
 // The bound on a self-set cap moved to src/config/aiAccess.ts (AI_MAX_CAP_USD, hosting P1-5).
 export { MAX_MONTHLY_CAP_USD } from '../../config/aiAccess';

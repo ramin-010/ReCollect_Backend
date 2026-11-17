@@ -121,7 +121,7 @@ describe('DocOps', () => {
         const change = transactCapturing(doc, () => {
             insert(doc, [{ id: 'n', type: 'paragraph', content: [t('agent wrote this')] }], { after: 'a' });
         });
-        // Ramin types into "alpha" after the agent's change.
+        // The user types into "alpha" after the agent's change.
         update(doc, 'a', { content: [t('alpha, edited')] });
         const revert = revertUpdate(change.before, change.update!);
         expect(revert).not.toBeNull();

@@ -43,7 +43,7 @@ describe('nudgeSubject', () => {
 
 describe('isDeliverableEmail', () => {
   it('reserved top-level domains are never mailed', () => {
-    for (const ok of ['ramin@gmail.com', 'a@example.org', 'x@sub.domain.dev']) expect(isDeliverableEmail(ok)).toBe(true);
+    for (const ok of ['alex@gmail.com', 'a@example.org', 'x@sub.domain.dev']) expect(isDeliverableEmail(ok)).toBe(true);
     for (const bad of ['dev@recollect.local', 'u@test.local', 'a@b.test', 'a@b.invalid', 'a@localhost', 'a@b.example', 'A@B.LOCAL', '', null, undefined, 'no-at-sign', '@x.com', 'x@']) {
       expect(isDeliverableEmail(bad)).toBe(false);
     }

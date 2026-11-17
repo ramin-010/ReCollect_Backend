@@ -1,6 +1,6 @@
 // Sign-in for MCP clients (ALWAYS_ON_SPEC 6.5 and its build notes): Recollect is its own OAuth 2.1
 // authorization server for its remote MCP server (/mcp), so claude.ai's connector and Claude Code can
-// sign in with Ramin's consent instead of a pasted token. Checked against the MCP authorization spec
+// sign in with the user's consent instead of a pasted token. Checked against the MCP authorization spec
 // 2026-07-28 and Claude's connector docs.
 //
 //   discovery   protected-resource metadata (RFC 9728) and authorization-server metadata (RFC 8414)

@@ -6,7 +6,7 @@
 // sample of its own:
 //   email    qa2@recollect.local
 //   password qapass123
-// Every QA script, test run and hook test uses this account (LOOP_COMPLETE_SPEC S1.2), so Ramin's own
+// Every QA script, test run and hook test uses this account (LOOP_COMPLETE_SPEC S1.2), so the owner's own
 // account (dev@recollect.local) holds only his data.
 //
 // Another account only on purpose, because the sample REPLACES that account's learning data:

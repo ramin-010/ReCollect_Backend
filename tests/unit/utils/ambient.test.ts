@@ -108,7 +108,7 @@ describe('ambientFor', () => {
     });
 });
 
-// ── The day's things, the home list and the lock dial (Ramin 11-15: "make it useful; the lock screen
+// ── The day's things, the home list and the lock dial (the owner, 11-15: "make it useful; the lock screen
 // very different from the home screen, centred") ─────────────────────────────────────────────────
 
 type DayInput = Parameters<typeof dayItems>[0];
@@ -267,7 +267,7 @@ describe('the two pictures', () => {
         expect(svg).toContain('>LEFT<');
         expect(svg).toContain('182 days to Backend SDE offer');
         expect(svg).not.toContain('Monotonic stack');
-        // The ring of the day over the line (Ramin 11-16: a whole circle, not the half arc): one segment per thing.
+        // The ring of the day over the line (the owner, 11-16: a whole circle, not the half arc): one segment per thing.
         expect((svg.match(/<path d="M[^"]+A[^"]+" fill="none" stroke=/g) ?? []).length).toBeGreaterThanOrEqual(3);
         // Without a line: the dial of the day (what is left inside the ring), as before the buddy.
         const plain = wallpaperSvg(a, 1080, 2340, 'dark', 'lock');

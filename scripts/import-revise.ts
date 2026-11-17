@@ -5,7 +5,7 @@
 // Reads Revise's database (REVISE_DATABASE_URL, else DATABASE_URL in ../revise/.env; never printed)
 // in one READ ONLY transaction: Postgres refuses any write in it, and the script only sends SELECTs.
 // Revise stays untouched. What comes over and what is left out: src/services/import/reviseImport.ts
-// (Ramin, 2026-11-14 night: the live database; topics not imported).
+// (the owner, 2026-11-14 night: the live database; topics not imported).
 //
 // --apply writes the plan into the account --to in one transaction and records each row in
 // ImportedRow, so the next run (at the deploy) brings only what is new. Without --revise-user, the

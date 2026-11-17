@@ -2,7 +2,7 @@
 // schema no longer has). Run on every doc the collaboration server loads, on states read for
 // agents, and after an agent Undo, so nothing invalid ever reaches an editor:
 //
-//   - Side-by-side columns are gone (Ramin, 2026-11-14). A `columns` row becomes its columns'
+//   - Side-by-side columns are gone (the owner, 2026-11-14). A `columns` row becomes its columns'
 //     blocks, left to right; a column that only held an empty line adds nothing.
 //   - A list item outside a list (what dragging a list item beside a block made: the
 //     "Called contentMatchAt on a node with invalid content" bug) is wrapped in a list again:

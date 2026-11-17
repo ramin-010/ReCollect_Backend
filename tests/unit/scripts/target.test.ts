@@ -64,7 +64,7 @@ describe('the target of a maintenance script', () => {
 
 describe("the cutover's rules", () => {
     it('masks the address of an account that stays', () => {
-        expect(maskEmail('ramin.example@gmail.com')).toBe('r***e@gmail.com');
+        expect(maskEmail('alex.example@gmail.com')).toBe('a***e@gmail.com');
         expect(maskEmail('ab@x.org')).toBe('a*@x.org');
     });
 

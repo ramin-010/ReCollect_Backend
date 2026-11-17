@@ -7,7 +7,7 @@
 //   npx ts-node --transpile-only scripts/migrate-blocks.ts [--database <postgres url>] [--write] [--doc <id>]
 //
 // Run --write only on a copy first (restore a dump into another database and pass --database), and on
-// the real database only with Ramin's sign-off (the switch).
+// the real database only with the owner's sign-off (the switch).
 import * as Y from 'yjs';
 import { stateBytes } from '../src/services/docs/docState';
 import type { DocMigration } from '../src/services/docs/blocks/migrate';
