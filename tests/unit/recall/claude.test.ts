@@ -50,11 +50,11 @@ describe('aiErrorFrom (SDK errors → the app’s answer)', () => {
         Anthropic.APIError.generate(status, { type: 'error', error: { type, message: 'm' } }, `${status} ${type}`, new Headers());
 
     it.each([
-        [401, 'authentication_error', 503, 'AI_NOT_CONFIGURED'],
-        [403, 'permission_error', 503, 'AI_NOT_CONFIGURED'],
+        [401, 'authentication_error', 503, 'AI_PAUSED'],
+        [403, 'permission_error', 503, 'AI_PAUSED'],
         [429, 'rate_limit_error', 502, 'AI_BUSY'],
         [529, 'overloaded_error', 502, 'AI_BUSY'],
-        [402, 'billing_error', 502, 'AI_BILLING'],
+        [402, 'billing_error', 503, 'AI_PAUSED'],
         [400, 'invalid_request_error', 502, 'AI_FAILED'],
         [500, 'api_error', 502, 'AI_FAILED'],
     ])('%i %s → %i %s', (status, type, httpStatus, code) => {

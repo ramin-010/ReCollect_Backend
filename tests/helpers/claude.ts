@@ -6,6 +6,7 @@ import type { BetaCreateParams } from '../../src/services/recall/prompts';
 import { GRADE_SCHEMA, QUESTIONS_SCHEMA } from '../../src/services/recall/output';
 import { PRACTICE_NOTE_SCHEMA, SOLUTION_PLACEHOLDER } from '../../src/services/practice/output';
 import { COACH_SCHEMA } from '../../src/services/coach/output';
+import { LOCK_SCHEMA, LOCK_SCHEMA_TIMED } from '../../src/services/buddy/think';
 
 export interface FakeUsage {
     input_tokens: number;
@@ -240,6 +241,10 @@ export class FakeClaude implements AiClient {
         if (schema === GRADE_SCHEMA) return fakeMessage(gradeOutput('strong'));
         if (schema === PRACTICE_NOTE_SCHEMA) return fakeMessage(samplePracticeNote());
         if (schema === COACH_SCHEMA) return fakeMessage(sampleCoach());
+        // The buddy's lock check (it runs for every person since stage 3): nothing reveals a private thing.
+        if (schema === LOCK_SCHEMA) return fakeMessage({ lines: ['morning', 'afternoon', 'evening'].map((slot) => ({ slot, reveals: false })), note: false, insight: false }, { model: 'claude-sonnet-5-5' });
+        // Stage 7: timed lines go to the lock check by number.
+        if (schema === LOCK_SCHEMA_TIMED) return fakeMessage({ lines: [0, 1, 2, 3].map((i) => ({ i, reveals: false })), note: false, insight: false }, { model: 'claude-sonnet-5-5' });
         throw new Error('FakeClaude: unexpected request');
     }
 

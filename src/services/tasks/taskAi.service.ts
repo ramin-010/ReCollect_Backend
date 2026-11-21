@@ -98,7 +98,7 @@ export async function generateTaskLine(userId: string, input: TaskLineInput, now
         return plainTaskLine(input.prompt);
     }
     try {
-        const message = await callClaude(taskLineRequest(input, calendarDateIn(now, DEFAULT_TIME_ZONE)), 'task line');
+        const message = await callClaude(userId, taskLineRequest(input, calendarDateIn(now, DEFAULT_TIME_ZONE)), 'task line');
         await recordAiUsage(userId, 'task_parse', message);
         const out = zLine.parse(parseJson(responseText(message)));
         const allowed = new Set([...(input.workspaceMembers ?? []), ...(input.preSelectedAssignees ?? [])].map((m) => m.email.toLowerCase()));

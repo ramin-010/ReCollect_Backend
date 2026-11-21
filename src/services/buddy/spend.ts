@@ -6,6 +6,7 @@ import { prisma } from '../../db/prisma';
 import { isAiConfigured } from '../claude/client';
 import { isUnderCap, monthRange } from '../claude/usage.service';
 import { aiAllowedFor } from '../../config/aiAccess';
+import { aiAccessFor } from '../claude/access';
 import { addDays, dayOf, type DayString } from '../learning';
 import { fromDbDay, loadLearningContext, toDbDay } from '../learningDb/common';
 import { DEFAULT_BUDDY_CAP_USD } from './state.service';
@@ -21,15 +22,21 @@ export async function buddySpend(userId: string, now: Date = new Date()): Promis
     return Number(sum._sum.costUsd ?? 0);
 }
 
-export type BuddyGate = 'ok' | 'off' | 'paused' | 'no_ai' | 'not_allowed' | 'buddy_cap' | 'account_cap';
+/** `allowance` (stage 11): a friend's free AI waits (used up, today's limit, the friends' ceiling); their words wait too. */
+export type BuddyGate = 'ok' | 'off' | 'paused' | 'no_ai' | 'not_allowed' | 'ai_paused' | 'allowance' | 'buddy_cap' | 'account_cap';
 
-/** Whether the buddy may spend now: set up and on, not paused, under its own cap and the account's. */
+/** Whether the buddy may spend now: set up and on, not paused, its key working (not out of credit or rejected), under its own cap and the account's. */
 export async function buddyMaySpend(userId: string, now: Date = new Date()): Promise<BuddyGate> {
     if (!isAiConfigured()) return 'no_ai';
     if (!(await aiAllowedFor(userId))) return 'not_allowed'; // AI_ALLOWED_EMAILS (hosting P1-5)
     const state = await prisma.buddyState.findUnique({ where: { userId }, select: { enabled: true, paused: true, capUsd: true } });
     if (!state?.enabled) return 'off';
     if (state.paused) return 'paused';
+    // The account's key is paused (ECOSYSTEM_V2_PLAN stage 2): everything waits until a probe finds it working.
+    const access = await aiAccessFor(userId, { now });
+    if (access.state === 'no_credit' || access.state === 'bad_key') return 'ai_paused';
+    // Stage 11: a friend's free AI waits like a paused key: the words wait (a hook holds them), a top-up lets it go on.
+    if (access.state === 'allowance') return 'allowance';
     if ((await buddySpend(userId, now)) >= Number(state.capUsd ?? DEFAULT_BUDDY_CAP_USD)) return 'buddy_cap';
     if (!(await isUnderCap(userId, now))) return 'account_cap';
     return 'ok';
@@ -44,6 +51,9 @@ export interface BuddyUsageDay {
     secrets: number;
     notes: number;
     items: number;
+    /** Stage 5 (§4.13): pulses run on events that day, and those skipped because the day's 4 were used. */
+    eventPulses: number;
+    pulsesSkipped: number;
     /** Calls and cost per step that day. */
     steps: Partial<Record<BuddyFeature, { calls: number; costUsd: number }>>;
     costUsd: number;
@@ -60,22 +70,24 @@ const round = (n: number) => Math.round(n * 1e4) / 1e4;
 export async function buddyUsage(userId: string, now: Date = new Date()): Promise<BuddyUsage> {
     const { today, tz } = await loadLearningContext(userId, now);
     const from = addDays(today, -29);
-    const [counts, calls, state, spent] = await Promise.all([
+    const [counts, calls, state, spent, onEvent] = await Promise.all([
         prisma.buddyCaptureDay.findMany({ where: { userId, day: { gte: toDbDay(from) } } }),
         prisma.aiUsage.findMany({ where: { userId, feature: { in: [...BUDDY_FEATURES] }, createdAt: { gte: new Date(now.getTime() - 31 * 86_400_000) } }, select: { feature: true, costUsd: true, createdAt: true } }),
         prisma.buddyState.findUnique({ where: { userId }, select: { capUsd: true } }),
         buddySpend(userId, now),
+        prisma.buddyDay.groupBy({ by: ['day'], where: { userId, onEvent: true, day: { gte: toDbDay(from) } }, _count: { _all: true } }),
     ]);
     const days = new Map<string, BuddyUsageDay>();
     const dayRow = (day: DayString): BuddyUsageDay => {
         let d = days.get(day);
         if (!d) {
-            d = { day, seen: 0, kept: 0, chunks: 0, dropped: 0, secrets: 0, notes: 0, items: 0, steps: {}, costUsd: 0 };
+            d = { day, seen: 0, kept: 0, chunks: 0, dropped: 0, secrets: 0, notes: 0, items: 0, eventPulses: 0, pulsesSkipped: 0, steps: {}, costUsd: 0 };
             days.set(day, d);
         }
         return d;
     };
-    for (const c of counts) Object.assign(dayRow(fromDbDay(c.day)), { seen: c.seen, kept: c.kept, chunks: c.chunks, dropped: c.dropped, secrets: c.secrets, notes: c.notes, items: c.items });
+    for (const c of counts) Object.assign(dayRow(fromDbDay(c.day)), { seen: c.seen, kept: c.kept, chunks: c.chunks, dropped: c.dropped, secrets: c.secrets, notes: c.notes, items: c.items, pulsesSkipped: c.pulsesSkipped });
+    for (const e of onEvent) dayRow(fromDbDay(e.day)).eventPulses = e._count._all;
     for (const call of calls) {
         const day = dayOf(call.createdAt, tz);
         if (day < from) continue;

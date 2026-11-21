@@ -15,7 +15,7 @@ import { withRefusalFallbacks, type CreateParams } from '../recall/prompts';
 import type { DayString } from '../learning';
 import { dayRange, loadLearningContext } from '../learningDb/common';
 import { characterPrompt } from './character';
-import { personName } from './state.service';
+import { personName, toneOf } from './state.service';
 import { MEMORY_KINDS } from './memory.service';
 import { scrubSecrets } from './scrub';
 import { LASTING_MAX, THINK_MODEL, applyOps, checkOps, strayNumbers, type NightOp } from './think';
@@ -25,9 +25,9 @@ const CHAPTER_WORDS = 150;
 const QUESTIONS_MAX = 2;
 
 const CHAPTER_JOB = `It is the first of the month. Look back at the month that ended and answer with one JSON object:
-- chapter: the month as a short chapter of his life, at most ${CHAPTER_WORDS} words, in the third person: what he worked on, what changed, what weighed on him, what went well. Only what the facts and notes show; every number must be one you were given.
-- merge: memories that say the same thing (ids, the merged text, kind). close: memories newer notes contradict (id, reason). Never memories marked "his own".
-- questions: at most ${QUESTIONS_MAX} memories you are least sure of, each with a short question to him ("Still true? You study after 9 pm"), or none.
+- chapter: the month as a short chapter of their life, at most ${CHAPTER_WORDS} words, in the third person without he or she (their first name or "they"): what they worked on, what changed, what weighed on them, what went well. Only what the facts and notes show; every number must be one you were given.
+- merge: memories that say the same thing (ids, the merged text, kind). close: memories newer notes contradict (id, reason). Never memories marked "their own".
+- questions: at most ${QUESTIONS_MAX} memories you are least sure of, each with a short question to them ("Still true? You study after 9 pm"), or none.
 - who (at most 120 words) and heading (at most 80 words): written again from the lasting memories alone, not from any earlier text.`;
 
 const str = { type: 'string' } as const;
@@ -130,14 +130,14 @@ export async function runMonth(userId: string, now: Date = new Date(), month?: s
         prisma.buddyDay.findMany({ where: { userId, kind: 'night', createdAt: { gte: from, lt: to } }, select: { note: true }, orderBy: { createdAt: 'asc' }, take: 31 }),
     ]);
     const lastingCount = memories.filter((m) => m.lasting).length;
-    const memLine = (m: (typeof memories)[number]) => `${m.id} · ${m.kind} · ${m.lasting ? 'lasting' : 'working'}${m.byUser ? ' · his own' : ''} · seen ${m.seenCount} · ${m.text}`;
+    const memLine = (m: (typeof memories)[number]) => `${m.id} · ${m.kind} · ${m.lasting ? 'lasting' : 'working'}${m.byUser ? ' · their own' : ''} · seen ${m.seenCount} · ${m.text}`;
     const text = [
         `<month>${period}</month>`,
         `<facts>\n${JSON.stringify(facts)}\n</facts>`,
         `<memories>\n${memories.map(memLine).join('\n') || 'none'}\n</memories>`,
         `<month_notes>\n${steps.map((s) => s.note).filter(Boolean).map((n) => (n!.length > 240 ? `${n!.slice(0, 239)}…` : n)).join('\n') || 'none'}\n</month_notes>`,
         // Past the hundred lasting memories the night reads: condense (§3.7), nothing dropped.
-        ...(lastingCount > LASTING_MAX ? [`<condense>\nHe has ${lastingCount} lasting memories, more than the ${LASTING_MAX} you can read each night. Merge related ones into fewer, richer memories (one merged memory may hold several) until about ${LASTING_MAX - 10} remain. Never his own.\n</condense>`] : []),
+        ...(lastingCount > LASTING_MAX ? [`<condense>\nThey have ${lastingCount} lasting memories, more than the ${LASTING_MAX} you can read each night. Merge related ones into fewer, richer memories (one merged memory may hold several) until about ${LASTING_MAX - 10} remain. Never their own.\n</condense>`] : []),
         'Write this month’s chapter and audit.',
     ].join('\n\n');
     const request = {
@@ -145,10 +145,10 @@ export async function runMonth(userId: string, now: Date = new Date(), month?: s
         max_tokens: 12_000,
         thinking: { type: 'adaptive' },
         output_config: { effort: 'medium', format: { type: 'json_schema', schema: CHAPTER_SCHEMA } },
-        system: [{ type: 'text', text: `${characterPrompt({ name: state?.name ?? null, tone: state?.tone === 'gentle' ? 'gentle' : 'candid', person })}\n\n${CHAPTER_JOB}`, cache_control: EPHEMERAL }],
+        system: [{ type: 'text', text: `${characterPrompt({ name: state?.name ?? null, tone: toneOf(state?.tone), person })}\n\n${CHAPTER_JOB}`, cache_control: EPHEMERAL }],
         messages: [{ role: 'user', content: [{ type: 'text', text }] }],
     } as CreateParams;
-    const message = await callClaude(withRefusalFallbacks(request), 'buddy chapter');
+    const message = await callClaude(userId, withRefusalFallbacks(request), 'buddy chapter');
     const cost = (await recordAiUsage(userId, 'buddy_think', message)).costUsd;
     const out = zChapter.parse(parseJson(responseText(message)));
 
@@ -201,7 +201,7 @@ export async function chapterIfDue(userId: string, now: Date = new Date()): Prom
 
 const YEAR_WORDS = 250;
 const YEAR_JOB = `It is January. Look back at the year that ended, from its month chapters and its numbers, and answer with one JSON object:
-- chapter: the year as a chapter of his life, at most ${YEAR_WORDS} words, in the third person: what he worked on, what changed over the year, what weighed on him, what went well, and where it leaves him. Only what the chapters and the numbers show; every number must be one you were given. No headings, no list: a few short paragraphs.`;
+- chapter: the year as a chapter of their life, at most ${YEAR_WORDS} words, in the third person without he or she (their first name or "they"): what they worked on, what changed over the year, what weighed on them, what went well, and where it leaves them. Only what the chapters and the numbers show; every number must be one you were given. No headings, no list: a few short paragraphs.`;
 
 export const YEAR_SCHEMA: Record<string, unknown> = { type: 'object', additionalProperties: false, required: ['chapter'], properties: { chapter: { type: 'string' } } };
 
@@ -243,10 +243,10 @@ export async function runYear(userId: string, now: Date = new Date(), year?: str
         max_tokens: 8000,
         thinking: { type: 'adaptive' },
         output_config: { effort: 'medium', format: { type: 'json_schema', schema: YEAR_SCHEMA } },
-        system: [{ type: 'text', text: `${characterPrompt({ name: state?.name ?? null, tone: state?.tone === 'gentle' ? 'gentle' : 'candid', person })}\n\n${YEAR_JOB}`, cache_control: EPHEMERAL }],
+        system: [{ type: 'text', text: `${characterPrompt({ name: state?.name ?? null, tone: toneOf(state?.tone), person })}\n\n${YEAR_JOB}`, cache_control: EPHEMERAL }],
         messages: [{ role: 'user', content: [{ type: 'text', text }] }],
     } as CreateParams;
-    const message = await callClaude(withRefusalFallbacks(request), 'buddy year');
+    const message = await callClaude(userId, withRefusalFallbacks(request), 'buddy year');
     const cost = (await recordAiUsage(userId, 'buddy_think', message)).costUsd;
     const out = z.object({ chapter: z.string() }).parse(parseJson(responseText(message)));
     const sources = [JSON.stringify(facts), ...months.map((m) => m.text)].join('\n');

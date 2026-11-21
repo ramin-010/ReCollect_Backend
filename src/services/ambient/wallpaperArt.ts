@@ -6,7 +6,7 @@
 // the zoom the phone shows it at. Every day draws a slightly different backdrop (the date seeds it).
 // Pure: SVG text in, out.
 import { styleLook, type RingLook } from './wallpaperStyles';
-import { INTER_ADVANCES, INTER_CHARS, INTER_DIGIT_LSB, INTER_UPM } from './interMetrics';
+import { INTER_ADVANCES, INTER_CHARS, INTER_UPM } from './interMetrics';
 
 export type SkyState = 'morning' | 'working' | 'evening' | 'done' | 'rest';
 export type Theme = 'light' | 'dark';
@@ -48,6 +48,12 @@ export interface WallpaperInput {
     reminders?: Array<{ at: string; text: string }>;
     /** The buddy's thought for the home screen today (under the reminders; none: nothing). Never the lock screen's line. */
     insight?: string | null;
+    /** Stage 16: the lock picture's rows (now): today's next scheduled things, three at most ("7 pm" · "Call the bank"). */
+    today?: ReadonlyArray<{ at: string; text: string }>;
+    /** Stage 16: the home picture's Pick up (ahead): what they left unfinished, and where they stopped. */
+    pickUp?: { text: string; detail?: string } | null;
+    /** Stage 16: the home picture's Coming up (ahead): the next days' to-dos and events ("Sun" · "Sister's birthday"). */
+    comingUp?: ReadonlyArray<{ at: string; text: string }>;
 }
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -66,11 +72,13 @@ export const TYPE = {
     quiet: 0.031,
     /** The numbers in words. */
     secondary: 0.039,
-    /** The buddy's line: as large as fits three balanced lines, between these. */
-    lineMax: 0.06,
-    lineMin: 0.05,
+    /** The day's counts under its ring on the lock picture (11-21: quieter than the schedule, close to the ring). */
+    counts: 0.034,
+    /** The buddy's line: as large as fits three balanced lines, between these (smaller and wider, the owner, 11-21). */
+    lineMax: 0.052,
+    lineMin: 0.046,
     /** Only when the line won't fit three lines at lineMin (it is never cut). */
-    lineFloor: 0.042,
+    lineFloor: 0.04,
     /** The numerals: inside the lock picture's ring, inside the dial, on the home picture. */
     ringNumeral: 0.105,
     dialNumeral: 0.15,
@@ -123,7 +131,7 @@ function iconSlotAt(bandTop: number, W: number, ink: string): string {
 }
 
 interface TextOpts {
-    anchor?: 'middle';
+    anchor?: 'middle' | 'end';
     /** Tracking in em. */
     track?: number;
 }
@@ -132,12 +140,6 @@ interface TextOpts {
 function text(x: number, y: number, s: string, size: number, weight: number, fill: string, o: TextOpts = {}): string {
     const ls = o.track ? ` letter-spacing="${r1(o.track * size)}"` : '';
     return `<text x="${r1(x)}" y="${r1(y)}"${o.anchor ? ` text-anchor="${o.anchor}"` : ''} font-family="Inter" font-size="${r1(size)}" font-weight="${weight}"${ls} fill="${fill}">${esc(s)}</text>`;
-}
-
-/** How far a numeral's first digit sits in from its x (the digit's side bearing), so it lines up with the words above. */
-function digitInset(num: string, size: number, weight: Weight): number {
-    const d = Number(num[0]);
-    return Number.isInteger(d) ? ((INTER_DIGIT_LSB[weight][d] ?? 0) / INTER_UPM) * size : 0;
 }
 
 /** `s` cut to fit `width` at `size`, with "…" when it had to be cut (a picture can't scroll). */
@@ -171,14 +173,13 @@ export function kindWords(c: WallpaperInput['counts']): string {
         .join(' · ');
 }
 
-/** The day in one row of words: "7 reviews · 2 tasks · 56 min", "Done for today", or '' on a free day. */
+/** The day in one row of words: "7 reviews · 2 tasks", "Done for today", or '' on a free day (stage 16: no estimated time, the owner's word). */
 function dayRow(input: WallpaperInput): string {
     const items = input.items ?? [];
     if (!items.length) return '';
     const open = items.filter((i) => !i.done).length;
     if (!open) return 'Done for today';
-    const minutes = input.counts?.minutesLeft ?? 0;
-    return [kindWords(input.counts) || `${open} left`, minutes ? `${minutes} min` : ''].filter(Boolean).join(' · ');
+    return kindWords(input.counts) || `${open} left`;
 }
 
 /** The goal's row: "181 days to <goal>". */
@@ -394,7 +395,7 @@ function greedy(words: string[], fits: (line: string) => boolean): string[] {
  * number of lines, as even as they go, so no word is left alone on the last line). Lines past `max`
  * are dropped; the caller sizes text down first.
  */
-export function wrapText(text: string, size: number, weight: Weight, width: number, max: number, letterSpacing = 0): string[] {
+export function wrapText(text: string, size: number, weight: Weight, width: number, max: number, letterSpacing = 0, balance = true): string[] {
     // A separator ("·", "–", "—") stays at the end of its line, never starts the next one; a number
     // stays with the word after it ("3 reviews", "24 min").
     const words: string[] = [];
@@ -407,7 +408,7 @@ export function wrapText(text: string, size: number, weight: Weight, width: numb
     }
     const measure = (line: string) => textWidth(line, size, weight, letterSpacing);
     const lines = greedy(words, (l) => measure(l) <= width);
-    if (lines.length > 1) {
+    if (lines.length > 1 && balance) {
         // The narrowest width that still gives the same number of lines.
         let lo = width * 0.4;
         let hi = width;
@@ -537,65 +538,11 @@ function grain(defs: string[], art: string[], W: number, H: number, amount: numb
 
 // ── The home picture ──────────────────────────────────────────────────────────────────────────
 
-/** The week's row: seven dots and their letters (today's dot ringed, last). Its height for the layout. */
-const weekHeight = (W: number) => W * 0.021 + W * 0.03 + W * TYPE.quiet * CAP;
-
-/** The last seven days as dots (filled: studied), each with its weekday's letter under it; the first dot's edge at x. */
-function weekDots(week: NonNullable<WallpaperInput['week']>, x: number, top: number, W: number, ink: Sky['ink']): string[] {
-    const out: string[] = [];
-    const r = W * 0.0105;
-    const step = W * 0.052;
-    const cy = top + r;
-    const quiet = W * TYPE.quiet;
-    const letters = 'SMTWTFS';
-    week.forEach((d, i) => {
-        const cx = x + r + i * step;
-        out.push(`<circle cx="${r1(cx)}" cy="${r1(cy)}" r="${r1(d.active ? r : r - W / 800)}" fill="${d.active ? ink.dotOn : 'none'}" stroke="${d.active ? 'none' : ink.dotOff}" stroke-width="${r1(W / 400)}"/>`);
-        if (i === 6) out.push(`<circle cx="${r1(cx)}" cy="${r1(cy)}" r="${r1(r * 1.75)}" fill="none" stroke="${ink.dotOff}" stroke-width="${r1(W / 540)}"/>`);
-        const weekday = new Date(`${d.day}T12:00:00Z`).getUTCDay();
-        out.push(text(cx, cy + r + W * 0.03 + quiet * CAP, letters[weekday] ?? '', quiet, 500, ink.meta, { anchor: 'middle' }));
-    });
-    return out;
-}
 
 interface Block {
     /** From the first line's cap top to the last line's baseline. */
     h: number;
     draw: (top: number) => string[];
-}
-
-/** A bell (lucide's), its box at (x, top), `size` square, in `color`. */
-function bell(x: number, top: number, size: number, color: string): string {
-    return `<g transform="translate(${r1(x)} ${r1(top)}) scale(${r1((size / 24) * 1000) / 1000})" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></g>`;
-}
-
-/**
- * Today's reminders under the day's number (the owner, 11-16): a bell, the time and the words, one row each
- * in the secondary size; nothing at all when there are none. The block's height counts its gap above.
- */
-function reminderRows(list: ReadonlyArray<{ at: string; text: string }>, W: number, x: number, usable: number, ink: Sky['ink']): Block {
-    const rows = list.slice(0, 3);
-    if (!rows.length) return { h: 0, draw: () => [] };
-    const u = W / 100;
-    const size = W * TYPE.secondary;
-    const step = size * 1.62;
-    const icon = size * 0.92;
-    // The words start in one column after the widest time.
-    const atW = Math.max(...rows.map((r) => textWidth(r.at, size, 600)));
-    return {
-        h: 7 * u + size * CAP + (rows.length - 1) * step,
-        draw: (top) =>
-            rows.flatMap((r, i) => {
-                const base = top + 7 * u + size * CAP + i * step;
-                const tx = x + icon + 2.4 * u;
-                const room = x + usable - (tx + atW + 2.6 * u);
-                return [
-                    bell(x, base - size * CAP - (icon - size * CAP) / 2, icon, ink.body),
-                    text(tx, base, r.at, size, 600, ink.head),
-                    text(tx + atW + 2.6 * u, base, fit(r.text, size, 400, room), size, 400, ink.body),
-                ];
-            }),
-    };
 }
 
 /** A message bubble (lucide's message-circle): the buddy's mark. Its box at (x, top), `size` square. */
@@ -609,7 +556,7 @@ function bubble(x: number, top: number, size: number, color: string): string {
  * wrapped after it (three balanced lines at most; the quiet size only if three won't hold them). The
  * block's height counts its gap above: a step after the reminders, the reminders' own gap after the day.
  */
-function insightRows(insight: string, W: number, x: number, usable: number, ink: Sky['ink'], afterRows: boolean): Block {
+function insightRows(insight: string, W: number, x: number, usable: number, ink: Sky['ink'], afterRows: boolean, first = false): Block {
     const text0 = insight.replace(/\s+/g, ' ').trim();
     if (!text0) return { h: 0, draw: () => [] };
     const u = W / 100;
@@ -624,7 +571,7 @@ function insightRows(insight: string, W: number, x: number, usable: number, ink:
     }
     if (lines.length > 3) lines = [...lines.slice(0, 2), fit(lines.slice(2).join(' '), size, 400, room)];
     const lh = size * 1.42;
-    const gap = (afterRows ? 5 : 7) * u;
+    const gap = first ? 0 : (afterRows ? 8 : 7) * u;
     return {
         h: gap + size * CAP + (lines.length - 1) * lh,
         draw: (top) => {
@@ -634,78 +581,77 @@ function insightRows(insight: string, W: number, x: number, usable: number, ink:
     };
 }
 
-/**
- * Two lines beside a numeral or a tick (x at their left edge), centred on its caps: the first in the
- * secondary size, the second quieter.
- */
-function besideLines(x: number, top: number, capH: number, first: string, second: string, W: number, maxW: number, ink: Sky['ink']): string[] {
-    const s1 = W * TYPE.secondary;
-    const s2 = W * TYPE.quiet;
-    const gap = W * 0.022;
-    const h = s1 * CAP + (second ? gap + s2 * CAP : 0);
-    const b1 = top + (capH - h) / 2 + s1 * CAP;
-    const out = [text(x, b1, fit(first, s1, 600, maxW), s1, 600, ink.head)];
-    if (second) out.push(text(x, b1 + gap + s2 * CAP, fit(second, s2, 400, maxW), s2, 400, ink.meta));
-    return out;
+/** A small label over a block of the home picture ("Pick up", "Coming up"): sentence case, as the widget (the owner, 11-21). */
+function labelRow(label: string, W: number, x: number, ink: Sky['ink']): { h: number; draw: (top: number) => string[] } {
+    const quiet = W * TYPE.quiet;
+    return { h: quiet * CAP, draw: (top) => [text(x, top + quiet * CAP, label, quiet, 600, ink.meta)] };
 }
 
-/** The home picture's main block: the day's number with its words beside it, a tick when done, or the words alone. */
-function homeHero(input: WallpaperInput, W: number, x: number, usable: number, ink: Sky['ink']): Block {
+/**
+ * Stage 16, the home picture's Pick up: what they left unfinished this week (its title, larger) and where they stopped
+ * (two lines at most, quieter). The block's height counts its gap above (none when it is the first).
+ */
+function pickUpRows(item: NonNullable<WallpaperInput['pickUp']>, W: number, x: number, usable: number, ink: Sky['ink'], first: boolean): Block {
     const u = W / 100;
-    const items = input.items;
-    const N = W * TYPE.homeNumeral;
-    const capH = N * CAP;
-    if (items && items.length) {
-        const open = items.filter((i) => !i.done).length;
-        if (open) {
-            const num = String(open);
-            const nx = x - digitInset(num, N, 600);
-            const nw = textWidth(num, N, 600, N * TRACK.numeral);
-            const minutes = input.counts?.minutesLeft ?? 0;
-            const second = minutes ? `about ${minutes} min` : kindWords(input.counts);
-            const lx = nx + nw + 3 * u;
-            return {
-                h: capH,
-                draw: (top) => [text(nx, top + capH, num, N, 600, ink.head, { track: TRACK.numeral }), ...besideLines(lx, top, capH, 'left today', second, W, x + usable - lx, ink)],
-            };
-        }
-        // Done: a tick as tall as the numeral's caps.
-        const tw = capH * 1.22;
-        const lx = x + tw + 4 * u;
-        return { h: capH, draw: (top) => [tick(x, top, tw, capH, N * 0.085, ink.head), ...besideLines(lx, top, capH, 'All done', 'Nothing left today', W, x + usable - lx, ink)] };
-    }
-    if (items) {
-        // A free day: the words alone.
-        const size = W * 0.07;
-        return { h: size * CAP, draw: (top) => [text(x, top + size * CAP, 'A free day', size, 600, ink.head, { track: -0.02 })] };
-    }
-    // No items (an older caller): the headline and its lines, in the same sizes.
-    const size = W * TYPE.lineMax;
+    const label = labelRow('Pick up', W, x, ink);
+    const big = W * 0.05;
     const second = W * TYPE.secondary;
-    const headText = input.headline || (input.state === 'done' ? 'Done for today' : '');
-    const head = headText ? wrapText(headText, size, 600, usable, 2, size * TRACK.line) : [];
-    const body = input.lines.flatMap((l) => wrapText(l, second, 400, usable, 2)).slice(0, 3);
-    const lh = size * 1.22;
-    const bodyLh = second * 1.5;
-    const headH = head.length ? size * CAP + (head.length - 1) * lh : 0;
-    const h = headH + (body.length ? (head.length ? 3 * u : 0) + second * CAP + (body.length - 1) * bodyLh : 0);
+    const title = wrapText(item.text, big, 600, usable, 2, big * TRACK.line);
+    const detail = item.detail?.trim() ? wrapText(item.detail.trim(), second, 400, usable, 2) : [];
+    const gap = first ? 0 : 8 * u;
+    const titleLh = big * 1.2;
+    const detailLh = second * 1.42;
+    const titleTop = label.h + 3 * u;
+    const titleH = big * CAP + (title.length - 1) * titleLh;
+    const detailH = detail.length ? 3 * u + second * CAP + (detail.length - 1) * detailLh : 0;
     return {
-        h,
+        h: gap + titleTop + titleH + detailH,
         draw: (top) => {
-            const out = head.map((l, i) => text(x, top + size * CAP + i * lh, l, size, 600, ink.head, { track: TRACK.line }));
-            const b0 = top + headH + (head.length ? 3 * u : 0) + second * CAP;
-            body.forEach((l, i) => out.push(text(x, b0 + i * bodyLh, l, second, 400, ink.body)));
+            const t0 = top + gap;
+            const out = label.draw(t0);
+            title.forEach((l, i) => out.push(text(x, t0 + titleTop + big * CAP + i * titleLh, l, big, 600, ink.head, { track: TRACK.line })));
+            const d0 = t0 + titleTop + titleH + 3 * u + second * CAP;
+            detail.forEach((l, i) => out.push(text(x, d0 + i * detailLh, l, second, 400, ink.body)));
             return out;
         },
     };
 }
 
 /**
- * The home picture: the backdrop (the sky of the day over its hills, or a style), and one block at
- * the left, above the dock: the date as a small eyebrow, the day's number with "left today" and the
- * time beside it, today's reminders still to come and the buddy's thought when there are any, then the
- * week's dots. Laid out in what the phone shows (its zoom), its bottom at 74 % of the height. No list
- * of the day's things (the owner, 11-16: on a phone the number is enough) and never the lock screen's line.
+ * Stage 16, the home picture's Coming up: the next days' to-dos and events, three at most: the day (and time) in one
+ * column, the words after it. The block's height counts its gap above (none when it is the first).
+ */
+function comingUpRows(list: ReadonlyArray<{ at: string; text: string }>, W: number, x: number, usable: number, ink: Sky['ink'], first: boolean): Block {
+    const rows = list.slice(0, 3);
+    if (!rows.length) return { h: 0, draw: () => [] };
+    const u = W / 100;
+    const label = labelRow('Coming up', W, x, ink);
+    const size = W * TYPE.secondary;
+    const step = size * 1.62;
+    const atW = Math.max(...rows.map((r) => textWidth(r.at, size, 600)));
+    const gap = first ? 0 : 8 * u;
+    const rowsTop = label.h + 4 * u;
+    return {
+        h: gap + rowsTop + size * CAP + (rows.length - 1) * step,
+        draw: (top) => {
+            const t0 = top + gap;
+            const out = label.draw(t0);
+            rows.forEach((r, i) => {
+                const base = t0 + rowsTop + size * CAP + i * step;
+                const tx = x + atW + 2.6 * u;
+                out.push(text(x, base, r.at, size, 600, ink.head), text(tx, base, fit(r.text, size, 400, x + usable - tx), size, 400, ink.body));
+            });
+            return out;
+        },
+    };
+}
+
+/**
+ * The home picture (stage 16: ahead; the lock picture holds today): the backdrop, and at the left, above the dock, what
+ * is ahead: Pick up (what they left unfinished), Coming up (the next days) and the buddy's thought, each only when there
+ * is one. Nothing ahead and no thought: the picture alone. Laid out in what the phone shows (its zoom), its bottom at
+ * 74 % of the height, never up into the clock and the search bar. The day's number, its reminders (on the lock picture
+ * now), the date and the week's dots are gone (the owner, 11-20: nothing on both screens).
  */
 export function drawWallpaper(input: WallpaperInput, width: number, height: number, theme: Theme): string {
     const W = width;
@@ -713,28 +659,20 @@ export function drawWallpaper(input: WallpaperInput, width: number, height: numb
     const look = lookOf(input, W, H, theme, 'home');
     const { defs, art } = look;
     const ink = look.ink;
-    const u = W / 100;
     const x = W * 0.08;
     const usable = W - 2 * x;
-    const quiet = W * TYPE.quiet;
-    const week = input.week?.length === 7 ? input.week : null;
     const words: string[] = [...look.overlay];
-
-    const hero = homeHero(input, W, x, usable, ink);
-    const weekH = week ? weekHeight(W) : 0;
-    const rem = reminderRows(input.reminders ?? [], W, x, usable, ink);
-    const thought = insightRows(input.insight ?? '', W, x, usable, ink, rem.h > 0);
-    let heroTop = H * 0.74 - weekH - (week ? 8 * u : 0) - thought.h - rem.h - hero.h;
+    const blocks: Block[] = [];
+    if (input.pickUp?.text.trim()) blocks.push(pickUpRows(input.pickUp, W, x, usable, ink, !blocks.length));
+    if (input.comingUp?.length) blocks.push(comingUpRows(input.comingUp, W, x, usable, ink, !blocks.length));
+    if ((input.insight ?? '').trim()) blocks.push(insightRows(input.insight ?? '', W, x, usable, ink, blocks.length > 0, !blocks.length));
+    const total = blocks.reduce((a, bl) => a + bl.h, 0);
     // Never up into the clock and the search bar.
-    heroTop = Math.max(heroTop, H * 0.36);
-
-    const eyebrow = (input.state === 'rest' ? `${input.date} · A light day` : input.date).toUpperCase();
-    const ls = quiet * TRACK.caps;
-    words.push(text(x, heroTop - 5 * u, fit(eyebrow, quiet, 500, usable, ls), quiet, 500, ink.meta, { track: TRACK.caps }));
-    words.push(...hero.draw(heroTop));
-    words.push(...rem.draw(heroTop + hero.h));
-    words.push(...thought.draw(heroTop + hero.h + rem.h));
-    if (week) words.push(...weekDots(week, x, heroTop + hero.h + rem.h + thought.h + 8 * u, W, ink));
+    let y = Math.max(H * 0.74 - total, H * 0.36);
+    for (const bl of blocks) {
+        words.push(...bl.draw(y));
+        y += bl.h;
+    }
     return picture(W, H, defs, art, words, input.zoom);
 }
 
@@ -840,40 +778,101 @@ function ringCentre(input: WallpaperInput, cx: number, cy: number, W: number, nu
     const base = cy - h / 2 + numeralSize * CAP;
     return [
         text(cx, base, num, numeralSize, 600, ink.head, { anchor: 'middle', track: TRACK.numeral }),
-        text(cx, base + gap + quiet * CAP, label, quiet, 500, ink.body, { anchor: 'middle', track: TRACK.caps }),
+        // Sentence case ("4 left today"): the number starts the phrase (the owner, 11-21).
+        text(cx, base + gap + quiet * CAP, label, quiet, 500, ink.body, { anchor: 'middle' }),
     ];
 }
 
 /**
- * The rows under the main words, centred: the day in words (at `rowSize`, the secondary size unless
- * given; quiet when it is too long for it) and the goal's days (quiet).
+ * The day in words under its ring ("3 reviews · 1 focus line · 1 task"), close to the ring it explains (the owner, 11-21:
+ * the ring, Buddy's line, the counts and the reminders felt bunched together). None on a free day, and none in the dial
+ * when everything is done: its ring already says "Done for today".
  */
-function rowsUnder(input: WallpaperInput, W: number, firstGap: number, rowMax: number = W * TYPE.secondary): { h: number; draw: (top: number, cx: number, ink: Sky['ink']) => string[] } {
+function countsRow(input: WallpaperInput, W: number, inDial: boolean): { words: string; size: number } {
+    const items = input.items ?? [];
+    const words = inDial && items.length > 0 && items.every((i) => i.done) ? '' : dayRow(input);
+    const size = W * TYPE.counts;
+    return { words, size: textWidth(words, size, 500) <= W * 0.84 ? size : W * TYPE.quiet };
+}
+
+/** The schedule's time column: the time; "Today" for today's things without one; "Late" for late ones. */
+export function scheduleAt(at: string): string {
+    return at === '' ? 'Today' : at === 'late' ? 'Late' : at;
+}
+
+/** The lock picture's left edge (the home picture's too): its words start here, wide enough not to feel squeezed. */
+const LOCK_X = 0.08;
+/** Its right margin: narrower, so Buddy's line and the rows run wide (the owner, 11-21). */
+const LOCK_RIGHT = 0.05;
+
+/**
+ * The lock's ring (the owner, 11-21): no glow on it, and its lit part in a quiet blue unless they chose a colour.
+ */
+function lockRing(look: Look, theme: Theme, input: WallpaperInput): RingLook {
+    return { ...look.ring, glow: false, ...(input.color ? {} : { lit: theme === 'dark' ? '#8AB4F8' : '#2F6BD8' }) };
+}
+
+/**
+ * What is scheduled next (stage 16; aligned on the owner's word, 11-21: "to their left, like home"): today's next things
+ * as an agenda at the picture's left edge, the times in one column (a thing without a time says "Today", a late one
+ * "Late", both quieter) and the words after them; then the goal's days (quiet; only with their switch on). Its height
+ * counts the gap above it. `fits` says how many of today's rows and whether the goal's row fit.
+ */
+function scheduleRows(input: WallpaperInput, W: number, gapAbove: number, fits: { today: number; goal: boolean }): { h: number; draw: (top: number, cx: number, ink: Sky['ink']) => string[] } {
     const u = W / 100;
     const quiet = W * TYPE.quiet;
     const maxW = W * 0.84;
-    const row = dayRow(input);
-    const rowSize = textWidth(row, rowMax, 500) <= maxW ? rowMax : quiet;
-    const goal = goalRow(input.goal);
-    const rowH = row ? firstGap + rowSize * CAP : 0;
-    const goalH = goal ? (row ? 3.5 * u : firstGap) + quiet * CAP : 0;
+    const list = (input.today ?? []).slice(0, Math.max(0, fits.today));
+    const goal = fits.goal ? goalRow(input.goal) : '';
+    const size = W * TYPE.secondary;
+    const step = size * 1.78;
+    const listH = list.length ? gapAbove + size * CAP + (list.length - 1) * step : 0;
+    const goalH = goal ? (list.length ? 5 * u : gapAbove) + quiet * CAP : 0;
+    const timed = (at: string) => at !== '' && at !== 'late';
+    const atW = Math.max(0, ...list.map((r) => textWidth(scheduleAt(r.at), size, timed(r.at) ? 600 : 500)));
+    const x = W * LOCK_X;
+    const tx = x + atW + 2.6 * u;
     return {
-        h: rowH + goalH,
-        draw: (top, cx, ink) => {
+        h: listH + goalH,
+        draw: (top, _cx, ink) => {
             const out: string[] = [];
             let y = top;
-            if (row) {
-                y += rowH;
-                out.push(text(cx, y, fit(row, rowSize, 500, maxW), rowSize, 500, ink.body, { anchor: 'middle' }));
+            if (list.length) {
+                list.forEach((r, i) => {
+                    const base = y + gapAbove + size * CAP + i * step;
+                    out.push(text(x, base, scheduleAt(r.at), size, timed(r.at) ? 600 : 500, timed(r.at) ? ink.head : ink.meta));
+                    out.push(text(tx, base, fit(r.text, size, 400, W * (1 - LOCK_RIGHT) - tx), size, 400, ink.body));
+                });
+                y += listH;
             }
             if (goal) {
                 y += goalH;
-                out.push(text(cx, y, fit(goal, quiet, 400, maxW), quiet, 400, ink.meta, { anchor: 'middle' }));
+                out.push(text(x, y, fit(goal, quiet, 400, maxW), quiet, 400, ink.meta));
             }
             return out;
         },
     };
 }
+
+/**
+ * Stage 16: how much of the lock picture fits between the clock and the fingerprint, most first. Today's third row shows
+ * when it fits; with two, both always show: the ring shrinks first, then goes, before the second row does. The goal's
+ * row (their switch) is the first to go.
+ */
+function lockFits(n: number): Array<{ ring: number; today: number; goal: boolean }> {
+    const two = Math.min(2, n);
+    return [
+        { ring: 1, today: Math.min(3, n), goal: true },
+        { ring: 1, today: Math.min(3, n), goal: false },
+        { ring: 1, today: two, goal: false },
+        { ring: 0.75, today: two, goal: false },
+        { ring: 0, today: two, goal: false },
+        { ring: 0, today: Math.min(1, n), goal: false },
+    ];
+}
+
+/** The lowest a lock picture's words may reach (the safe zone ends at 0.84: room for the last row's descenders). */
+const LOCK_BOTTOM = 0.8;
 
 /** A soft light behind the words (in the style's colour, or dark under the words on a bright backdrop). */
 function softLight(defs: string[], look: Look, cx: number, cy: number, rx: number, ry: number, id: string, strength = 1): string[] {
@@ -885,8 +884,8 @@ function softLight(defs: string[], look: Look, cx: number, cy: number, rx: numbe
 
 /**
  * The lock picture (B4; the owner, 11-16: "a whole circle like initially, not half"; B8: one type system):
- * the ring of the day with what is left inside it, the buddy's line under it as the main words, then
- * one row of the day in words and the goal's days, quieter. The group is centred in the calm band
+ * the ring of the day with what is left inside it and its counts close under it, the buddy's line as the main words
+ * (apart, 11-21), then what is scheduled next and the goal's days, quieter. The group is centred in the calm band
  * between the clock and the fingerprint. Without a line (the buddy off, or no line passed its lock
  * check): the dial.
  */
@@ -902,37 +901,55 @@ export function drawLock(input: WallpaperInput, width: number, height: number, t
     const cx = W / 2;
     const withRing = (input.dayMark ?? 'ring') === 'ring';
 
-    // The line: as large as fits three balanced lines (below the usual size only when it must).
+    // The line (the owner, 11-21: smaller, and running wide to the right edge): at the left edge, filling each line before
+    // the next (not balanced), as large as fits three lines (below the usual size only when it must).
     const weight: Weight = look.lineWeight >= 550 ? 600 : 500;
-    const usable = W * 0.8 * (look.lineWeight >= 650 ? 0.95 : 1); // Bold is measured as SemiBold, with room for its width
+    const x = W * LOCK_X;
+    const tx = x;
+    const usable = W * (1 - LOCK_X - LOCK_RIGHT) * (look.lineWeight >= 650 ? 0.95 : 1); // Bold is measured as SemiBold, with room for its width
     let size: number = W * TYPE.lineMax;
     let lines: string[] = [];
     for (; ; size -= W * 0.002) {
-        lines = wrapText(main, size, weight, usable, 99, size * TRACK.line);
+        lines = wrapText(main, size, weight, usable, 99, size * TRACK.line, false);
         if (lines.length <= 3 || size <= W * TYPE.lineFloor) break;
     }
     lines = lines.slice(0, 3);
-    const lh = size * 1.22;
+    const lh = size * 1.3;
     const lineH = size * CAP + (lines.length - 1) * lh;
+    const ring = lockRing(look, theme, input);
 
-    const R = W * 0.135;
-    const stroke = Math.max(3, W * (look.ring.stroke ?? 0.017) * 0.8);
-    const reach = ringReach(R, stroke, look.ring);
-    const ringH = withRing ? 2 * reach + 8 * u : 0;
-    const rows = rowsUnder(input, W, 7 * u);
     const band = input.iconSlot ? iconBand(W) : 0;
-    const groupH = ringH + lineH + rows.h + band;
-    // A little above the middle (the clock sits higher than the fingerprint); never up into the clock.
-    const top = Math.max(H * 0.3, H * 0.49 - groupH / 2);
-
+    // Three groups, apart (the owner, 11-21): the day (its ring, its counts close under it), Buddy's line (what it wants
+    // noticed), what is scheduled next.
+    const counts = countsRow(input, W, false);
+    const shape = (f: { ring: number; today: number; goal: boolean }) => {
+        const ringOn = withRing && f.ring > 0;
+        const scale = ringOn ? f.ring : 1;
+        const R = W * 0.135 * scale;
+        const stroke = Math.max(3, W * (ring.stroke ?? 0.017) * 0.8 * scale);
+        const reach = ringReach(R, stroke, ring);
+        const ringH = ringOn ? 2 * reach : 0;
+        const countsH = counts.words ? (ringOn ? 3.4 * u : 0) + counts.size * CAP : 0;
+        const dayH = ringH + countsH;
+        const lineGap = dayH ? 9 * u : 0;
+        const rows = scheduleRows(input, W, 7 * u, f);
+        const groupH = dayH + lineGap + lineH + rows.h + band;
+        // A little above the middle (the clock sits higher than the fingerprint); never up into the clock.
+        const top = Math.max(H * 0.3, H * 0.49 - groupH / 2);
+        return { ringOn, scale, R, stroke, reach, ringH, countsH, lineGap, rows, groupH, top };
+    };
+    const tries = lockFits((input.today ?? []).length).map(shape);
+    const pick = tries.find((t) => t.top + t.groupH <= H * LOCK_BOTTOM) ?? tries[tries.length - 1]!;
+    const { R, stroke, reach, ringH, rows, groupH, top } = pick;
     const words: string[] = [...softLight(defs, look, cx, top + groupH / 2, W * 0.64, Math.max(W * 0.5, groupH * 0.75), 'lineGlow'), ...look.overlay];
-    if (withRing) {
+    if (pick.ringOn) {
         const cy = top + reach;
-        words.push(...dayRing(input.items ?? [], cx, cy, R, stroke, look.ring.lit, look.ring.dim, look.ring));
-        words.push(...ringCentre(input, cx, cy, W, W * TYPE.ringNumeral, 'LEFT', ink));
+        words.push(...dayRing(input.items ?? [], cx, cy, R, stroke, ring.lit, ring.dim, ring));
+        words.push(...ringCentre(input, cx, cy, W, W * TYPE.ringNumeral * pick.scale, 'left', ink));
     }
-    const lineTop = top + ringH;
-    lines.forEach((l, i) => words.push(text(cx, lineTop + size * CAP + i * lh, l, size, look.lineWeight, ink.head, { anchor: 'middle', track: TRACK.line })));
+    if (counts.words) words.push(text(cx, top + ringH + pick.countsH, fit(counts.words, counts.size, 500, W * 0.84), counts.size, 500, ink.body, { anchor: 'middle' }));
+    const lineTop = top + ringH + pick.countsH + pick.lineGap;
+    lines.forEach((l, i) => words.push(text(tx, lineTop + size * CAP + i * lh, l, size, look.lineWeight, ink.head, { track: TRACK.line })));
     words.push(...rows.draw(lineTop + lineH, cx, ink));
     return picture(W, H, defs, art, words, input.zoom, input.iconSlot ? iconSlotAt(lineTop + lineH + rows.h, W, ink.body) : undefined);
 }
@@ -950,32 +967,32 @@ export function drawDial(input: WallpaperInput, width: number, height: number, t
     const u = W / 100;
     const cx = W / 2;
     const items = input.items ?? [];
-    const next = items.find((i) => !i.done);
-
-    const R = W * 0.2;
-    const stroke = Math.max(4, W * Math.max(0.009, (look.ring.stroke ?? 0.017) * 1.15));
-    const reach = ringReach(R, stroke, look.ring);
-    // The next step, in up to two balanced lines (secondary size).
-    const second = W * TYPE.secondary;
-    const nextLines = next ? wrapText(`Next · ${next.title}${next.meta ? ` · ${next.meta}` : ''}`, second, 500, W * 0.8, 2) : [];
-    const nextLh = second * 1.32;
-    const nextH = nextLines.length ? 8 * u + second * CAP + (nextLines.length - 1) * nextLh : 0;
-    // Under the next step the day's row is quiet (one secondary line is enough).
-    const rows = rowsUnder(input, W, nextLines.length ? 5 * u : 8 * u, nextLines.length ? W * TYPE.quiet : second);
     const band = input.iconSlot ? iconBand(W) : 0;
-    const groupH = 2 * reach + nextH + rows.h + band;
-    const top = Math.max(H * 0.3, H * 0.49 - groupH / 2);
+    // Stage 16: today's rows take the place of the old "Next ·" row; the dial shrinks before a row goes. 11-21: the day
+    // (the dial, its counts close under it) and what is scheduled next are two groups, apart.
+    const counts = countsRow(input, W, true);
+    const ring = lockRing(look, theme, input);
+    const shape = (f: { ring: number; today: number; goal: boolean }) => {
+        const scale = f.ring === 1 ? 1 : f.ring === 0.75 ? 0.8 : 0.65;
+        const R = W * 0.2 * scale;
+        const stroke = Math.max(4, W * Math.max(0.009, (ring.stroke ?? 0.017) * 1.15) * scale);
+        const reach = ringReach(R, stroke, ring);
+        const countsH = counts.words ? 4 * u + counts.size * CAP : 0;
+        const rows = scheduleRows(input, W, 9 * u, f);
+        const groupH = 2 * reach + countsH + rows.h + band;
+        const top = Math.max(H * 0.3, H * 0.49 - groupH / 2);
+        return { scale, R, stroke, reach, countsH, rows, groupH, top };
+    };
+    const tries = lockFits((input.today ?? []).length).map(shape);
+    const pick = tries.find((t) => t.top + t.groupH <= H * LOCK_BOTTOM) ?? tries[tries.length - 1]!;
+    const { R, stroke, reach, rows, top } = pick;
     const cy = top + reach;
 
     const words: string[] = [...softLight(defs, look, cx, cy, R * 2.3, R * 2.3, 'dialGlow', 1.3), ...look.overlay];
-    words.push(...dayRing(items, cx, cy, R, stroke, look.ring.lit, look.ring.dim, look.ring));
-    words.push(...ringCentre(input, cx, cy, W, W * TYPE.dialNumeral, 'LEFT TODAY', ink, true));
-    let y = top + 2 * reach;
-    if (nextLines.length) {
-        y += 8 * u + second * CAP;
-        nextLines.forEach((l, i) => words.push(text(cx, y + i * nextLh, l, second, 500, ink.head, { anchor: 'middle' })));
-        y += (nextLines.length - 1) * nextLh;
-    }
+    words.push(...dayRing(items, cx, cy, R, stroke, ring.lit, ring.dim, ring));
+    words.push(...ringCentre(input, cx, cy, W, W * TYPE.dialNumeral * pick.scale, 'left today', ink, true));
+    if (counts.words) words.push(text(cx, top + 2 * reach + pick.countsH, fit(counts.words, counts.size, 500, W * 0.84), counts.size, 500, ink.body, { anchor: 'middle' }));
+    const y = top + 2 * reach + pick.countsH;
     words.push(...rows.draw(y, cx, ink));
     return picture(W, H, defs, art, words, input.zoom, input.iconSlot ? iconSlotAt(y + rows.h, W, ink.body) : undefined);
 }

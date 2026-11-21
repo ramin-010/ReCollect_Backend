@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { isTokenRequest, requireUser } from '../../middlwares/auth';
 import { agentActor } from '../../services/agent/agentEditLog';
 import { zLearnedNote } from '../buddy.controller';
+import { queueRelayedWords } from '../../services/buddy/capture.service';
 import {
     LEARNED_PER_WRITE,
     MINUTES_MAX,
@@ -46,14 +47,19 @@ const zWrite = z
         source: z.enum(['agent', 'hook']).optional(),
         /** What the chat learned about the user (the buddy, BUDDY_MEMORY_PLAN §3.1 B): at most 3 notes. */
         learned: z.array(zLearnedNote).max(LEARNED_PER_WRITE).optional(),
+        /** Stage 8 (E3): what he said about himself since the last checkpoint, in his words (passed on: indirect). */
+        said: z.array(z.string().trim().min(1).max(300)).max(3).optional(),
     })
     .strict();
 
 /** PUT /api/sessions/by-key/:key → { session, topic, weakSpots, topicEditId } */
 export const putSessionByKeyHandler = handler(async (req, res) => {
-    const input = parse(zWrite, req.body);
+    const { said, ...input } = parse(zWrite, req.body);
     const user = requireUser(req);
-    ok(res, await upsertSessionByKey({ userId: user.id, actor: isTokenRequest(req) ? agentActor(req) : null }, param(req, 'key'), input));
+    const out = await upsertSessionByKey({ userId: user.id, actor: isTokenRequest(req) ? agentActor(req) : null }, param(req, 'key'), input);
+    // E3: his own words about himself, passed on for his buddy (a work folder's chat has no checkpoint).
+    if (said?.length) await queueRelayedWords(user.id, param(req, 'key'), said);
+    ok(res, out);
 });
 
 const zCreate = zWrite.omit({ kindIfNew: true, titleIfNew: true, source: true, weakSpots: true, cleared: true, topicStatus: true, learned: true }).extend({ title: z.string().min(1).max(400), day: zDay.optional() });

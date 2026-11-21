@@ -33,7 +33,9 @@ import { attachDocToTopic, detachDocFromTopic, type TopicBeforeAttach } from '..
 import { plural, quoted, recordAgentEdit, type AgentActor } from './agentEditLog';
 import { hasBlocks, readBlocks } from '../docs/blocks/serverEditor';
 import { blocksToOldJson } from '../docs/blocks/toOldJson';
-import { appendBlocksForAgent, canvasIdsOf, docUsesBlocks, renameCanvases, replaceSectionInBlocks } from './agentBlocks.service';
+import { appendBlocksForAgent, appendNoteInBlocks, canvasIdsOf, docUsesBlocks, renameCanvases, replaceSectionInBlocks } from './agentBlocks.service';
+import { loadLearningContext } from '../learningDb/common';
+import { NOTES_PER_DOC_DAY, NOTE_MAX, afterIndex, footerDay, noteFooter, noteRepeats, notesOnDay } from './docNotes';
 import { markdownToBlocks as markdownToEditorBlocks } from '../docs/blocks/markdown';
 import { blocksDocState } from '../docs/blocks/newDocState';
 import { liveDocument, undoChange, withLiveDoc, type LiveChange, type LiveDoc } from './liveDoc';
@@ -461,6 +463,48 @@ export async function appendToDocForAgent(actor: AgentActor, docId: string, mark
     });
     const editId = await logDocChange(actor, docId, change, 'doc_append', `Appended ${describeBlocks(blocks)} to ${quoted(doc.title)}`);
     return { id: docId, appended: blocks.length, editId, ...canvasesField(reports, canvasIds) };
+}
+
+/**
+ * Stage 14 (ECOSYSTEM_V2_PLAN): POST /api/agent/docs/:id/append with a heading: a note inside that section, on the
+ * person's yes (agentBlocks.service.ts appendNoteInBlocks for a doc on the new editor; the same rules here for one on
+ * the old editor): after the block holding `after`, else at the section's end, with its quiet last line; a note the
+ * section already holds is not added; a fourth note into the doc on one day is refused.
+ */
+export async function appendNoteForAgent(actor: AgentActor, docId: string, input: { heading: string; after?: string | undefined; markdown: string }, now: Date = new Date()) {
+    if (await docUsesBlocks(docId)) return appendNoteInBlocks(actor, docId, input, now);
+    const doc = await requireEditableDoc(docId, actor.userId);
+    if (input.markdown.trim().length > NOTE_MAX) throw new ErrorResponse(400, `A note is at most ${NOTE_MAX.toLocaleString('en')} characters: keep the point, the example that worked and one line on what confused them.`);
+    const { tz } = await loadLearningContext(actor.userId, now);
+    const day = footerDay(now, tz);
+    const blocks = blocksOrThrow(`${input.markdown.trim()}\n\n*${noteFooter(day, actor.agentName)}*`);
+    const reports = await resolveDiagrams({ type: 'doc', content: blocks });
+    const before = currentContent(doc).json.content ?? [];
+    if (!findSection(before, input.heading)) throw headingNotFound(input.heading, before);
+
+    const out = await withLiveDoc(docId, actor.agentName, (live) => {
+        const current = (yXmlFragmentToProsemirrorJSON(live.fragment) as JSONContent).content ?? [];
+        const section = findSection(current, input.heading);
+        if (!section) throw headingNotFound(input.heading, current);
+        if (notesOnDay(current.map(nodePlainText), day) >= NOTES_PER_DOC_DAY)
+            throw new ErrorResponse(409, `${NOTES_PER_DOC_DAY} notes were added to this doc from chats today, the most for a day: it can wait until tomorrow, or they can add it themselves in Recollect.`);
+        const body = current.slice(section.heading + 1, section.end);
+        const texts = body.map(nodePlainText);
+        if (noteRepeats(input.markdown, texts)) return { already: true as const, heading: section.text };
+        const hit = afterIndex(texts, input.after);
+        let last = body.length - 1;
+        while (last >= 0 && isEmptyParagraph(body[last])) last -= 1;
+        const at = section.heading + 1 + (hit >= 0 ? hit : last) + 1;
+        const { elements, boards, canvasIds } = liveBlocks(live, current, blocks);
+        const change = live.apply((fragment) => {
+            fragment.insert(at, elements);
+            writeBoards(fragment.doc!, boards);
+        });
+        return { already: false as const, heading: section.text, change, canvasIds, placed: hit >= 0 ? ('after' as const) : ('section_end' as const) };
+    });
+    if (out.already) return { id: docId, heading: out.heading, already: true as const, placed: null, appended: 0, editId: null };
+    const editId = await logDocChange(actor, docId, out.change, 'doc_append', `Added a note under ${quoted(out.heading)} in ${quoted(doc.title)}`);
+    return { id: docId, heading: out.heading, placed: out.placed, appended: blocks.length, editId, ...canvasesField(reports, out.canvasIds) };
 }
 
 /** Heading text as matched: no leading #'s, no emphasis marks, single spaces, lower case. */

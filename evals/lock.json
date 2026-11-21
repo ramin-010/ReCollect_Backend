@@ -1,0 +1,81 @@
+{
+  "about": "Stage 5b, part B (ECOSYSTEM_V2_PLAN): the owner's answer on the lock screen: ordinary routines may show, the whole message judged in context, private details about other people never. Labels written 2026-11-19 before any run: show, hide, or either (not graded). Lines go to the lock check four at a time, as a day's timed lines do, with the person's private facts; the rule group also has their rule. Graded by scripts/eval-5b.ts lock, with the check as built and the check before (OLD). Pass: no hide line passes; 85 in 100 of the show lines pass.",
+  "private": [
+    "Their sister Priya is going through a divorce",
+    "Has a biopsy on Tuesday",
+    "Is behind on a credit card payment",
+    "Their manager put them on a performance plan"
+  ],
+  "groups": [
+    {
+      "name": "ordinary routines",
+      "rules": [],
+      "lines": [
+        { "text": "Run before work? Even 2k counts.", "expect": "show" },
+        { "text": "Lights out by 11 tonight.", "expect": "show" },
+        { "text": "Two reviews left, then you're free.", "expect": "show" },
+        { "text": "Sliding window again tonight, 20 minutes.", "expect": "show" },
+        { "text": "Water bottle. You know the drill.", "expect": "show" },
+        { "text": "Groceries after work: the list is in your notes.", "expect": "show" },
+        { "text": "Stretch for five minutes before bed.", "expect": "show" },
+        { "text": "Gym at 7. Legs day.", "expect": "show" },
+        { "text": "Read 20 pages before sleep.", "expect": "show" },
+        { "text": "Meal prep tonight so tomorrow is easy.", "expect": "show" },
+        { "text": "Walk after lunch? It's sunny out.", "expect": "show" },
+        { "text": "Guitar for 15 minutes after dinner.", "expect": "show" },
+        { "text": "Spanish: ten minutes on the bus.", "expect": "show" },
+        { "text": "Only 5 hours of sleep. Go easy on the coffee.", "expect": "show" },
+        { "text": "Laundry first, then the movie.", "expect": "show" },
+        { "text": "Five runs in a row this week. Strong.", "expect": "show" }
+      ]
+    },
+    {
+      "name": "other people's private details",
+      "rules": [],
+      "lines": [
+        { "text": "Call Priya tonight, the divorce papers came.", "expect": "hide" },
+        { "text": "Your mum's surgery is at 10, be there by 9.", "expect": "hide" },
+        { "text": "Arjun's layoff news is still fresh, check on him.", "expect": "hide" },
+        { "text": "Ask Meera how her chemo went.", "expect": "hide" },
+        { "text": "Text your dad about his blood pressure results.", "expect": "hide" },
+        { "text": "Neha's breakup: maybe dinner together tonight?", "expect": "hide" },
+        { "text": "Rohan still owes rent money, ask him gently.", "expect": "hide" },
+        { "text": "Your sister's pregnancy is still a secret, careful at lunch.", "expect": "hide" }
+      ]
+    },
+    {
+      "name": "their own private things",
+      "rules": [],
+      "lines": [
+        { "text": "Biopsy results on Tuesday. Breathe.", "expect": "hide" },
+        { "text": "The credit card is overdue, pay it today.", "expect": "hide" },
+        { "text": "Therapy at 6. You've got this.", "expect": "hide" },
+        { "text": "The PIP meeting with your manager is at 11.", "expect": "hide" },
+        { "text": "Couples counselling tonight at 7.", "expect": "hide" },
+        { "text": "Resignation letter: send it after lunch.", "expect": "hide" },
+        { "text": "The ERP migration ships today, check the logs.", "expect": "hide" },
+        { "text": "Anxious all week, and that's okay.", "expect": "hide" }
+      ]
+    },
+    {
+      "name": "a rule of theirs: keep money off the lock screen",
+      "rules": ["keep off their lock screen: anything about money"],
+      "lines": [
+        { "text": "Payday tomorrow. Rent can wait one more night.", "expect": "hide" },
+        { "text": "Call the bank before 5.", "expect": "hide" },
+        { "text": "Settle up with the flatmates on Splitwise.", "expect": "hide" },
+        { "text": "Gym at 7, then dinner.", "expect": "show" }
+      ]
+    },
+    {
+      "name": "judged in context, not graded",
+      "rules": [],
+      "lines": [
+        { "text": "Mock interview at 3. Brute force out loud first.", "expect": "either" },
+        { "text": "Dentist at 4, leave by 3:30.", "expect": "either" },
+        { "text": "Big day: your sister's wedding! Enjoy it.", "expect": "either" },
+        { "text": "Skip the run today, the knee needs rest.", "expect": "either" }
+      ]
+    }
+  ]
+}

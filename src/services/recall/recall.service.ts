@@ -68,7 +68,7 @@ export async function startRecall(userId: string, revisionId: string, now: Date 
     const earlier = await earlierQuestions(rev, live?.id);
     const weakSpots = rev.topicId ? (await openWeakSpotsOf(userId, [rev.topicId])).get(rev.topicId) ?? [] : [];
     const request = questionsRequest({ model: aiModel(), material, cycleNumber: rev.cycleNumber, earlier, weakSpots });
-    const message = await callClaude(withRefusalFallbacks(request), 'recall questions');
+    const message = await callClaude(userId, withRefusalFallbacks(request), 'recall questions');
     await recordAiUsage(userId, 'recall_questions', message);
     let questions: RecallQuestion[];
     try {
@@ -160,7 +160,7 @@ export async function answerRecall(userId: string, setId: string, input: RecallA
         if (!isAiConfigured()) throw aiNotConfigured();
         await assertUnderCap(userId, now);
         const material = await materialForSet(userId, set);
-        const message = await callClaude(withRefusalFallbacks(gradeRequest({ model: aiModel(), material, question, answer })), 'recall grading');
+        const message = await callClaude(userId, withRefusalFallbacks(gradeRequest({ model: aiModel(), material, question, answer })), 'recall grading');
         await recordAiUsage(userId, 'recall_grade', message);
         try {
             attempt = { answer, selfMark: null, ...parseGradeOutput(responseText(message), question.sourceQuote) };

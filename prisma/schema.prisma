@@ -57,6 +57,14 @@ model User {
   isGhost       Boolean      @default(false)
   googleId      String       @default("")
   authProvider  AuthProvider @default(local)
+  /// Stage 10 (ECOSYSTEM_V2_PLAN §9.5): free | premium. The seam only: nothing reads it yet, no payment code.
+  plan          String       @default("free") @db.VarChar(12)
+  /// Stage 11 (the People page): the owner ended this account's access. Sign-in and every request are refused, the
+  /// account and its data are kept, and the owner can restore it. Null: open.
+  accessEndedAt DateTime?
+  /// Stage 11 (§9.6 item 2): Home's first-run checklist for a new account: { zoneOk?: true, dismissedAt?: ISO }.
+  /// Null: nothing done yet. Only accounts made in the last 30 days see it.
+  firstRun      Json?
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
 
@@ -156,16 +164,33 @@ model User {
   pushSubscriptions PushSubscription[]
 
   // ── The buddy (context/specs/BUDDY_MEMORY_PLAN.md; see the end) ──
-  buddyState   BuddyState?
-  observations Observation[]
-  memories     Memory[]
-  buddyChunks  BuddyChunk[]
-  buddyDays    BuddyCaptureDay[]
-  buddySteps   BuddyDay[]
-  buddyThumbs  BuddyFeedback[]
-  routines     Routine[]
-  chapters     BuddyChapter[]
-  workLines    WorkLine[]
+  buddyState        BuddyState?
+  observations      Observation[]
+  memories          Memory[]
+  buddyChunks       BuddyChunk[]
+  buddyThreads      BuddyThread[]
+  buddyAsks         BuddyAsk[]
+  lockPins          LockPin[]
+  buddyReminders    BuddyReminder[]
+  buddyOutcomes     BuddyOutcome[]
+  buddyImports      BuddyImport[]
+  buddyCatchUps     BuddyCatchUp[]
+  buddyScreenRules  BuddyScreenRule[]
+  aiKeys            AiKey[]
+  // Stage 11 (the People page): the free AI the owner gives, the invites, what people send.
+  aiGrants          AiGrant[]          @relation("AiGrantTo")
+  aiGrantsGiven     AiGrant[]          @relation("AiGrantBy")
+  invitesSent       SignupInvite[]     @relation("InviteBy")
+  invitesUsed       SignupInvite[]     @relation("InviteUsedBy")
+  feedback          Feedback[]
+  buddyHeard        BuddyHeard[]
+  buddySessionMarks BuddySessionMark[]
+  buddyDays         BuddyCaptureDay[]
+  buddySteps        BuddyDay[]
+  buddyThumbs       BuddyFeedback[]
+  routines          Routine[]
+  chapters          BuddyChapter[]
+  workLines         WorkLine[]
 
   @@index([googleId])
 }
@@ -625,10 +650,18 @@ model Reminder {
   message      String         @default("")
   emailSent    Boolean        @default(false)
   status       ReminderStatus @default(pending)
+  /// Stage 7 (V2): a silent one shows on the home picture and in the app at its time (and 2 hours past it),
+  /// with no sound and no email. The chat and agents set silent ones unless he says alarm or ring.
+  silent       Boolean        @default(false)
+  /// daily | weekdays | weekly, or none: when one passes, the next of its series is made; cancelling ends it.
+  repeat       String?        @db.VarChar(20)
+  /// The series a repeating one belongs to (its first reminder's id), or none.
+  seriesId     String?
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
 
   @@index([userId, reminderDate])
+  @@index([seriesId])
   @@index([status, reminderDate])
   @@index([type, status])
   @@index([todoId])
@@ -1373,9 +1406,52 @@ model AiUsage {
   batch            Boolean   @default(false)
   /// From src/services/claude/pricing.ts at the time of the call.
   costUsd          Decimal   @db.Decimal(10, 6)
+  /// Which key paid: "house" (the server's) or "own" (the person's own key, later). Text, not an enum,
+  /// so a new kind never breaks an older release (ECOSYSTEM_V2_PLAN §10.1).
+  source           String    @default("house") @db.VarChar(10)
   createdAt        DateTime  @default(now())
 
   @@index([userId, createdAt])
+}
+
+/// Whether a Claude API key works now (ECOSYSTEM_V2_PLAN §4.15, stage 2): the server's key ("house") and,
+/// later, a person's own. A key that ran out of credit or was rejected is paused for every account that
+/// uses it: no call is made on it until a probe succeeds (every 6 hours, or the user's "Try again").
+/// "Busy" and network faults never pause a key. No row: the key is fine.
+model AiKeyState {
+  keyId      String    @id @db.VarChar(64)
+  /// ok | no_credit | bad_key (text, so a new state never breaks an older release)
+  state      String    @default("ok") @db.VarChar(20)
+  /// When it entered this state.
+  since      DateTime  @default(now())
+  /// The API's own words for the failure (never the key).
+  lastError  String?   @db.VarChar(300)
+  /// When a paused key is probed next.
+  probeAt    DateTime?
+  /// Stage 4 (hold and replay): the last pause, once over, so the first night back is told which days
+  /// the buddy could not listen.
+  pausedFrom DateTime?
+  pausedTo   DateTime?
+  updatedAt  DateTime  @updatedAt
+}
+
+/// Stage 10 (ECOSYSTEM_V2_PLAN §9.3): a person's own Claude API key, encrypted (AES-256-GCM with AI_KEYS_SECRET).
+/// Never returned or logged: only its last 4 show. One at a time; a removed one keeps its row (removedAt).
+model AiKey {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// anthropic (the door stays open for others)
+  provider  String    @default("anthropic") @db.VarChar(20)
+  cipher    String
+  iv        String    @db.VarChar(32)
+  tag       String    @db.VarChar(32)
+  last4     String    @db.VarChar(4)
+  checkedAt DateTime?
+  createdAt DateTime  @default(now())
+  removedAt DateTime?
+
+  @@index([userId, removedAt])
 }
 
 /// Per-user AI settings (Settings → AI). No row = the defaults.
@@ -1384,7 +1460,78 @@ model AiSettings {
   user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   /// Questions and grading stop for the rest of the (local) month once spend reaches this.
   monthlyCapUsd Decimal  @default(50) @db.Decimal(10, 2)
+  /// Stage 11: a friend's limit a day on the server's key (the owner sets it on the People page). Null: $1.
+  /// Only an account on a free allowance is held to it.
+  dailyCapUsd   Decimal? @db.Decimal(10, 2)
   updatedAt     DateTime @updatedAt
+}
+
+/// Stage 11 (ECOSYSTEM_V2_PLAN stage 11, his decision 1): free AI the owner gives a person on the server's key: the
+/// first allowance when their invite is used, then each top-up. The person uses the server's key while what was
+/// given exceeds their spend on it since the first grant (AiUsage, source "house").
+model AiGrant {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation("AiGrantTo", fields: [userId], references: [id], onDelete: Cascade)
+  amountUsd Decimal  @db.Decimal(10, 2)
+  /// Who gave it (the owner); null once that account is gone.
+  givenById String?
+  givenBy   User?    @relation("AiGrantBy", fields: [givenById], references: [id], onDelete: SetNull)
+  note      String   @default("") @db.VarChar(200)
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
+
+/// Stage 11: a one-time invite link the owner makes on the People page: the only way in while signup is closed.
+/// It lets that email make an account once (with the email's code or Google, which prove the address), within 14
+/// days, unless revoked; its allowance becomes the person's first AiGrant.
+model SignupInvite {
+  id           String    @id @default(cuid())
+  /// Lower-cased.
+  email        String    @db.VarChar(320)
+  /// The name the owner typed (the signup form starts with it).
+  name         String    @default("") @db.VarChar(50)
+  /// In the link (/signup?invite=…); random, unique.
+  code         String    @unique @db.VarChar(64)
+  allowanceUsd Decimal   @default(5) @db.Decimal(10, 2)
+  invitedById  String?
+  invitedBy    User?     @relation("InviteBy", fields: [invitedById], references: [id], onDelete: SetNull)
+  createdAt    DateTime  @default(now())
+  expiresAt    DateTime
+  usedAt       DateTime?
+  usedById     String?
+  usedBy       User?     @relation("InviteUsedBy", fields: [usedById], references: [id], onDelete: SetNull)
+  revokedAt    DateTime?
+
+  @@index([email])
+}
+
+/// Stage 11: a setting of the whole server the owner changes in the app (the friends' monthly ceiling). Key → JSON.
+model ServerSetting {
+  key       String   @id @db.VarChar(64)
+  value     Json
+  updatedAt DateTime @updatedAt
+}
+
+/// Stage 11 (§9.6 item 5, his item 10d): what a person sends the owner: words from "Send feedback" (kind
+/// "feedback"), or the phone app's diagnostics (kind "diagnostics": the model, Android version, screen size,
+/// permissions and last update times in `details`; nothing personal). Shown on the People page.
+model Feedback {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// feedback | diagnostics (text, so a new kind never breaks an older release)
+  kind      String   @default("feedback") @db.VarChar(20)
+  text      String   @default("") @db.VarChar(4000)
+  /// web | phone
+  source    String   @default("web") @db.VarChar(10)
+  /// Where it was sent from (a page path) or the diagnostics.
+  details   Json?
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([kind, createdAt])
 }
 
 /// A Message Batch the nightly job submitted. The poller stores its results once it has ended.
@@ -1739,6 +1886,8 @@ model AssistantThread {
   title     String             @db.VarChar(120)
   /// Asked from inside this doc (its asks are not listed on /ask); gone with the doc.
   docId     String?
+  /// Stage 3: the buddy's question this chat opened with (a reply in it answers or passes it).
+  askId     String?            @db.VarChar(30)
   doc       Doc?               @relation(fields: [docId], references: [id], onDelete: Cascade)
   createdAt DateTime           @default(now())
   updatedAt DateTime           @updatedAt
@@ -1749,17 +1898,21 @@ model AssistantThread {
 }
 
 model AssistantMessage {
-  id        String          @id @default(cuid())
-  threadId  String
-  thread    AssistantThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
-  role      AssistantRole
-  text      String
+  id          String          @id @default(cuid())
+  threadId    String
+  thread      AssistantThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  role        AssistantRole
+  text        String
   /// The tools an answer used: [{ name, level, input, result, ok, editId? }] (short forms).
-  tools     Json            @default("[]")
+  tools       Json            @default("[]")
   /// An answer's token usage and its cost.
-  usage     Json?
-  costUsd   Decimal?        @db.Decimal(10, 6)
-  createdAt DateTime        @default(now())
+  usage       Json?
+  costUsd     Decimal?        @db.Decimal(10, 6)
+  /// Stage 3: when the buddy read this message of his (null: not yet); `buddySkip`: written while he had
+  /// paused the buddy, so it is never read.
+  buddyReadAt DateTime?
+  buddySkip   Boolean         @default(false)
+  createdAt   DateTime        @default(now())
 
   @@index([threadId, createdAt])
 }
@@ -1836,57 +1989,80 @@ enum BuddySource {
 
 /// One row = the buddy is set up for this user. No row = the defaults (not enabled, not paused).
 model BuddyState {
-  userId       String    @id
-  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId          String    @id
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   /// The thinking steps (they cost AI money) run only while enabled and not paused.
-  enabled      Boolean   @default(false)
+  enabled         Boolean   @default(false)
   /// The user's switch: no capture and no thinking while on.
-  paused       Boolean   @default(false)
+  paused          Boolean   @default(false)
   /// What he calls it ("your buddy" while null).
-  name         String?   @db.VarChar(40)
+  name            String?   @db.VarChar(40)
   /// candid | gentle
-  tone         String    @default("candid") @db.VarChar(20)
+  tone            String    @default("candid") @db.VarChar(20)
   /// The portrait: who he is (≤ 120 words), where he is heading (≤ 80), right now (≤ 120).
-  who          String?
-  heading      String?
-  now          String?
+  who             String?
+  heading         String?
+  now             String?
   /// The buddy's notebook for its next step (≤ 1,500 characters).
-  notebook     String?
+  notebook        String?
   /// The buddy's own monthly AI cap (the account's cap still applies).
-  capUsd       Decimal   @default(25) @db.Decimal(10, 2)
+  capUsd          Decimal   @default(25) @db.Decimal(10, 2)
   /// B9: keep a log of what he works on (the gate's `work` label and the work summariser). Off: the
   /// gate's request is exactly as before.
-  workLog      Boolean   @default(false)
+  workLog         Boolean   @default(false)
+  /// ECOSYSTEM_V2_PLAN stage 12 (the owner's word, 11-20: the person chooses): connected chats (ChatGPT, Claude, Claude
+  /// Code outside a work folder) see what work folders logged. Off: those lines stay in their own folder and in Recollect.
+  shareOfficeWork Boolean   @default(true)
+  /// Stage 16 (ECOSYSTEM_V2_PLAN): their goal on the phone's pictures and widget. Off by default (the owner, 11-20: a goal
+  /// may be private, and a lock screen is seen by anyone nearby).
+  goalOnScreens   Boolean   @default(false)
+  /// ECOSYSTEM_V2_PLAN stage 3: the loop (threads, asks, the check when words show) is on for this
+  /// account. Off: today's behaviour, at once (nothing of today's is closed while this switch exists).
+  loop            Boolean   @default(false)
+  /// Stage 5 (§4.9): his switch "The buddy may ask me questions" (off: no question on any surface).
+  asksOn          Boolean   @default(true)
   /// The local day the night step last ran (claimed first, like lastNudgeDay).
-  lastNightDay DateTime? @db.Date
-  lastStepAt   DateTime?
-  updatedAt    DateTime  @updatedAt
+  lastNightDay    DateTime? @db.Date
+  lastStepAt      DateTime?
+  updatedAt       DateTime  @updatedAt
 }
 
 /// A note about the user: raw, dated, append-only (≤ 300 characters). The night step folds notes into
 /// memories (memoryId); a note saved by an agent or by him becomes a memory at once.
 model Observation {
-  id          String      @id @default(cuid())
-  userId      String
-  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  text        String      @db.VarChar(300)
-  kind        MemoryKind
-  sensitivity Sensitivity @default(open)
-  source      BuddySource
-  agentName   String?     @db.VarChar(60)
-  sessionKey  String?     @db.VarChar(80)
+  id           String      @id @default(cuid())
+  userId       String
+  user         User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  text         String      @db.VarChar(300)
+  kind         MemoryKind
+  sensitivity  Sensitivity @default(open)
+  source       BuddySource
+  agentName    String?     @db.VarChar(60)
+  sessionKey   String?     @db.VarChar(80)
   /// The project (folder) key of the session it came from.
-  project     String?     @db.VarChar(100)
+  project      String?     @db.VarChar(100)
+  /// Stage 3: when he said it (the message's own time), and the kind of source as text (ask_ai, ...).
+  saidAt       DateTime?
+  via          String?     @db.VarChar(20)
+  /// MCP_MEMORY_PLAN §4.4: whose word an assistant passed on ('said', 'inferred'); null = own words, or an older build (passed on).
+  basis        String?     @db.VarChar(10)
+  /// §4.2: an update on something known (progress, done, skipped, changed, paused, resumed, dropped, finished, said); null = a new detail.
+  updateKind   String?     @db.VarChar(10)
+  /// §4.7: it needs the buddy's understanding, which could not run when it was saved; cleared once read or linked.
+  waitingSince DateTime?
+  /// §4.4: said on that day, its time unknown.
+  dayOnly      Boolean     @default(false)
   /// The user's local day it was noted.
-  day         DateTime    @db.Date
-  memoryId    String?
-  memory      Memory?     @relation(fields: [memoryId], references: [id], onDelete: SetNull)
+  day          DateTime    @db.Date
+  memoryId     String?
+  memory       Memory?     @relation(fields: [memoryId], references: [id], onDelete: SetNull)
   /// When the night step read it (folded into a memory, or judged not worth one); null = waiting.
-  foldedAt    DateTime?
-  createdAt   DateTime    @default(now())
+  foldedAt     DateTime?
+  createdAt    DateTime    @default(now())
 
   @@index([userId, day])
   @@index([memoryId])
+  @@index([userId, waitingSince])
 }
 
 /// What the buddy knows about the user: the curated list (plan §3.2). His word wins: a memory he
@@ -1921,6 +2097,10 @@ model Memory {
   closeReason  String?                  @db.VarChar(200)
   /// The memory this one replaced (a changed fact keeps its history).
   supersedesId String?
+  /// MCP_MEMORY_PLAN §4.3: an assistant's conclusion, not the person's words (a working memory until their own words confirm it).
+  inferred     Boolean                  @default(false)
+  /// §4.3: two versions said on one day in an unknown order: marked "check" until a later statement or the person settles it.
+  checkSince   DateTime?
   /// Kept by a trigger from `text` (English stems and plain words); GIN index. Raw SQL only.
   searchVector Unsupported("tsvector")?
   createdAt    DateTime                 @default(now())
@@ -1945,8 +2125,15 @@ model BuddyChunk {
   /// B9: from a folder that never gets his brief (`brief: false` in his hooks.json): office work.
   office     Boolean     @default(false)
   source     BuddySource @default(hook)
-  /// [{ at, text, reply? }]
+  /// Stage 3: the kind of source as text (ask_ai, answer, ...); null: the hooks.
+  via        String?     @db.VarChar(20)
+  /// The time its earliest message was said (the queue goes earliest said first).
+  saidFrom   DateTime?
+  /// [{ at, text, reply?, before?, n?, context? }]
   messages   Json
+  /// Stage 4: a saved note (an agent's remember or learned, his "Tell") waiting to be linked to his
+  /// threads: not raw chat, so it waits however long the AI is paused (no 48-hour limit).
+  noteId     String?     @db.VarChar(40)
   attempts   Int         @default(0)
   lastError  String?     @db.VarChar(300)
   createdAt  DateTime    @default(now())
@@ -1957,22 +2144,49 @@ model BuddyChunk {
 
 /// What capture did on one of his days (counts only, never words): the usage view and the review.
 model BuddyCaptureDay {
-  userId  String
-  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  day     DateTime @db.Date
+  userId         String
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  day            DateTime  @db.Date
   /// Messages received, kept by the gate, chunks, dropped (paused, expired, failed), scrubbed.
-  seen    Int      @default(0)
-  kept    Int      @default(0)
-  chunks  Int      @default(0)
-  dropped Int      @default(0)
-  secrets Int      @default(0)
+  seen           Int       @default(0)
+  kept           Int       @default(0)
+  chunks         Int       @default(0)
+  dropped        Int       @default(0)
+  secrets        Int       @default(0)
   /// What the digest wrote: notes about him, items for his inbox.
-  notes   Int      @default(0)
-  items   Int      @default(0)
+  notes          Int       @default(0)
+  items          Int       @default(0)
   /// B9: work lines the summariser wrote.
-  work    Int      @default(0)
+  work           Int       @default(0)
+  /// Stage 4 (the ear meter): per source, { seen, pieces, dropped, last } (last: when it was last heard, ISO).
+  bySource       Json      @default("{}")
+  /// Stage 5 (§4.13): pulses on events skipped because the day's 4 were used (the usage view), and when the
+  /// last one was skipped (the events before it are counted once).
+  pulsesSkipped  Int       @default(0)
+  pulseSkippedAt DateTime?
+  /// Stage 18: the last time their own fresh words changed what is fit to say today (a plan for tonight, how today is
+  /// going): a pulse on an event follows within minutes.
+  todayAt        DateTime?
+  /// Stage 18: those words (their own, scrubbed, the latest 400 characters), so the pulse they start knows what changed.
+  todayWords     String?   @db.VarChar(400)
 
   @@id([userId, day])
+}
+
+/// How far the buddy has read each session (ECOSYSTEM_V2_PLAN §4.11 rule 2, stage 4): a message is known
+/// by its own number in its session, not by the piece that carried it, so whatever is sent again is
+/// read once, and a send whose answer was lost loses and doubles nothing.
+model BuddySessionMark {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sessionKey String   @db.VarChar(80)
+  /// The highest message number taken (read, or dropped while he had paused the buddy).
+  readTo     Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([userId, sessionKey])
 }
 
 enum BuddyStepKind {
@@ -2001,12 +2215,18 @@ model BuddyDay {
   insight       String?       @db.VarChar(200)
   /// The lock check passed the thought: the home picture may show it (others see a home screen too).
   insightLockOk Boolean       @default(false)
+  /// Stage 3: what the thought and the note rest on, [{ threadId, rev }] (a line carries its own `about`).
+  insightAbout  Json?
+  noteAbout     Json?
   /// The memory changes applied (an audit, and what an Undo of the night would take back).
   ops           Json          @default("[]")
   /// What the op check and the guards threw out, and why (never his words).
   dropped       Json          @default("[]")
   model         String        @db.VarChar(100)
   costUsd       Decimal       @default(0) @db.Decimal(10, 6)
+  /// Stage 5 (§4.13): a pulse run because a thread changed in a way that matters today (at most 4 a day),
+  /// not one of the fixed pulses at 12:00 and 18:00.
+  onEvent       Boolean       @default(false)
   createdAt     DateTime      @default(now())
 
   @@index([userId, day])
@@ -2023,9 +2243,256 @@ model BuddyFeedback {
   target     String   @db.VarChar(20)
   /// more | less
   verdict    String   @db.VarChar(10)
+  /// Stage 5b: why a "not this" (private | time | useless | wrong), when he said; and his few words.
+  reason     String?  @db.VarChar(12)
+  words      String?  @db.VarChar(200)
   createdAt  DateTime @default(now())
 
   @@index([userId, createdAt])
+}
+
+/// Stage 5b (ECOSYSTEM_V2_PLAN, part B): what he told the buddy about his screens, or what a thumb taught it:
+/// questions not before a time (asks_from), only on some days (asks_days), or a topic kept off the screens
+/// (topic, judged by the lock check). About one thread or everything. Removed on /you (endedAt).
+model BuddyScreenRule {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// asks_from | asks_days | topic
+  kind      String    @db.VarChar(20)
+  /// The thread it is about, or none: everything.
+  threadId  String?
+  /// asks_from: questions not before this minute of his day.
+  fromMin   Int?
+  /// asks_days: the weekdays questions may come (0 Sunday to 6 Saturday).
+  days      Int[]     @default([])
+  /// His words, or the line a thumb was on.
+  text      String    @db.VarChar(200)
+  /// said | thumb
+  source    String    @db.VarChar(10)
+  createdAt DateTime  @default(now())
+  endedAt   DateTime?
+
+  @@index([userId, endedAt])
+}
+
+/// What is going on in a person's life that the buddy pays attention to (ECOSYSTEM_V2_PLAN §4.1, stage 3):
+/// an intention, a habit being built, an event to come, a situation. States are text, never enums, so a
+/// new one never breaks an older release (§10.1).
+model BuddyThread {
+  id           String                   @id @default(cuid())
+  userId       String
+  user         User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title        String                   @db.VarChar(120)
+  /// 3 to 8 search words, with other words for the same thing (lower case).
+  keywords     String[]                 @default([])
+  /// noticed | active | committed | paused | done | dropped
+  stage        String                   @default("noticed") @db.VarChar(20)
+  /// A day to come back to it, from his words.
+  lookAgainOn  DateTime?                @db.Date
+  /// none | daily | weekly: how often an update is natural, from his words.
+  rhythm       String                   @default("none") @db.VarChar(10)
+  /// Stage 5b: a one-time event on its day (lookAgainOn): no question before it is over, one at most after it,
+  /// closed by itself a week after it.
+  event        Boolean                  @default(false)
+  /// Its time of day (minutes), when his words gave one.
+  eventMinute  Int?
+  /// A stranger reading it would learn something a person usually keeps private (§4.8).
+  sensitive    Boolean                  @default(false)
+  /// His switch: may its words show on his lock and home screen.
+  onScreens    Boolean                  @default(true)
+  /// His own instruction about it, in his words.
+  steer        String?                  @db.VarChar(200)
+  /// "Don't ask me about this": no words about it until he raises it himself.
+  noAsk        Boolean                  @default(false)
+  /// No words of any kind about it until then (§4.4).
+  quietUntil   DateTime?
+  goalId       String?
+  taskId       String?
+  /// The memory it was copied from (stage 3's copy of the old thread memories).
+  memoryId     String?
+  /// Goes up with every new word about it and every change of its state; an item written about it
+  /// shows only while the revision is the one its writer saw (§4.5).
+  revision     Int                      @default(1)
+  /// When he last said something about it (the time he said it).
+  lastSaidAt   DateTime
+  /// His day it was first said.
+  firstDay     DateTime                 @db.Date
+  closedAt     DateTime?
+  /// Kept by a trigger from the title and keywords (English stems and plain words); GIN index. Raw SQL only.
+  searchVector Unsupported("tsvector")?
+  createdAt    DateTime                 @default(now())
+  updatedAt    DateTime                 @updatedAt
+  events       BuddyThreadEvent[]
+  asks         BuddyAsk[]
+  reminders    BuddyReminder[]
+
+  @@index([userId, stage])
+  @@index([searchVector], type: Gin)
+}
+
+/// One dated line of a thread's history (§4.1, §4.11): what he said or did, when he said it, the day
+/// it is about, whether it was his own word (direct) or passed on (an agent's note, a connector).
+model BuddyThreadEvent {
+  id            String      @id @default(cuid())
+  userId        String
+  threadId      String
+  thread        BuddyThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  /// said | progress | done | skipped | finished | changed | paused | resumed | dropped | answered | steer
+  kind          String      @db.VarChar(20)
+  text          String      @db.VarChar(200)
+  /// When he said it (for an indirect statement: no later than this).
+  saidAt        DateTime
+  receivedAt    DateTime    @default(now())
+  /// His day it is about (his day ends at 04:00).
+  forDay        DateTime    @db.Date
+  direct        Boolean     @default(true)
+  /// MCP_MEMORY_PLAN §4.4: an assistant passed it on as the person's word ('said') or its own conclusion ('inferred'); null = own, or older (passed on).
+  basis         String?     @db.VarChar(10)
+  /// §4.4: said on that day, its time unknown.
+  dayOnly       Boolean     @default(false)
+  /// The same thing said twice on one day: kept for the record, not counted, changes nothing.
+  duplicate     Boolean     @default(false)
+  /// Where it came from: hook | ask_ai | answer | agent | tell | app | ...
+  via           String      @db.VarChar(20)
+  observationId String?
+  askId         String?
+  /// The piece, the message and the operation: once only per person (§4.11 rule 2).
+  originKey     String      @db.VarChar(160)
+  createdAt     DateTime    @default(now())
+
+  @@unique([userId, originKey])
+  @@index([threadId, saidAt])
+}
+
+/// A question from the buddy that knows when it was answered (§4.4, §4.14).
+/// Stage 8 (E5): a chat export he brought in (Claude, ChatGPT): his own messages only, read as old news, up to the
+/// limit he approved after its estimate.
+model BuddyImport {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// claude | chatgpt
+  source      String    @db.VarChar(20)
+  fileName    String?   @db.VarChar(200)
+  /// His messages not heard before, in how many chats; those already known (another route, or an upload before).
+  chats       Int       @default(0)
+  messages    Int       @default(0)
+  known       Int       @default(0)
+  /// The estimate before anything is read, and the limit he approved.
+  pieces      Int       @default(0)
+  estimateUsd Decimal   @default(0) @db.Decimal(10, 4)
+  limitUsd    Decimal?  @db.Decimal(10, 4)
+  /// estimated | queued | cancelled
+  state       String    @default("estimated") @db.VarChar(20)
+  /// Pieces queued for the digest on his yes.
+  queued      Int       @default(0)
+  oldest      DateTime?
+  newest      DateTime?
+  /// Between the estimate and his yes: his messages (scrubbed), emptied once queued or cancelled.
+  payload     Json      @default("[]")
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([userId, createdAt])
+}
+
+/// Stage 8 (§4.11 rule 3): an outside message the app has read, known by its chat, its words and its own time to
+/// the second, so the same message by another route, or the same export twice, is read once.
+model BuddyHeard {
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  chatKey     String   @db.VarChar(120)
+  fingerprint String   @db.VarChar(64)
+  saidAt      DateTime
+  createdAt   DateTime @default(now())
+
+  @@id([userId, chatKey, fingerprint, saidAt])
+}
+
+/// Stage 7 (§4.7): the buddy's own silent reminder for an active or committed thread: never a task, 2 a day at
+/// most, never rings or emails; on the home picture with his reminders; he can take it back.
+model BuddyReminder {
+  id         String       @id @default(cuid())
+  userId     String
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  threadId   String?
+  thread     BuddyThread? @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  text       String       @db.VarChar(120)
+  at         DateTime
+  /// daily | weekdays | weekly, or none (the night sets none; kept for later).
+  repeat     String?      @db.VarChar(20)
+  /// The step that set it.
+  buddyDayId String?
+  /// pending | cancelled
+  status     String       @default("pending") @db.VarChar(12)
+  /// Stage 19: what it brings back (their Later on the home screen): tk (a task), th (an event thread), pu (a left-off
+  /// session), rm (a reminder of theirs); its id; and why it exists (later), or none (the night's own).
+  refKind    String?      @db.VarChar(10)
+  refId      String?
+  origin     String?      @db.VarChar(10)
+  createdAt  DateTime     @default(now())
+
+  @@index([userId, at])
+}
+
+/// Stage 7 (V1): his own words pinned to the lock screen for a window ("put this on my lock screen until 6"):
+/// in its hours and days it is the lock line, over the buddy's words. Cleared by him or an agent on his word.
+model LockPin {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  text      String    @db.VarChar(120)
+  /// Its hours, minutes of his day (from == to: all day; from > to crosses midnight).
+  fromMin   Int
+  toMin     Int
+  /// The weekdays it shows (0 Sunday to 6 Saturday); empty: every day.
+  days      Int[]     @default([])
+  /// The last day it shows (his day), or none: until it is cleared.
+  untilDay  DateTime? @db.Date
+  /// you | agent | ask_ai
+  setBy     String    @db.VarChar(20)
+  agentName String?   @db.VarChar(60)
+  clearedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, clearedAt])
+}
+
+model BuddyAsk {
+  id           String       @id @default(cuid())
+  userId       String
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  threadId     String?
+  thread       BuddyThread? @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  /// ask | offer
+  kind         String       @default("ask") @db.VarChar(10)
+  text         String       @db.VarChar(200)
+  /// Up to 3 quick answers: [{ label, meaning }] (meaning: done | skipped | yes | no | later).
+  answers      Json         @default("[]")
+  /// The thread's revision its writer saw (a new word about it withdraws the question).
+  seenRevision Int?
+  /// The step that wrote it.
+  buddyDayId   String?
+  fromAt       DateTime
+  untilAt      DateTime
+  /// open | replied | answered | passed | withdrawn | expired
+  state        String       @default("open") @db.VarChar(12)
+  /// Where it has shown: home | chat | brief | phone | lock
+  shownOn      String[]     @default([])
+  firstShownAt DateTime?
+  answeredAt   DateTime?
+  answer       String?      @db.VarChar(300)
+  /// Stage 5: his thumb on the question itself ("less": it went quiet 14 days).
+  thumb        String?      @db.VarChar(10)
+  /// Stage 5b: why (private | time | useless | wrong), when he said.
+  thumbReason  String?      @db.VarChar(12)
+  /// Stage 6 (§4.14): the lock check passed its words, so the phone (app 0.6.0) may show it on the lock
+  /// screen or in a notification's text there. False when it was not checked or the check failed.
+  lockOk       Boolean      @default(false)
+  createdAt    DateTime     @default(now())
+
+  @@index([userId, state, untilAt])
 }
 
 /// Something the buddy does by itself after his standing yes (BUDDY_MEMORY_PLAN §3.6, B6): offered once
@@ -2108,9 +2575,78 @@ model WorkLine {
   /// Kept by a trigger from `text` (English stems and plain words); GIN index. Raw SQL only.
   searchVector Unsupported("tsvector")?
   createdAt    DateTime                 @default(now())
+  /// ECOSYSTEM_V2_PLAN stage 12: when it happened (a web line: when it was logged; the summariser: its piece's last
+  /// message; Claude Code's log_work: the end of its time span). A thing's newest state is its latest happenedAt, so a
+  /// late older summary never becomes the newest. Null on older rows: read as createdAt.
+  happenedAt   DateTime?
+  /// Stage 12: the line this one is news on (an open problem now fixed, a decision changed): a thing is its chain.
+  followsId    String?
+  follows      WorkLine?                @relation("WorkFollows", fields: [followsId], references: [id], onDelete: SetNull)
+  followers    WorkLine[]               @relation("WorkFollows")
+  /// Stage 12: this line repeats that one (joined by the app that wrote it): kept, never shown or counted.
+  sameAsId     String?
+  sameAs       WorkLine?                @relation("WorkSameAs", fields: [sameAsId], references: [id], onDelete: SetNull)
+  repeats      WorkLine[]               @relation("WorkSameAs")
+  /// Stage 12: the app that wrote it ("ChatGPT", "Claude", "Claude Code"); stored, nothing reasons on it yet.
+  app          String?                  @db.VarChar(60)
 
   @@index([userId, day])
   @@index([userId, project, day])
   @@index([userId, sessionKey, day])
   @@index([searchVector], type: Gin)
+  @@index([followsId])
+  @@index([sameAsId])
+}
+
+/// MCP_MEMORY_PLAN §4.7: a catch-up run, when the buddy's AI can run again after a long gap: the record is settled by
+/// code, then what can be in motion is read oldest first, in batches, with its own dates. Never a question or a pulse.
+model BuddyCatchUp {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Why it ran: 'ai_back' (credits, a cap reset, AI allowed) or 'switched_on' (the buddy or the loop).
+  reason     String    @db.VarChar(20)
+  /// The first and last day said of what it read.
+  firstDay   DateTime? @db.Date
+  lastDay    DateTime? @db.Date
+  /// Notes settled, things read, batches queued.
+  notes      Int       @default(0)
+  things     Int       @default(0)
+  batches    Int       @default(0)
+  /// waiting | running | done | stopped
+  state      String    @default("running") @db.VarChar(10)
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+
+  @@index([userId, startedAt])
+}
+
+/// Stage 20 (ECOSYSTEM_V2_PLAN): what happened after the buddy's words showed, written by code for the day just ended,
+/// before the night thinks. A quiet record: nothing reads it yet (scripts/what-landed.ts prints it for the talk after the
+/// trial). One row per item a day.
+model BuddyOutcome {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Their day it showed.
+  day       DateTime  @db.Date
+  /// line | thought | question | later
+  shown     String    @db.VarChar(12)
+  /// Its words (short).
+  text      String    @db.VarChar(200)
+  /// What it rested on: thread ids and refs (pu_…, tk_…).
+  about     Json      @default("[]")
+  /// Its hours.
+  fromAt    DateTime?
+  untilAt   DateTime?
+  /// acted | answered | later | thumb_up | thumb_down | none
+  outcome   String    @db.VarChar(12)
+  /// Minutes from the start of its hours to what followed (none: null).
+  minutes   Int?
+  /// The item it records (the step and line, the question, the Later): written once.
+  sourceKey String    @db.VarChar(120)
+  createdAt DateTime  @default(now())
+
+  @@unique([userId, sourceKey])
+  @@index([userId, day])
 }

@@ -112,7 +112,8 @@ export async function pushToUser(userId: string, message: PushMessage): Promise<
  */
 export async function morningLine(userId: string, now: Date = new Date()): Promise<PushMessage | null> {
     const [nudge, line, buddy] = await Promise.all([buildMorningNudge(userId, now), currentLine(userId, now), buddySettings(userId)]);
-    const said = buddy.enabled && !buddy.paused && line && line.lockOk && !line.fallback ? line.text : null;
+    // Stage 3: a notification is sent once and never taken back, so it never carries words about a thread (§4.5).
+    const said = buddy.enabled && !buddy.paused && line && line.lockOk && !line.fallback && !line.about?.length ? line.text : null;
     const lead = nudge.heading === 'Busy week' || nudge.heading === 'Welcome back' ? `${nudge.heading}: ${nudge.intro}` : nudge.intro;
     if (said) return { title: buddy.name ? `From ${buddy.name}` : 'From your buddy', body: nudge.items.length ? `${said} · ${lead}` : said, url: '/' };
     if (!nudge.items.length) return null;

@@ -20,12 +20,19 @@ export function aiAllowedEmails(env: NodeJS.ProcessEnv = process.env): string[] 
     return list.length ? list : null;
 }
 
-/** Whether this account may use the AI (no query while AI_ALLOWED_EMAILS is unset). */
+/**
+ * Whether this account may use the AI. Stage 10: an account on its own key may, whatever the list says (the list
+ * governs the server's key only). Stage 11: so may a person the owner gave free AI to (their allowance decides,
+ * src/services/claude/allowance.ts); an account whose access the owner ended may not.
+ */
 export async function aiAllowedFor(userId: string, env: NodeJS.ProcessEnv = process.env): Promise<boolean> {
     const list = aiAllowedEmails(env);
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { email: true, accessEndedAt: true } });
+    if (!user || user.accessEndedAt) return false;
     if (!list) return true;
-    const user = await prisma.user.findUnique({ where: { id: userId }, select: { email: true } });
-    return !!user && list.includes(user.email.trim().toLowerCase());
+    if ((await prisma.aiKey.count({ where: { userId, removedAt: null } })) > 0) return true;
+    if ((await prisma.aiGrant.count({ where: { userId } })) > 0) return true;
+    return list.includes(user.email.trim().toLowerCase());
 }
 
 export const aiNotAllowed = (): AiHttpError => new AiHttpError(403, 'AI_NOT_ALLOWED', 'The AI is not available to this account on this server.');

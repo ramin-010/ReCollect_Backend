@@ -1,0 +1,31 @@
+{
+  "about": "ECOSYSTEM_V2_PLAN stage 18: the digest's `today` flag, labels written before any run. true: these words change what is fit to say to them later today (a plan for today or tonight, a change to today's plan, how today is going). false: a lasting fact, a plan for another day, yesterday's event, a to-do with a later day, a question. Pass: 21 of 24, and at most 2 controls marked true. Each message alone, said Friday 20 Nov 2026 at 17:40 their time.",
+  "today": "2026-11-20",
+  "weekday": "Friday",
+  "cases": [
+    { "n": 1, "text": "Tonight I'm finishing the 3Sum problem, starting at 9.", "today": true, "kind": "plan" },
+    { "n": 2, "text": "Going to do my mock interview prep after dinner today.", "today": true, "kind": "plan" },
+    { "n": 3, "text": "Change of plan, I'll study in the morning tomorrow instead of tonight.", "today": true, "kind": "plan" },
+    { "n": 4, "text": "Gym at 7 tonight, then an early night.", "today": true, "kind": "plan" },
+    { "n": 5, "text": "This evening is for the system design chapter, nothing else.", "today": true, "kind": "plan" },
+    { "n": 6, "text": "Meeting a friend for dinner tonight so no study today.", "today": true, "kind": "plan" },
+    { "n": 7, "text": "I'll do the two pending reviews before bed.", "today": true, "kind": "plan" },
+    { "n": 8, "text": "Skipping the guitar practice this evening, going to the movies instead.", "today": true, "kind": "plan" },
+    { "n": 9, "text": "Wiped today, zero energy.", "today": true, "kind": "state" },
+    { "n": 10, "text": "Got a fever since this afternoon, staying in bed.", "today": true, "kind": "state" },
+    { "n": 11, "text": "Today has been insane at work, back to back calls since 9.", "today": true, "kind": "state" },
+    { "n": 12, "text": "Travelling to Pune right now, on the train till late.", "today": true, "kind": "state" },
+    { "n": 13, "text": "Took the day off today, feeling great.", "today": true, "kind": "state" },
+    { "n": 14, "text": "Just got the offer letter!! Can't focus on anything today.", "today": true, "kind": "state" },
+    { "n": 15, "text": "I usually study best in the mornings.", "today": false, "kind": "control" },
+    { "n": 16, "text": "Next week I want to start the distributed systems course.", "today": false, "kind": "control" },
+    { "n": 17, "text": "Yesterday's mock interview went fine, I think.", "today": false, "kind": "control" },
+    { "n": 18, "text": "I need to renew my passport by the 15th of December.", "today": false, "kind": "control" },
+    { "n": 19, "text": "What's the difference between a B-tree and a B+ tree?", "today": false, "kind": "control" },
+    { "n": 20, "text": "My sister lives in Bangalore.", "today": false, "kind": "control" },
+    { "n": 21, "text": "I've been running three mornings a week for a month now.", "today": false, "kind": "control" },
+    { "n": 22, "text": "On Monday I'll book the dentist.", "today": false, "kind": "control" },
+    { "n": 23, "text": "I prefer short notes with diagrams over long text.", "today": false, "kind": "control" },
+    { "n": 24, "text": "Can you explain consistent hashing with an example?", "today": false, "kind": "control" }
+  ]
+}

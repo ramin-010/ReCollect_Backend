@@ -6,6 +6,7 @@ import { requireUser } from '../middlwares/auth';
 import { handler, ok } from './learning/common';
 import { aiBadRequest, aiNotConfigured } from '../services/claude/errors';
 import { isAiConfigured } from '../services/claude/client';
+import { prisma } from '../db/prisma';
 import { aiUsageFor, setMonthlyCap } from '../services/claude/usage.service';
 import { aiMaxCapUsd } from '../config/aiAccess';
 import { ownerEmail } from '../config/owner';
@@ -27,7 +28,16 @@ function idParam(value: unknown): string {
 }
 
 /** Every AI route: 503 AI_NOT_CONFIGURED while CLAUDE_API_KEY is missing. */
-export const requireAiConfigured: RequestHandler = (_req, _res, next) => (isAiConfigured() ? next() : next(aiNotConfigured()));
+/** The server has a key, or (stage 10) the account has its own. */
+export const requireAiConfigured: RequestHandler = (req, _res, next) => {
+    if (isAiConfigured()) return next();
+    const userId = req.user?.id;
+    if (!userId) return next(aiNotConfigured());
+    prisma.aiKey.count({ where: { userId, removedAt: null } }).then(
+        (n) => next(n > 0 ? undefined : aiNotConfigured()),
+        (err: unknown) => next(err)
+    );
+};
 
 const zId = z.string().trim().min(1).max(128);
 

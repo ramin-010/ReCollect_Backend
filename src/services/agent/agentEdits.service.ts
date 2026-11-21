@@ -205,7 +205,9 @@ const UNDO: Record<AgentEditKind, (ctx: UndoContext) => Promise<void>> = {
         });
     },
     reminder_set: async ({ userId, id, data }) => {
-        await unsetReminder(userId, id, stringOrNull(data['createdTaskId']));
+        const b = data['before'] as { at?: unknown; ring?: unknown; repeat?: unknown } | null | undefined;
+        const before = b && typeof b.at === 'string' ? { at: b.at, ring: b.ring === true, repeat: typeof b.repeat === 'string' ? b.repeat : null } : null;
+        await unsetReminder(userId, id, stringOrNull(data['createdTaskId']), before);
     },
     reminder_cancel: async ({ userId, id, now }) => {
         await restoreReminder(userId, id, now);
@@ -226,10 +228,13 @@ const UNDO: Record<AgentEditKind, (ctx: UndoContext) => Promise<void>> = {
     task_create: async ({ userId, id }) => {
         await prisma.todo.deleteMany({ where: { id, userId, workspaceId: null } });
     },
-    task_update: async ({ userId, id, data }) => {
+    task_update: async ({ userId, id, data, now }) => {
         const before = (data['before'] ?? {}) as UndoData;
         const status = before['status'];
         const priority = before['priority'];
+        // Stage 5b: a task the buddy ticked from his words had its reminders still to come cancelled: back with it.
+        const reminders = (Array.isArray(data['reminders']) ? data['reminders'] : []).filter((r): r is string => typeof r === 'string');
+        if (reminders.length) await prisma.reminder.updateMany({ where: { id: { in: reminders }, userId, status: 'cancelled', reminderDate: { gt: now } }, data: { status: 'pending', emailSent: false, phoneAt: null } });
         await prisma.todo.updateMany({
             where: { id, userId, workspaceId: null },
             data: {
@@ -269,7 +274,8 @@ const UNDO: Record<AgentEditKind, (ctx: UndoContext) => Promise<void>> = {
     revision_schedule: ({ userId, data }) => unscheduleRevisions(userId, data),
     subject_create: ({ userId, id }) => deleteEmptySubject(userId, id),
     // The buddy: an agent's forget is undone by making the memory active again (409 if he changed it).
-    memory_close: ({ userId, id, data }) => undoMemoryClose(userId, id, (data['before'] ?? {}) as UndoData),
+    // A correction (MCP_MEMORY_PLAN §4.3) is a close with `replacedBy`: its Undo also takes the new version away.
+    memory_close: ({ userId, id, data }) => undoMemoryClose(userId, id, (data['before'] ?? {}) as UndoData, data),
 };
 
 async function performUndo(userId: string, edit: AgentEdit, now: Date): Promise<void> {

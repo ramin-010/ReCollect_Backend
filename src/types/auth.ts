@@ -17,8 +17,9 @@ export type ApiScope = (typeof API_SCOPES)[number];
  * What authMiddleware puts on `req.auth`: how the request was authenticated.
  *   cookie: the app (the JWT cookie), every scope.
  *   token : a personal access token (an agent): its scopes, and the agent's name for provenance
- *           (the X-Agent-Name header, else the token's name).
+ *           (the X-Agent-Name header, else the token's name); `connector` when an app signed in with OAuth
+ *           (claude.ai, ChatGPT) holds it.
  */
 export type RequestAuth =
     | { via: 'cookie'; scopes: readonly ApiScope[] }
-    | { via: 'token'; tokenId: string; scopes: readonly ApiScope[]; agentName: string };
+    | { via: 'token'; tokenId: string; scopes: readonly ApiScope[]; agentName: string; connector?: boolean };

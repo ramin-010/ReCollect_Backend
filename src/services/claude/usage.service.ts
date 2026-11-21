@@ -8,7 +8,7 @@ import { poke } from '../scheduler/scheduler';
 import { aiAllowedFor, aiMaxCapUsd, assertAiAllowed } from '../../config/aiAccess';
 import { addDays, endOfMonth, resolveTimeZone, startOfDay, startOfMonth, today as todayIn } from '../learning';
 import { aiCapReached } from './errors';
-import { aiModel } from './client';
+import { aiModel, sourceOfMessage } from './client';
 import { costOfCall, roundUsd, type CallUsage, type UsageTotals } from './pricing';
 
 /** The owner, 2026-11-14 night: $50 a month (Recall and the Ask AI manager). */
@@ -96,7 +96,7 @@ export async function recordAiUsage(
     userId: string,
     feature: AiFeature,
     message: { model: string; usage: CallUsage },
-    opts: { batch?: boolean; db?: DbClient } = {}
+    opts: { batch?: boolean; db?: DbClient; source?: 'house' | 'own' } = {}
 ): Promise<UsageTotals> {
     const batch = opts.batch ?? false;
     const totals = costOfCall(message.usage, message.model, batch);
@@ -110,6 +110,9 @@ export async function recordAiUsage(
             cacheReadTokens: totals.cacheReadTokens,
             cacheWriteTokens: totals.cacheWriteTokens,
             batch,
+            // Which key paid (ECOSYSTEM_V2_PLAN stage 2): the key callClaude used for this message (stage 11: a friend's
+            // allowance counts only the server's), else the caller's word, else the server's (batches, Ask AI's own calls).
+            source: opts.source ?? sourceOfMessage(message) ?? 'house',
             costUsd: roundUsd(totals.costUsd).toFixed(6),
         },
         select: { id: true },

@@ -18,6 +18,9 @@ import { taskSummary } from '../tasks/tasks.service';
 import { listDecisions } from '../learningDb/decisions.service';
 import { buddyBrief, type BuddyBrief } from '../buddy/memory.service';
 import { workForBrief, type WorkBrief } from '../buddy/work';
+import { openAsks } from '../buddy/asks';
+import { prisma } from '../../db/prisma';
+import { CAPTURE_PROTOCOL } from '../buddy/capture.service';
 
 const WEAK_SPOTS_PER_TOPIC = 5;
 const RECENT = 5;
@@ -62,6 +65,18 @@ export interface Brief {
      * projects (five at most); in a work folder's chat, that project's last three days with lines only.
      */
     work: WorkBrief | null;
+    /**
+     * Stage 4 (ECOSYSTEM_V2_PLAN §4.4): the buddy's open questions for him, to ask once at a natural pause
+     * (each with its quick answers and its end); never in a work folder. `followUp` stays for older MCP builds.
+     */
+    asks: Array<{ _id: string; text: string; answers: string[]; until: string }>;
+    /** The words endpoint's protocol (stage 4): a hook that sees 2 sends each message with its number. */
+    capture: number;
+    /**
+     * Stage 5 (ECOSYSTEM_V2_PLAN §10, item 9): what is on his mind, the threads the buddy follows: up to 5
+     * titles (committed and active first, the newest word first), never a sensitive, quiet or screen-shy one.
+     */
+    onMind: Array<{ title: string; stage: string }>;
     session: { key: string };
 }
 
@@ -94,21 +109,52 @@ function workBrief(b: Brief): Brief {
         recent: [],
         recall: { days: 7, finished: 0, weakTopics: [] },
         buddy: { who: null, heading: null, now: null, memories: [], note: null, followUp: null, noteId: null, noteDay: null },
+        asks: [],
+        onMind: [],
     };
 }
 
-export async function getBrief(userId: string, options: { project?: string | undefined; key?: string | undefined; work?: boolean | undefined } = {}, now: Date = new Date()): Promise<Brief> {
+/**
+ * `asks`: read the buddy's open questions (an agent's brief only, GET /api/brief): reading marks them shown, so the
+ * app's own uses of the brief (the phone's pictures, the night's signals) never read them.
+ */
+export async function getBrief(userId: string, options: { project?: string | undefined; key?: string | undefined; work?: boolean | undefined; asks?: boolean | undefined } = {}, now: Date = new Date()): Promise<Brief> {
     const full = await fullBrief(userId, options, now);
     if (!options.work) return full;
+    // (fullBrief never reads the questions for a work folder: reading marks them shown.)
     // A work folder: its own project's work only (never the other projects', never his life).
     return { ...workBrief(full), work: await workForBrief(userId, { project: options.project, work: true }, now) };
 }
 
-async function fullBrief(userId: string, options: { project?: string | undefined; key?: string | undefined } = {}, now: Date = new Date()): Promise<Brief> {
+/** A thread nobody spoke of for this long is not on his mind (old news brought in from an export, a faded plan). */
+export const ON_MIND_DAYS = 30;
+
+/** Up to 5 threads for an agent's brief: open, not sensitive, not off his screens, not quiet, spoken of lately; committed and active first. */
+async function onMindOf(userId: string, now: Date): Promise<Array<{ title: string; stage: string }>> {
+    const rows = await prisma.buddyThread.findMany({
+        where: {
+            userId,
+            stage: { in: ['committed', 'active', 'noticed'] },
+            sensitive: false,
+            onScreens: true,
+            noAsk: false,
+            // The week's simulation (11-18): a gym plan and a "learn Go" from an August export headed his brief as on his mind.
+            lastSaidAt: { gte: new Date(now.getTime() - ON_MIND_DAYS * 86_400_000) },
+            OR: [{ quietUntil: null }, { quietUntil: { lte: now } }],
+        },
+        orderBy: [{ lastSaidAt: 'desc' }],
+        take: 30,
+        select: { title: true, stage: true },
+    });
+    const rank = (stage: string) => (stage === 'committed' ? 0 : stage === 'active' ? 1 : 2);
+    return [...rows].sort((a, b) => rank(a.stage) - rank(b.stage)).slice(0, 5);
+}
+
+async function fullBrief(userId: string, options: { project?: string | undefined; key?: string | undefined; work?: boolean | undefined; asks?: boolean | undefined } = {}, now: Date = new Date()): Promise<Brief> {
     const ctx = await loadLearningContext(userId, now);
     const window = coachWindow(ctx.today);
     const weekStart = weekStartOf(ctx.today);
-    const [today, settings, sessions, project, coachRows, targets, review, mirror, tasks, dueDecisions, projectDecisions, buddy] = await Promise.all([
+    const [today, settings, sessions, project, coachRows, targets, review, mirror, tasks, dueDecisions, projectDecisions, buddy, asks] = await Promise.all([
         getToday(userId, now),
         getLearningSettings(userId),
         listSessions(userId, { days: 14 }, now),
@@ -121,7 +167,9 @@ async function fullBrief(userId: string, options: { project?: string | undefined
         listDecisions(userId, { due: true }, now),
         options.project ? listDecisions(userId, { project: options.project }, now) : Promise.resolve([]),
         buddyBrief(userId, { project: options.project }),
+        options.work || !options.asks ? Promise.resolve([]) : openAsks(userId, 'brief', now),
     ]);
+    const onMind = options.work ? [] : await onMindOf(userId, now);
     const work = await workForBrief(userId, {}, now);
     const topicIds = today.next.map((n) => n.topic._id);
     const [weak, last] = await Promise.all([openWeakSpotsOf(userId, topicIds), lastSessionsOf(userId, topicIds)]);
@@ -170,6 +218,9 @@ async function fullBrief(userId: string, options: { project?: string | undefined
         project: project ? { key: project.key, name: project.name, nextStep: project.nextStep, lastSession: project.lastSession } : null,
         buddy,
         work,
+        asks: asks.map((a) => ({ _id: a._id, text: a.text, answers: a.answers.map((x) => x.label), until: a.until })),
+        capture: CAPTURE_PROTOCOL,
+        onMind,
         session: { key: options.key ?? newSessionKey(now) },
     };
 }

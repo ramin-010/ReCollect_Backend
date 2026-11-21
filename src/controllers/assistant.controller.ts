@@ -1,5 +1,6 @@
 // The manager's conversations in the app (MANAGER_AND_DOCS_PLAN 3.4): cookie only (the manager is
 // his, inside the app; not on the token list). A message streams the manager's turn back.
+import { hearChat, openingAsk } from '../services/buddy/chatEar';
 import type { RequestHandler } from 'express';
 import { z } from 'zod';
 import { requireUser } from '../middlwares/auth';
@@ -28,6 +29,10 @@ export const deleteThreadHandler = handler(async (req, res) => {
 const messageSchema = z.object({
     threadId: z.string().trim().min(1).max(40).optional(),
     text: z.string().trim().min(1, 'Say something').max(4000),
+    /** Stage 3: the buddy's question this new chat opened with (Home → Reply). */
+    askId: z.string().trim().min(1).max(40).optional(),
+    /** Stage 11 (§9.6 item 2): the person's first chat, which opened with the buddy's first words. */
+    first: z.literal(true).optional(),
     /** Asked from inside this doc (DOCS_EDITOR_V2_PLAN phase 5): owners and editors only. */
     docId: z.string().trim().min(1).max(40).optional(),
     /** What he points at in the doc: the selected blocks or the cursor's, and the selected words. */
@@ -57,6 +62,17 @@ export const stopTurnHandler = handler(async (req, res) => {
 export const STREAM_KEEPALIVE_MS = 25_000;
 
 /**
+ * An earlier turn as the model reads it again: its words, and for one of its own turns what it did (each tool,
+ * with its result's first words). Without them the model could not tell what it had done: in the week's
+ * simulation (11-18) it said "I hadn't actually set it" of an alarm it had set, and set a second one.
+ */
+export function withToolsDone(m: { role: 'user' | 'assistant'; text: string; tools?: ReadonlyArray<{ name: string; input: string; result: string; ok: boolean }> }): string {
+    if (m.role !== 'assistant' || !m.tools?.length) return m.text;
+    const done = m.tools.map((t) => `${t.name}${t.ok ? '' : ' (failed)'} ${t.input.slice(0, 160)} → ${t.result.split('\n')[0]!.slice(0, 160)}`);
+    return `${m.text}\n\n[What you did in that turn: ${done.join(' · ')}]`;
+}
+
+/**
  * POST /api/assistant/messages { threadId?, text, docId?, focus? }: his message, then the manager's
  * turn as a stream (text/event-stream): `thread` { _id, title, docId }, `delta` { text, round } as
  * the model's words arrive (a new round starts its words again), a `tool` per tool call as it
@@ -75,13 +91,19 @@ export const sendMessageHandler: RequestHandler = async (req, res, next) => {
     };
     try {
         const user = requireUser(req);
-        const { threadId, text, docId, focus } = parse(messageSchema, req.body);
+        const { threadId, text, docId, focus, askId, first } = parse(messageSchema, req.body);
         // The doc he is in, read now (a refusal answers before the stream starts).
         const inDoc = docId ? await docAskContext(user.id, docId, { blockIds: focus?.blockIds ?? [], text: focus?.text }) : null;
+        // Stage 11: the first chat keeps the buddy's opening words as its first message, so the model and the buddy's ear
+        // both know what the person is answering (only while they have never talked to it: read before the chat is made).
+        const firstWords = first && !threadId && !docId ? (await (await import('../services/users/firstRun.service')).firstRunFor(user.id)).opening : null;
         const thread = threadId ? await getThread(user.id, threadId) : { ...(await createThread(user.id, text, docId ?? null)), messages: [] };
         if ((thread.docId ?? null) !== (docId ?? null)) throw new ErrorResponse(400, thread.docId ? 'This conversation belongs to a doc: ask from inside it' : 'This conversation is not about a doc');
-        const history = thread.messages.map((m) => ({ role: m.role, text: m.text }));
-        await addMessage(user.id, thread._id, { role: 'user', text });
+        if (firstWords) thread.messages.push(await addMessage(user.id, thread._id, { role: 'assistant', text: firstWords }));
+        const history = thread.messages.map((m) => ({ role: m.role, text: withToolsDone(m) }));
+        const mine = await addMessage(user.id, thread._id, { role: 'user', text });
+        // Stage 3: a reply in the chat that opened with one of the buddy's questions closes it for the day.
+        const opening = askId && !threadId ? await openingAsk(user.id, thread._id, askId) : null;
         res.status(200).set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive' });
         res.flushHeaders();
         streaming = true;
@@ -109,6 +131,8 @@ export const sendMessageHandler: RequestHandler = async (req, res, next) => {
         await sent;
         const message = await addMessage(user.id, thread._id, { role: 'assistant', text: turn.text, tools: turn.tools, usage: turn.usage, costUsd: turn.costUsd });
         send('done', { message, stopped: turn.stopped, rounds: turn.rounds });
+        // Stage 3: the buddy reads what he said here (the chat is one of its ears), with what it said just before.
+        await hearChat(user.id, thread._id, mine, { inDoc: !!docId, before: opening?.text ?? [...thread.messages].reverse().find((m) => m.role === "assistant")?.text ?? null, reply: turn.text, index: history.length }).catch((err: unknown) => console.error('[buddy] the chat could not be queued:', err instanceof Error ? err.message : err));
         res.end();
     } catch (err) {
         if (!streaming) return next(err);

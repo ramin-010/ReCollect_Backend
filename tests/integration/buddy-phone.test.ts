@@ -3,7 +3,7 @@
 // note, the lines said so far (newest first, only hours begun, the code's plain lines left out), his
 // thumbs and the day in numbers; the phone's own token may thumb and tell, and read nothing more; the
 // brief's note id is the one the hooks get, so a session doesn't show it twice.
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { prisma } from '../../src/db/prisma';
 import { setAiClientForTests } from '../../src/services/claude/client';
 import { LOCK_SCHEMA, NIGHT_SCHEMA } from '../../src/services/buddy/think';
@@ -26,6 +26,7 @@ afterAll(() => {
     setAiClientForTests(null);
 });
 beforeEach(() => fake.reset());
+afterEach(() => vi.useRealTimers());
 
 const night = (note: string, over: Record<string, unknown> = {}) => ({
     memory: [],
@@ -68,11 +69,11 @@ async function setup() {
 describe("the phone app's buddy", () => {
     it('the note is lock-checked even with nothing private; it passes, it names a private thing, the check fails', async () => {
         const { user } = await setup();
-        // Nothing private: only the note goes to the check (the lines keep their own lockOk).
-        fake.push(fakeMessage(night('Two good days in a row. Keep the morning reviews first.')), lock(false));
+        // Nothing private: the note and, since stage 3 (ECOSYSTEM_V2_PLAN §4.8), every line go to the check.
+        fake.push(fakeMessage(night('Good days lately. Keep the morning reviews first.')), lock(false));
         await nightIfDue(user.id, AT);
         expect(fake.calls.map((c) => c.output_config?.format?.schema)).toEqual([NIGHT_SCHEMA, LOCK_SCHEMA]);
-        expect(JSON.stringify(fake.calls[1]!.messages)).toContain('<lines>\\n(none)');
+        expect(JSON.stringify(fake.calls[1]!.messages)).toContain('<lines>\\nmorning: ');
         expect(JSON.stringify(fake.calls[1]!.messages)).toContain('Keep the morning reviews first');
         const first = await prisma.buddyDay.findFirstOrThrow({ where: { userId: user.id }, orderBy: { createdAt: 'desc' } });
         expect(first.noteLockOk).toBe(true);
@@ -101,7 +102,7 @@ describe("the phone app's buddy", () => {
         const thought = 'Your sharpest hours are before noon, so keep the hard topic there';
         fake.push(
             fakeMessage(night('A good start to the week.', { lines: [{ slot: 'morning', text: 'Start with the reviews, then build', form: 'push', lockOk: true, sourceId: '' }, { slot: 'afternoon', text: '', form: 'plain', lockOk: true, sourceId: '' }], insight: thought })),
-            fakeMessage({ lines: [], note: false, insight: false }, { model: 'claude-sonnet-5-5' })
+            fakeMessage({ lines: ['morning', 'afternoon', 'evening'].map((slot) => ({ slot, reveals: false })), note: false, insight: false }, { model: 'claude-sonnet-5-5' })
         );
         await nightIfDue(user.id, AT);
         expect(JSON.stringify(fake.calls[1]!.messages)).toContain(`<home>\\n${thought}`);
@@ -125,7 +126,7 @@ describe("the phone app's buddy", () => {
 
         // A thought that reveals stays off the home screen.
         fake.reset();
-        fake.push(fakeMessage(night('Tuesday.', { ...fresh('Tuesday'), insight: 'Money is tight, so the paid course can wait' })), fakeMessage({ lines: [], note: false, insight: true }, { model: 'claude-sonnet-5-5' }));
+        fake.push(fakeMessage(night('Tuesday.', { ...fresh('Tuesday'), insight: 'Money is tight, so the paid course can wait' })), fakeMessage({ lines: ['morning', 'afternoon', 'evening'].map((slot) => ({ slot, reveals: false })), note: false, insight: true }, { model: 'claude-sonnet-5-5' }));
         const tuesday = new Date(AT.getTime() + 86_400_000);
         const r = (await nightIfDue(user.id, tuesday))!;
         expect(r.dropped).toContainEqual({ what: 'lock insight', why: 'names a private thing' });
@@ -134,14 +135,14 @@ describe("the phone app's buddy", () => {
 
     it('the widget JSON: the note, the lines said so far, thumbs from the phone, the day in numbers; tell; nothing more for its token', async () => {
         const { user, phone } = await setup();
-        fake.push(fakeMessage(night('Two good days in a row. Keep the morning reviews first.')), lock(false));
+        fake.push(fakeMessage(night('Good days lately. Keep the morning reviews first.')), lock(false));
         await nightIfDue(user.id, AT);
         const step = await prisma.buddyDay.findFirstOrThrow({ where: { userId: user.id } });
 
         // At 05:00 only the morning has begun; at 13:00 the afternoon line leads.
         const morning = (await phoneBuddy(user.id, AT))!;
         expect(morning.lines.map((l) => [l.slot, l.when, l.current])).toEqual([['morning', 'This morning', true]]);
-        expect(morning.note).toMatchObject({ id: `${step.id}:note`, dayId: step.id, lockOk: true, text: 'Two good days in a row. Keep the morning reviews first.' });
+        expect(morning.note).toMatchObject({ id: `${step.id}:note`, dayId: step.id, lockOk: true, text: 'Good days lately. Keep the morning reviews first.' });
         const noon = (await phoneBuddy(user.id, NOON))!;
         expect(noon.lines.map((l) => [l.slot, l.current])).toEqual([['afternoon', true], ['morning', false]]);
 
@@ -156,7 +157,10 @@ describe("the phone app's buddy", () => {
         expect(next.lines.map((l) => l.when)).toEqual(['This morning', 'Yesterday afternoon', 'Yesterday morning']);
         expect(next.lines.every((l) => !l.current)).toBe(true);
 
-        // Over HTTP with the phone's own token: the JSON carries it all; a thumb and a tell go in.
+        // Over HTTP with the phone's own token: the JSON carries it all; a thumb and a tell go in. The server reads
+        // its own clock: Tuesday afternoon here (only Date is faked), so the test holds on any real day.
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date(tuesday.getTime() + 8 * 3600_000));
         const widget = (await phone.get('/api/ambient/widget')).body.data;
         expect(widget).toMatchObject({ numbers: expect.any(String), buddy: { note: { lockOk: true }, lines: expect.any(Array), thumbs: [] } });
         const today = widget.buddy.note.dayId as string;
@@ -169,12 +173,14 @@ describe("the phone app's buddy", () => {
         // Off: no buddy part.
         await api(user).patch('/api/buddy/settings', { enabled: false });
         expect((await phone.get('/api/ambient/widget')).body.data.buddy).toBeNull();
+        vi.useRealTimers();
     });
 
     it('the day in numbers, as the pictures say it', () => {
         const item = (done: boolean) => ({ kind: 'review' as const, title: 'A review', meta: '', done });
         const counts = { reviews: { done: 0, total: 3 }, focus: { done: 0, total: 0 }, tasks: { done: 0, total: 0 }, minutesLeft: 21 };
-        expect(dayNumbers({ items: [item(false), item(false), item(true)], counts })).toBe('2 left today · about 21 min');
+        // Stage 16: no estimated time (the owner, 11-20).
+        expect(dayNumbers({ items: [item(false), item(false), item(true)], counts })).toBe('2 left today');
         expect(dayNumbers({ items: [item(true)], counts: { ...counts, minutesLeft: 0 } })).toBe('Done for today');
         expect(dayNumbers({ items: [], counts })).toBe('A free day');
     });

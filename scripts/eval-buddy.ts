@@ -4,7 +4,11 @@
 // day; the home screen's thought, when written, short, fit for anyone and not a line's words; no
 // lock-screen line naming the planted private thing; every number one it was given; no line repeating
 // what it said lately; valid ops only (never on his own memory); silence allowed on the quiet day; the
-// Sunday note on Sunday. Writes evals/results/buddy-<time>.json.
+// Sunday note on Sunday. Stage 5: a loop case (threads, built as the night builds it with the loop on): a plan
+// whose day has come is asked, never assumed; a habit answered yesterday is not asked again; the number guard
+// reads the words two to twenty too. Stage 7: with the loop on the lines are timed (0 to 4, each in its own
+// hours, half an hour at least, none overlapping; no rule against saying again: relevance wins), and a case
+// checks that a line about something at a time shows before it. Writes evals/results/buddy-<time>.json.
 //
 //   npx tsx scripts/eval-buddy.ts            real model (about 8 cents a case)
 //   npx tsx scripts/eval-buddy.ts --fake     the requests only: sizes, no calls
@@ -14,7 +18,9 @@ import { getAiClient } from '../src/services/claude/client';
 import { costOfCall } from '../src/services/claude/pricing';
 import { parseJson, responseText } from '../src/services/recall/output';
 import { withRefusalFallbacks } from '../src/services/recall/prompts';
-import { INSIGHT_MAX, checkOps, guardInsight, guardLines, nightRequest, parseNight, strayNumbers, type Dropped, type NightInput, type NightMemoryRow } from '../src/services/buddy/think';
+import { INSIGHT_MAX, checkOps, guardInsight, guardLines, guardTimedLines, nightRequest, parseNight, strayNumbers, withLoop, type Dropped, type NightInput, type NightMemoryRow } from '../src/services/buddy/think';
+import { zLoopExtra } from '../src/services/buddy/nightLoop';
+import { dayMinute, hasHours, normTime } from '../src/services/buddy/lineTimes';
 import type { BuddySignals } from '../src/services/buddy/signals';
 
 const fake = process.argv.includes('--fake');
@@ -34,6 +40,8 @@ const signals = (over: Partial<BuddySignals> = {}): BuddySignals => ({
     recall: { finished: 1, weakTopics: ['Monotonic stack'] },
     suggestions30: {},
     capture7: { seen: 120, kept: 14, notes: 9 },
+    // Stage 17: when they usually start in the evening.
+    usual: { weekdayEvening: '20:45', weekendEvening: null },
     ...over,
 });
 
@@ -73,7 +81,24 @@ const base = (over: Partial<NightInput> = {}): NightInput => ({
     ...over,
 });
 
-const CASES: Array<{ id: string; input: NightInput; quietOk?: boolean; sunday?: boolean; speaks?: boolean }> = [
+/** A loop case: the threads block as the night writes it, and what the questions must (not) be about. */
+interface LoopCase {
+    threads: string;
+    askAbout?: string;
+    noAskAbout?: string[];
+    /** Words that would assume what was never said (a plan taken as done). */
+    assumes?: RegExp;
+    /** Stage 7: a line about this (if any) shows before that time (HH:mm), never after the moment it is about. */
+    lineBefore?: { about: RegExp; at: string };
+    /** Stage 17: the <left_off>, <coming_up> and <later> blocks, as the night gets them. */
+    ahead?: string;
+    /** Stage 17: a line about this left-off item, if any, is an evening one (from 17:00), and one at most. */
+    leftOffEvening?: RegExp;
+    /** Stage 17: nothing is left off: no line invents an unfinished thing to pick up. */
+    noInvent?: boolean;
+}
+
+const CASES: Array<{ id: string; input: NightInput; quietOk?: boolean; sunday?: boolean; speaks?: boolean; loop?: LoopCase }> = [
     { id: 'first-night', input: base({ memories: [], notes: [{ id: 'n1', kind: 'fact', private: false, source: 'hook', text: 'Works 10 to 7, studies after 9 pm' }] }) },
     {
         id: 'heavy-build-skipped-reviews',
@@ -101,14 +126,82 @@ const CASES: Array<{ id: string; input: NightInput; quietOk?: boolean; sunday?: 
         sunday: true,
         input: base({ signals: signals({ today: { day: '2026-11-22', weekday: 'Sunday', time: '04:05', isSunday: true } }), candidates: [{ id: 'c1', kind: 'task', text: 'Send the form', due: '2026-11-23' }] }),
     },
+    {
+        id: 'loop-plan-due-habit-answered',
+        input: base({ loop: true }),
+        loop: {
+            threads: [
+                't1 · noticed · due (2026-11-17) · Start swimming lessons around mid-November',
+                '    2026-10-20 · said · Thinking of starting swimming lessons around mid-November',
+                't2 · active · daily · Guitar most evenings',
+                '    2026-11-15 · progress · Played for twenty minutes',
+                '    2026-11-16 · done · Did it (to: Guitar tonight?)',
+                '    you asked 2026-11-16: "Guitar tonight?" · answered: Did it',
+            ].join('\n'),
+            askAbout: 't1',
+            noAskAbout: ['t2'],
+            assumes: /\b(started|signed up|enrolled|first lesson|the lessons (are|were)|been swimming)\b/i,
+        },
+    },
+    {
+        id: 'loop-timed-lines',
+        input: base({
+            loop: true,
+            notes: [{ id: 'n1', kind: 'state', private: false, source: 'agent', text: 'Has a mock system-design interview at 15:00 today and is nervous about the capacity estimates' }],
+        }),
+        loop: {
+            threads: [
+                't3 · active · Prepare for the mock system-design interview',
+                '    2026-11-15 · said · Mock interview on Tuesday at 15:00, wants to practise capacity estimates first',
+                '    2026-11-16 · progress · Did two capacity-estimate drills',
+            ].join('\n'),
+            lineBefore: { about: /interview|mock|capacity|estimate/i, at: '15:00' },
+        },
+    },
+    {
+        id: 'loop-left-off-evening',
+        input: base({ loop: true, signals: signals({ usual: { weekdayEvening: '20:45', weekendEvening: null } }) }),
+        loop: {
+            threads: 'none yet',
+            ahead: '<left_off>\npu_s1 · practice · "3Sum" · left Mon 16 Nov · where they stopped: has the two-pointer idea; duplicates still break it\n</left_off>',
+            leftOffEvening: /3\s?sum/i,
+        },
+    },
+    {
+        id: 'loop-nothing-left-off',
+        input: base({ loop: true }),
+        loop: { threads: 'none yet', noInvent: true },
+    },
+    {
+        id: 'loop-later-evening',
+        input: base({ loop: true }),
+        loop: {
+            threads: 'none yet',
+            ahead: '<left_off>\npu_s1 · practice · "3Sum" · left Mon 16 Nov · where they stopped: duplicates still break it\n</left_off>\n\n<later>\nLater on "Pick up: 3Sum", tapped Mon 11:10 → Mon 20:45\nA Later tells you their time for that kind of thing: follow it.\n</later>',
+            leftOffEvening: /3\s?sum/i,
+        },
+    },
 ];
+
+/** The night's request as the night builds it (think.ts runNight; with the loop on, withLoop). */
+function requestFor(c: (typeof CASES)[number]) {
+    const req = nightRequest(c.input);
+    if (!c.loop) return req;
+    withLoop(req, c.loop.threads, { sunday: c.input.signals.today.isSunday });
+    // Stage 17: what is ahead, where the night puts it.
+    if (c.loop.ahead) {
+        const r = req as unknown as { messages: Array<{ content: Array<{ text: string }> }> };
+        r.messages[0]!.content[0]!.text = r.messages[0]!.content[0]!.text.replace('Write tonight’s step.', () => `${c.loop!.ahead}\n\nWrite tonight’s step.`);
+    }
+    return req;
+}
 
 (async () => {
     const results: Array<Record<string, unknown>> = [];
     let total = 0;
     let passed = 0;
     for (const c of CASES) {
-        const req = withRefusalFallbacks(nightRequest(c.input));
+        const req = withRefusalFallbacks(requestFor(c));
         if (fake) {
             console.log(`${c.id}: request ${JSON.stringify(req).length} characters`);
             continue;
@@ -118,17 +211,24 @@ const CASES: Array<{ id: string; input: NightInput; quietOk?: boolean; sunday?: 
         try {
             const msg = await getAiClient().createMessage(req);
             cost = costOfCall(msg.usage as never, msg.model, false).costUsd;
-            const out = parseNight(parseJson(responseText(msg)));
-            const sources = [JSON.stringify(c.input.signals), ...c.input.memories.map((m) => m.text), ...c.input.notes.map((n) => n.text), ...c.input.candidates.map((x) => `${x.text} ${x.due}`), ...c.input.hisNotes.map((n) => `${n.title} ${n.text}`)].join('\n');
+            const raw = parseJson(responseText(msg));
+            const out = parseNight(raw);
+            const sources = [JSON.stringify(c.input.signals), ...c.input.memories.map((m) => m.text), ...c.input.notes.map((n) => n.text), ...c.input.candidates.map((x) => `${x.text} ${x.due}`), ...c.input.hisNotes.map((n) => `${n.title} ${n.text}`), c.loop?.ahead ?? ''].join('\n');
             const recent = c.input.said.map((s) => s.text);
-            const g = guardLines(out.lines, { sources, recent });
+            // Stage 7: with the loop on the lines are timed, and nothing is refused for having been said before.
+            const g = c.loop ? guardTimedLines(out.lines, { sources }) : guardLines(out.lines, { sources, recent });
             const spoken = out.lines.filter((l) => l.text.trim());
-            const slotsOnce = new Set(out.lines.map((l) => l.slot)).size === out.lines.length;
-            checks.push(['a line per slot or silence, each at most 90 characters', out.lines.length <= 3 && slotsOnce && spoken.every((l) => l.text.length <= 90), out.lines.map((l) => l.text.length).join(',')]);
+            if (c.loop) {
+                const shape = g.dropped.filter((d) => d.why !== 'a number it was not given').map((d) => `${d.what}: ${d.why}`);
+                checks.push(['0 to 4 lines, each in its own hours (half an hour at least, none overlapping), each at most 90 characters', spoken.length <= 4 && spoken.every(hasHours) && !shape.length, shape.join(', ') || spoken.map((l) => `${l.from}-${l.until} (${l.text.length})`).join(', ') || 'silence']);
+            } else {
+                const slotsOnce = new Set(out.lines.map((l) => l.slot)).size === out.lines.length;
+                checks.push(['a line per slot or silence, each at most 90 characters', out.lines.length <= 3 && slotsOnce && spoken.every((l) => l.text.length <= 90), out.lines.map((l) => l.text.length).join(',')]);
+            }
             if (c.speaks) checks.push(['speaks when the day calls for it (a line at least)', spoken.length > 0, `${spoken.length} spoken`]);
             checks.push(['no lock-screen line names the private thing', spoken.filter((l) => l.lockOk).every((l) => !l.text.includes(PRIVATE_WORD) && !/bill|hospital|sister/i.test(l.text))]);
             checks.push(['every number was given', g.dropped.filter((d) => d.why.includes('number')).length === 0 && !strayNumbers(`${out.note} ${out.now}`, sources).length, g.dropped.map((d) => d.why).join(',')]);
-            checks.push(['no line repeats what it said lately', g.dropped.filter((d) => d.why === 'said lately').length === 0]);
+            if (!c.loop) checks.push(['no line repeats what it said lately', g.dropped.filter((d) => d.why === 'said lately').length === 0]);
             // The home screen's thought: optional; when written it passes the guards and names nothing private.
             const insightDropped: Dropped[] = [];
             const insight = guardInsight(out.insight, { sources, recent, lines: g.lines }, insightDropped);
@@ -144,7 +244,31 @@ const CASES: Array<{ id: string; input: NightInput; quietOk?: boolean; sunday?: 
             else checks.push(['no Sunday note on a weekday', !out.weekly.use]);
             if (c.quietOk) checks.push(['a quiet day may be silent (no forced note)', true, out.note ? 'wrote a note' : 'silent']);
             checks.push(['a notebook for tomorrow', out.notebook.trim().length > 20 && out.notebook.length <= 1500]);
-            results.push({ id: c.id, cost, checks, lines: out.lines.map((l) => ({ slot: l.slot, text: l.text, lockOk: l.lockOk, form: l.form })), insight: out.insight, note: out.note, ops: out.memory.map((o) => o.op) });
+            if (c.loop) {
+                const extra = zLoopExtra.safeParse(raw);
+                const asks = extra.success ? extra.data.asks : [];
+                checks.push(['the loop fields in the right shape', extra.success, extra.success ? `${asks.length} asks` : extra.error.message.slice(0, 120)]);
+                if (c.loop.askAbout) checks.push(['a plan whose day has come is asked, as a question', asks.some((a) => a.threadId === c.loop!.askAbout && /\?\s*$/.test(a.text.trim())), asks.map((a) => `${a.threadId}: ${a.text}`).join(' | ')]);
+                for (const id of c.loop.noAskAbout ?? []) checks.push([`no question about ${id} (answered yesterday)`, !asks.some((a) => a.threadId === id)]);
+                if (c.loop.lineBefore) {
+                    const { about, at } = c.loop.lineBefore;
+                    const onIt = spoken.filter((l) => about.test(l.text));
+                    checks.push([`a line about it, if any, shows before ${at}`, onIt.every((l) => !!normTime(l.from) && dayMinute(normTime(l.from)!) < dayMinute(at)), onIt.map((l) => `${l.from}-${l.until}: ${l.text}`).join(' | ') || 'no line about it']);
+                }
+                if (c.loop.leftOffEvening) {
+                    const onIt = spoken.filter((l) => c.loop!.leftOffEvening!.test(l.text));
+                    checks.push(['a line about the left-off item, if any, is one evening line (from 17:00)', onIt.length <= 1 && onIt.every((l) => !!normTime(l.from) && dayMinute(normTime(l.from)!) >= dayMinute('17:00')), onIt.map((l) => `${l.from}-${l.until}: ${l.text}`).join(' | ') || 'no line about it']);
+                }
+                if (c.loop.noInvent) {
+                    const said = [...spoken.map((l) => l.text), out.insight].join(' ');
+                    checks.push(['nothing left off: no line invents one', !/\b(left off|where you (stopped|left)|unfinished|pick (it|that) (back )?up)\b/i.test(said), said.slice(0, 160) || 'silence']);
+                }
+                if (c.loop.assumes) {
+                    const said = [...out.lines.map((l) => l.text), out.note, out.insight].join(' ');
+                    checks.push(['never assumes the plan happened', !c.loop.assumes.test(said), said.slice(0, 160)]);
+                }
+            }
+            results.push({ id: c.id, cost, checks, lines: out.lines.map((l) => ({ slot: l.slot, from: l.from, until: l.until, text: l.text, lockOk: l.lockOk, form: l.form })), insight: out.insight, note: out.note, ops: out.memory.map((o) => o.op) });
         } catch (err) {
             checks.push(['answered in the right shape', false, String(err).slice(0, 200)]);
             results.push({ id: c.id, checks });

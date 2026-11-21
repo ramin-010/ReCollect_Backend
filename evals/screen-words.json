@@ -1,0 +1,28 @@
+{
+  "about": "Stage 5b, part B (ECOSYSTEM_V2_PLAN): what a person says about their screens becomes the right rule, or none. Labels written 2026-11-19 before any run. Each message alone through the real digest request, as said to the buddy in its chat, with four threads in view. Graded by scripts/eval-5b.ts screens. Pass: 14 of 15.",
+  "today": "2026-11-20",
+  "weekday": "Friday",
+  "threads": [
+    { "id": "t_spanish", "stage": "active", "title": "Spanish ten minutes a day" },
+    { "id": "t_running", "stage": "active", "title": "Run three mornings a week" },
+    { "id": "t_sister", "stage": "active", "title": "Sister going through a divorce" },
+    { "id": "t_diet", "stage": "active", "title": "Eat less sugar" }
+  ],
+  "cases": [
+    { "n": 1, "text": "Can you ask me these things later in the evening? Mornings are chaos.", "expect": "asks_from", "from": ["17:00", "21:00"], "threadId": "" },
+    { "n": 2, "text": "Please don't ask me anything before 8pm.", "expect": "asks_from", "from": ["20:00", "20:00"], "threadId": "" },
+    { "n": 3, "text": "Don't bug me with questions on weekends.", "expect": "asks_days", "days": "weekdays", "threadId": "" },
+    { "n": 4, "text": "Please don't remind me about Spanish on weekends.", "expect": "asks_days", "days": "weekdays", "threadId": "t_spanish" },
+    { "n": 5, "text": "Keep money stuff off my lock screen.", "expect": "topic", "words": "money" },
+    { "n": 6, "text": "Keep anything about my sister off my lock screen.", "expect": "off_screens", "threadId": "t_sister" },
+    { "n": 7, "text": "Ask me about the running in the evenings, not in the mornings.", "expect": "asks_from", "from": ["17:00", "21:00"], "threadId": "t_running" },
+    { "n": 8, "text": "Only ask me things on weekends, weekdays are packed.", "expect": "asks_days", "days": "weekends", "threadId": "" },
+    { "n": 9, "text": "Keep work stuff off my lock screen please.", "expect": "topic", "words": "work" },
+    { "n": 10, "text": "I'm usually up late, night owl.", "expect": "none" },
+    { "n": 11, "text": "I hate mornings lol", "expect": "none" },
+    { "n": 12, "text": "My lock screen is so cluttered with notifications.", "expect": "none" },
+    { "n": 13, "text": "Stop asking me about the sugar thing.", "expect": "none" },
+    { "n": 14, "text": "Had a great run this evening, felt strong.", "expect": "none" },
+    { "n": 15, "text": "Ok you can ask me anything, anytime again.", "expect": "end", "ends": "asks_from", "existing": "asks_from 19:00 (ask me later in the evening)" }
+  ]
+}

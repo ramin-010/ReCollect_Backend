@@ -42,14 +42,14 @@ describe('the capture queue', () => {
         const { user, hook } = await hookUser();
         const res = await words(hook, 1, [`here is my key ${KEY} for the deploy`, 'and another message']);
         expect(res.status).toBe(202);
-        expect(res.body.data).toEqual({ queued: 2 });
-        expect((await words(hook, 1, ['same piece again'])).body.data).toEqual({ queued: 0, duplicate: true });
+        expect(res.body.data).toEqual({ queued: 2, capture: 2 });
+        expect((await words(hook, 1, ['same piece again'])).body.data).toEqual({ queued: 0, duplicate: true, capture: 2 });
         const chunk = await prisma.buddyChunk.findFirstOrThrow({ where: { userId: user.id } });
         expect(JSON.stringify(chunk.messages)).not.toContain('sk-ant-');
         expect(JSON.stringify(chunk.messages)).toContain('[secret]');
 
         await api(user).patch('/api/buddy/settings', { paused: true });
-        expect((await words(hook, 2, ['while paused'])).body.data).toEqual({ queued: 0, paused: true });
+        expect((await words(hook, 2, ['while paused'])).body.data).toEqual({ queued: 0, paused: true, capture: 2 });
         const day = await prisma.buddyCaptureDay.findFirstOrThrow({ where: { userId: user.id } });
         expect(day).toMatchObject({ seen: 3, chunks: 1, dropped: 1, secrets: 1 });
 

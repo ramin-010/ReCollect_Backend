@@ -86,7 +86,7 @@ describe('the manager', () => {
         expect(first.model).toBe('claude-sonnet-5-5');
         expect(first.tools[first.tools.length - 1]!['cache_control']).toEqual({ type: 'ephemeral' });
         expect(first.system[0]!.cache_control).toEqual({ type: 'ephemeral' });
-        expect(first.system[1]!.text).toContain('Where he stands now');
+        expect(first.system[1]!.text).toContain('Where they stand now');
         // The second round carries the tool's answer back.
         expect(JSON.stringify(requests[1])).toContain('tool_result');
 
@@ -158,5 +158,27 @@ describe('the manager', () => {
         } finally {
             await new Promise<void>((resolve) => server.close(() => resolve()));
         }
+    });
+});
+
+describe('the chat knows what the buddy knows (stage 5, M1 and M2)', () => {
+    it('with the loop on: what is on their mind, the memories that match the message, the rules for personal talk; with it off: nothing new', async () => {
+        const { openOrFindThread, withPersonLock } = await import('../../src/services/buddy/threads');
+        const user = await createTestUser();
+        await api(user).patch('/api/buddy/settings', { enabled: true, loop: true });
+        await withPersonLock(user.id, (tx) => openOrFindThread(tx, user.id, { title: 'Run three mornings a week', keywords: ['run', 'running'] }, { saidAt: new Date(), forDay: '2026-11-18' }));
+        await prisma.memory.create({ data: { userId: user.id, text: 'Knee hurts after long runs', kind: 'state', sensitivity: 'private', lasting: false, source: 'agent', firstSeenDay: new Date('2026-11-18T00:00:00Z'), lastSeenDay: new Date('2026-11-18T00:00:00Z') } });
+        const requests = scripted([() => answer('Short and easy today.')]);
+        await runAssistant({ userId: user.id, text: 'Should I still go for my run tomorrow?', history: [], baseUrl: 'http://localhost' } as never);
+        const system = JSON.stringify((requests[0] as { system: unknown }).system);
+        expect(system).toContain('What is on their mind');
+        expect(system).toContain('Run three mornings a week');
+        expect(system).toContain('Knee hurts after long runs (private)');
+        expect(system).toContain('a few sentences, one suggestion at most');
+
+        await api(user).patch('/api/buddy/settings', { loop: false });
+        const again = scripted([() => answer('ok')]);
+        await runAssistant({ userId: user.id, text: 'Should I still go for my run tomorrow?', history: [], baseUrl: 'http://localhost' } as never);
+        expect(JSON.stringify((again[0] as { system: unknown }).system)).not.toContain('What is on their mind');
     });
 });

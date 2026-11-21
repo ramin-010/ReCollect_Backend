@@ -28,7 +28,7 @@ export const SESSION_KEY_RE = /^[A-Za-z0-9_.:-]{1,80}$/;
 export const SESSION_TITLE_MAX = 200;
 export const WEAK_SPOT_MAX_CHARS = 160;
 export const WEAK_SPOTS_PER_WRITE = 10;
-export const MINUTES_MAX = 600;
+export const MINUTES_MAX = 1440;
 /** What a checkpoint may say it learned about the user at once (the buddy's notes). */
 export const LEARNED_PER_WRITE = 3;
 /**

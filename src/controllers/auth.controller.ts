@@ -19,7 +19,11 @@ import {
 const userSignupSchema = z.object({
     name: z.string().min(1, { message: 'Name cannot be empty' }),
     email: z.string().email({ message: 'email is not valid' }),
-    password: z.string().min(8, { message: 'Password must be atleast 8 charachter long' })
+    password: z.string().min(8, { message: 'Password must be atleast 8 charachter long' }),
+    // Stage 11: the browser's time zone (checked by the service; a wrong one keeps the default).
+    timezone: z.string().trim().max(64).optional(),
+    // Stage 11: the invite link's code (signup closed: an open invite for this email lets it in).
+    invite: z.string().trim().max(64).optional(),
 });
 
 export const Signup = async (req: Request, res: Response, next: NextFunction): Promise<any> => {

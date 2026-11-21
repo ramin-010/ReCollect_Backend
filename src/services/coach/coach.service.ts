@@ -176,7 +176,7 @@ export async function generateCoachNote(userId: string, opts: { fresh?: boolean 
     } else {
         if (!isAiConfigured()) throw aiNotConfigured();
         await assertUnderCap(userId, now);
-        const message = await callClaude(withRefusalFallbacks(coachRequest({ model: aiModel(), evidence })), 'weekly coach');
+        const message = await callClaude(userId, withRefusalFallbacks(coachRequest({ model: aiModel(), evidence })), 'weekly coach');
         await recordAiUsage(userId, 'weekly_coach', message);
         try {
             output = parseCoachOutput(responseText(message));

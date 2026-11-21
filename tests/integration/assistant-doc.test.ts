@@ -123,8 +123,8 @@ describe('Ask AI inside a doc', () => {
         expect(first.system[1]!.text).toContain(`docId ${docId}`);
         expect(first.system[1]!.text).toContain(`[${headingId}] ## Token bucket`);
         expect(first.system[1]!.text).toContain(`» [${paragraphId}] Each request takes a token.`);
-        expect(first.system[1]!.text).toContain(`His focus: his cursor is in block [${paragraphId}].`);
-        expect(first.system[1]!.text).not.toContain('Where he stands now');
+        expect(first.system[1]!.text).toContain(`Their focus: their cursor is in block [${paragraphId}].`);
+        expect(first.system[1]!.text).not.toContain('Where they stand now');
 
         // Written into the doc as Ask AI, right after his line.
         expect((await stored(docId)).map((b) => b.type)).toEqual(['heading', 'paragraph', 'bulletListItem']);

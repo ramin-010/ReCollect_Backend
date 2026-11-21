@@ -26,6 +26,15 @@ describe('the ambient phone (6.6)', () => {
         expect(png.status).toBe(200);
         expect(png.headers['content-type']).toBe('image/png');
         expect((png.body as Buffer).subarray(1, 4).toString('latin1')).toBe('PNG');
+
+        // 0.5.2 (stage 1): a phone that already has this picture gets 304 and no body; another size is another picture.
+        const etag = png.headers['etag'];
+        expect(etag).toMatch(/^"[a-z0-9]+"$/);
+        const same = await request(app).get('/api/ambient/wallpaper.png?w=540&h=1170&theme=light').set('Authorization', `Bearer ${token}`).set('If-None-Match', String(etag));
+        expect(same.status).toBe(304);
+        const other = await request(app).get('/api/ambient/wallpaper.png?w=600&h=1170&theme=light').set('Authorization', `Bearer ${token}`).set('If-None-Match', String(etag));
+        expect(other.status).toBe(200);
+        expect(other.headers['etag']).not.toBe(etag);
     });
 
     it("the phone app's ambient token reads only the picture and the widget; Settings lists where the phone can reach the server", async () => {
@@ -53,12 +62,15 @@ describe('the ambient phone (6.6)', () => {
         expect(Buffer.compare(bold.body as Buffer, lock.body as Buffer)).not.toBe(0);
         const unknown = await bearer('/api/ambient/wallpaper.png?w=540&h=1170&titles=0&screen=lock&style=nope');
         expect(Buffer.compare(unknown.body as Buffer, lock.body as Buffer)).toBe(0);
-        // B8: the home picture drawn for the phone's zoom (Android 11: 1.1) differs; a zoom out of range is 1.
+        // B8: the home picture drawn for the phone's zoom (Android 11: 1.1) differs; a zoom out of range is 1. Stage 16: the
+        // home picture's words are what is ahead (a to-do the day after tomorrow); the zoom moves only words.
+        await prisma.todo.create({ data: { userId: user.id, title: 'Renew the passport', dueDate: new Date(Date.now() + 2 * 86_400_000) } });
+        const ahead = await bearer('/api/ambient/wallpaper.png?w=540&h=1170&titles=0');
         const zoomed = await bearer('/api/ambient/wallpaper.png?w=540&h=1170&titles=0&zoom=1.1');
         expect([zoomed.status, zoomed.headers['content-type']]).toEqual([200, 'image/png']);
-        expect(Buffer.compare(zoomed.body as Buffer, png.body as Buffer)).not.toBe(0);
+        expect(Buffer.compare(zoomed.body as Buffer, ahead.body as Buffer)).not.toBe(0);
         const silly = await bearer('/api/ambient/wallpaper.png?w=540&h=1170&titles=0&zoom=nope');
-        expect(Buffer.compare(silly.body as Buffer, png.body as Buffer)).toBe(0);
+        expect(Buffer.compare(silly.body as Buffer, ahead.body as Buffer)).toBe(0);
         // The app's day card: one headline and what is left by kind under it (B8).
         expect(typeof widget.body.data.breakdown).toBe('string');
         // Today's reminders still to come reach the home picture (titles hidden: plain words); a finished task's don't.

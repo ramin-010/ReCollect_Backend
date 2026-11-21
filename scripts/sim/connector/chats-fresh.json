@@ -1,0 +1,61 @@
+{
+  "_about": "MCP_MEMORY_PLAN stage 5, the live test with fresh examples (11-19 afternoon): labels written before the run. One invented person per round, each planted the same, so the rounds don't feed each other: A for ChatGPT with Recollect left unselected, B for ChatGPT with it selected from '+', C for claude.ai. The one-time preference line is set in each site's settings; the chats never name Recollect. 'expect' is what a good assistant passes on; 'accept' lists other filings that are still right. Fresh topics only (no walking, Spanish, guitar, pottery, running, swimming or study).",
+  "persons": [
+    { "round": "chatgpt-unselected", "name": "Noor", "email": "noor.a.connector-sim@recollect.local", "timezone": "Asia/Kolkata" },
+    { "round": "chatgpt-selected", "name": "Noor", "email": "noor.b.connector-sim@recollect.local", "timezone": "Asia/Kolkata" },
+    { "round": "claude", "name": "Noor", "email": "noor.c.connector-sim@recollect.local", "timezone": "Asia/Kolkata" }
+  ],
+  "planted": [
+    { "key": "yoga", "type": "thread", "title": "Yoga before work, three mornings a week", "keywords": ["yoga", "mat", "asanas"], "stage": "active", "ask": "Did you get your yoga in this morning?" },
+    { "key": "read", "type": "memory", "kind": "pattern", "text": "Reads 20 pages of a novel before bed" },
+    { "key": "coffee", "type": "memory", "kind": "aim", "text": "Cutting down to one coffee a day" },
+    { "key": "ride", "type": "memory", "kind": "aim", "text": "Training for a 50 km charity cycle ride in December" },
+    { "key": "allergy", "type": "memory", "kind": "fact", "text": "Allergic to peanuts" }
+  ],
+  "chats": [
+    {
+      "id": "w1-kafka",
+      "purpose": "A long work chat; a day's progress on a followed thing at message 3; work details and venting after it",
+      "messages": [
+        { "text": "I'm debugging consumer lag on a Kafka topic at work. What are the usual causes when lag grows only during peak hours?", "expect": "none", "why": "work" },
+        { "text": "We have 12 partitions and 4 consumers in the group. Would adding consumers help, or is it more about processing time per message?", "expect": "none", "why": "work" },
+        { "text": "Side note, did my yoga this morning before logging on, 40 minutes. Anyway: how do I measure per-message processing time without changing much code?", "expect": "update", "on": "yoga", "update": "done", "accept": ["update yoga progress", "remember linked as done on yoga"], "why": "one day's doing of the followed yoga thread; answers its open question" },
+        { "text": "The group is payments-settlement-v2 on the client's cluster and lag peaks around 1.2M messages at 7pm. Does max.poll.records matter here?", "expect": "none", "why": "work detail: a client's system" },
+        { "text": "Honestly my lead keeps changing priorities every sprint and it's exhausting. Can you sketch a quick checklist I can run tomorrow?", "expect": "none", "why": "work venting stays in the chat" },
+        { "text": "Thanks. Last one: should I alert on lag in messages or in seconds?", "expect": "none", "why": "work" }
+      ]
+    },
+    {
+      "id": "w2-ratelimit",
+      "purpose": "A long work chat; a real change of routine and a new interest halfway through",
+      "messages": [
+        { "text": "I need to write a short design doc for a rate limiter in our API gateway. Can you outline the sections?", "expect": "none", "why": "work" },
+        { "text": "We're choosing between token bucket and sliding window log. Which fits bursty mobile clients better?", "expect": "none", "why": "work" },
+        { "text": "Makes sense. Unrelated, but I've stopped reading before bed, I listen to audiobooks on my commute instead now. Back to the doc: where should the limiter state live, Redis or in memory?", "expect": "update", "on": "read", "update": "changed", "accept": ["update read dropped plus remember the audiobooks"], "why": "a real change of routine of a known habit" },
+        { "text": "We run 6 gateway pods behind an ALB, around 3k requests per second at peak. Does that change your answer?", "expect": "none", "why": "work detail" },
+        { "text": "Oh, and I've gotten into birdwatching lately, went to the lake on Sunday with binoculars. For the doc, what failure mode should I call out if Redis is down?", "expect": "remember", "kind": "idea", "accept": ["remember with kind pattern or preference"], "why": "a new interest, never linked to a followed thing" },
+        { "text": "Great, can you draft the 'Alternatives considered' section in five bullets?", "expect": "none", "why": "work" }
+      ]
+    },
+    {
+      "id": "w3-go",
+      "purpose": "A long work chat; a day's slip on an aim and an end halfway through; a client detail after",
+      "messages": [
+        { "text": "Can you review this Go function? func sum(xs []int) (t int) { for _, x := range xs { t += x }; return } Anything unidiomatic?", "expect": "none", "why": "work" },
+        { "text": "Now error wrapping: should I use fmt.Errorf with %w or a custom error type for a 'not found' case?", "expect": "none", "why": "work" },
+        { "text": "Ugh, I had two coffees already today, the cutting down isn't going great. Anyway, how do I test that errors.Is matches my wrapped error?", "expect": "update", "on": "coffee", "update": "skipped", "accept": ["update coffee progress"], "why": "one day's slip on the coffee aim: day news, never a change or an end" },
+        { "text": "Also I've pulled out of the charity ride in December, my knee can't take the training. Back to Go: table-driven tests or separate test functions for 5 error cases?", "expect": "update", "on": "ride", "update": "dropped", "accept": ["update ride finished"], "why": "the end of a known aim" },
+        { "text": "The service is the billing reconciler for our client in Rotterdam and it runs nightly at 2am. Any tips for logging in a batch job like that?", "expect": "none", "why": "work detail: a client's system" },
+        { "text": "Thanks, that's all for now.", "expect": "none", "why": "small talk" }
+      ]
+    },
+    {
+      "id": "f1-personal",
+      "purpose": "A short personal chat: a real change of routine on a thread, and a correction",
+      "messages": [
+        { "text": "From next week I'm moving my yoga to the evenings, mornings are too rushed.", "expect": "update", "on": "yoga", "update": "changed", "why": "a real change of a followed routine" },
+        { "text": "Also a small fix: it's cashews I'm allergic to, not peanuts.", "expect": "update", "on": "allergy", "update": "changed", "accept": ["update allergy changed or wrong, plus remember cashews"], "why": "a correction of a known fact" }
+      ]
+    }
+  ]
+}

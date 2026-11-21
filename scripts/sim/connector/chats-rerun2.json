@@ -1,0 +1,204 @@
+{
+  "_about": "Stage 15 part 2 (11-21): claude.ai 7 memory cases again with the new one-time line, a fresh person (noor.f).",
+  "persons": [
+    {
+      "round": "claude",
+      "name": "Noor",
+      "email": "noor.f.connector-sim@recollect.local",
+      "timezone": "Asia/Kolkata"
+    }
+  ],
+  "planted": [
+    {
+      "key": "piano",
+      "type": "thread",
+      "title": "Piano practice after dinner",
+      "keywords": [
+        "piano",
+        "practice",
+        "scales"
+      ],
+      "stage": "active",
+      "ask": "Get some piano practice in today?"
+    },
+    {
+      "key": "mealprep",
+      "type": "memory",
+      "kind": "pattern",
+      "text": "Meal-preps lunches for the week every Sunday"
+    },
+    {
+      "key": "japan",
+      "type": "memory",
+      "kind": "aim",
+      "text": "Saving for a trip to Japan next spring"
+    },
+    {
+      "key": "nosugar",
+      "type": "memory",
+      "kind": "aim",
+      "text": "Doing a 30-day no-sugar challenge"
+    },
+    {
+      "key": "seat",
+      "type": "memory",
+      "kind": "preference",
+      "text": "Prefers window seats on flights"
+    }
+  ],
+  "chats": [
+    {
+      "id": "r1-postgres",
+      "purpose": "A long work chat; a day's doing of a followed thread at message 3; a client detail and venting after it",
+      "messages": [
+        {
+          "text": "A Postgres query at work went from 40 ms to 6 seconds overnight. What should I look at first in the EXPLAIN ANALYZE output?",
+          "expect": "none",
+          "why": "work"
+        },
+        {
+          "text": "It's a join between orders and order_items with a filter on created_at. The plan switched from an index scan to a sequential scan. Why would that happen suddenly?",
+          "expect": "none",
+          "why": "work"
+        },
+        {
+          "text": "Quick aside, I got 20 minutes of piano in during lunch today. Anyway, would running ANALYZE on both tables be safe during business hours?",
+          "expect": "update",
+          "on": "piano",
+          "update": "done",
+          "accept": [
+            "update piano progress",
+            "remember linked as done on piano"
+          ],
+          "why": "one day's doing of the followed piano thread; answers its open question"
+        },
+        {
+          "text": "The database is the client's reporting replica for Halvorsen Logistics, about 300 GB. Would a partial index on created_at help here?",
+          "expect": "none",
+          "why": "work detail: a client's system"
+        },
+        {
+          "text": "Honestly the on-call rotation this month has been brutal, I've been paged three nights in a row. Can you summarise the steps as a short runbook?",
+          "expect": "none",
+          "why": "work venting stays in the chat"
+        },
+        {
+          "text": "Thanks. Should I set a statement_timeout on that reporting role too?",
+          "expect": "none",
+          "why": "work"
+        }
+      ]
+    },
+    {
+      "id": "r2-terraform",
+      "purpose": "A long work chat; a real change of routine and a new interest halfway through",
+      "messages": [
+        {
+          "text": "I'm reviewing a Terraform module that creates an S3 bucket and a CloudFront distribution. What are the usual security gaps to check?",
+          "expect": "none",
+          "why": "work"
+        },
+        {
+          "text": "The bucket policy allows s3:GetObject for the CloudFront origin access identity only. Is that enough, or should we move to origin access control?",
+          "expect": "none",
+          "why": "work"
+        },
+        {
+          "text": "Unrelated, but I've moved my meal prep to Saturday mornings now, Sundays are too packed. Back to the module: should versioning be on by default?",
+          "expect": "update",
+          "on": "mealprep",
+          "update": "changed",
+          "why": "a real change of a known routine"
+        },
+        {
+          "text": "The module is used by four teams and the state lives in one shared backend. Does that change how we should roll out the OAC change?",
+          "expect": "none",
+          "why": "work detail"
+        },
+        {
+          "text": "Oh, and lately I've been getting into chess puzzles on my phone, doing a few every night. For the review, what should the rollback plan say?",
+          "expect": "remember",
+          "kind": "idea",
+          "accept": [
+            "remember with kind pattern or preference"
+          ],
+          "why": "a new interest, never linked to a followed thing"
+        },
+        {
+          "text": "Great, can you draft the review comment in five bullets?",
+          "expect": "none",
+          "why": "work"
+        }
+      ]
+    },
+    {
+      "id": "r3-react",
+      "purpose": "A long work chat; a day's slip on an aim and an end halfway through; a client detail after",
+      "messages": [
+        {
+          "text": "A React list with about 2,000 rows re-renders on every keystroke in a search box. What are the usual fixes?",
+          "expect": "none",
+          "why": "work"
+        },
+        {
+          "text": "We already use useMemo for the filtered list. Would React.memo on the row component help, or is virtualisation the real fix?",
+          "expect": "none",
+          "why": "work"
+        },
+        {
+          "text": "Ugh, I ordered takeout twice already today, the Japan fund is not loving this week. Anyway, how do I check which props change between renders?",
+          "expect": "update",
+          "on": "japan",
+          "update": "progress",
+          "accept": [
+            "update japan skipped"
+          ],
+          "why": "one day's slip on the savings aim: day news, never a change or an end"
+        },
+        {
+          "text": "Also I've given up on the no-sugar challenge, it just wasn't sustainable. Back to React: react-window or react-virtuoso for variable row heights?",
+          "expect": "update",
+          "on": "nosugar",
+          "update": "dropped",
+          "accept": [
+            "update nosugar finished"
+          ],
+          "why": "the end of a known aim"
+        },
+        {
+          "text": "The app is the dispatch dashboard we build for Kestrel Freight and it runs on old Android tablets in their depots. Any tips for testing on slow devices?",
+          "expect": "none",
+          "why": "work detail: a client's system"
+        },
+        {
+          "text": "Thanks, that's all for now.",
+          "expect": "none",
+          "why": "small talk"
+        }
+      ]
+    },
+    {
+      "id": "r4-personal",
+      "purpose": "A short personal chat: a real change of routine on the thread, and a correction of a known preference",
+      "messages": [
+        {
+          "text": "From Monday I'm going to practise piano in the mornings instead, before work.",
+          "expect": "update",
+          "on": "piano",
+          "update": "changed",
+          "why": "a real change of a followed routine"
+        },
+        {
+          "text": "Also a small correction: I prefer aisle seats on flights, not window.",
+          "expect": "update",
+          "on": "seat",
+          "update": "changed",
+          "accept": [
+            "update seat changed or wrong, plus remember aisle seats"
+          ],
+          "why": "a correction of a known preference (not in the brief: found by a look-up)"
+        }
+      ]
+    }
+  ]
+}

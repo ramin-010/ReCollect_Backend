@@ -6,11 +6,12 @@
 import express from 'express';
 import { authOnce, cookieOnly } from '../middlwares/scopes';
 import { requireAiAccess } from '../config/aiAccess';
+import { requireAiReady } from '../services/claude/access';
 import { answer, finish, requireAiConfigured, settings, start, usage } from '../controllers/recall.controller';
 import { coach, latestCoach, practiceNote } from '../controllers/aiNotes.controller';
 
 const recallRouter = express.Router();
-recallRouter.use(authOnce, cookieOnly, requireAiConfigured, requireAiAccess); // AI_ALLOWED_EMAILS: 403 (hosting P1-5)
+recallRouter.use(authOnce, cookieOnly, requireAiConfigured, requireAiAccess, requireAiReady); // AI_ALLOWED_EMAILS: 403 (hosting P1-5); a paused key: 503 AI_PAUSED
 recallRouter.post('/start', start);
 recallRouter.post('/sets/:id/answer', answer);
 recallRouter.post('/sets/:id/finish', finish);

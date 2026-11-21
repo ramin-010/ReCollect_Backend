@@ -1,0 +1,48 @@
+{
+  "_about": "ECOSYSTEM_V2_PLAN stage 15, the live hour (labels written before any run, 11-20 night). Stages 13 and 14 on the real claude.ai and ChatGPT: two results in one message, a work-log spot check, Docs that keep what helped (offer once, naming the doc and section; write only on a yes; never for a small clarification), the same note asked in both apps, and the pending memory checks. One invented person per round (setup-trial.ts): the work log on, the study note 'Sliding window' seeded, one open work line for t3. The chats never name Recollect. Graded by grade-trial.ts from the simulation database and the remote door's trace; what a reply offered is marked by hand in windows-trial.local.json ('offers': { '<app>:<chatId>': 'named' | 'vague' }). 'lines': new work lines the chat should leave; 'closes': a line on the seeded open line; 'note': the section a note should land under after a yes (null: no note may be written); 'offer': whether an offer is wanted; 'reply': what the runner answers after an offer ('yes' | 'no'), sent only when the model offered; 'say': a message sent whatever the model did (the owner's own words).",
+  "persons": [
+    { "round": "chatgpt", "name": "Kiran", "email": "kiran.t.a.connector-sim@recollect.local", "timezone": "Asia/Kolkata" },
+    { "round": "claude", "name": "Kiran", "email": "kiran.t.c.connector-sim@recollect.local", "timezone": "Asia/Kolkata" },
+    { "round": "both", "name": "Kiran", "email": "kiran.t.b.connector-sim@recollect.local", "timezone": "Asia/Kolkata" }
+  ],
+  "doc": {
+    "title": "Sliding window",
+    "markdown": "## Sliding window\n\nA window over a contiguous part of an array or string, moved instead of recomputed.\n\n### Fixed-size window\n\nSum the first k elements, then slide the window one step at a time.\n\n### Variable-size window\n\nGrow the right edge; shrink from the left while the window breaks the rule.\n\n### Complexity\n\nAmortised O(n) time. O(1) extra space for sums; a map for character counts."
+  },
+  "seed": [
+    { "round": "chatgpt", "key": "backup", "app": "Claude Code", "kind": "stuck", "project": "platform", "text": "The nightly backup job fails on the 2 GB attachments table" },
+    { "round": "claude", "key": "backup", "app": "Claude Code", "kind": "stuck", "project": "platform", "text": "The nightly backup job fails on the 2 GB attachments table" }
+  ],
+  "chats": [
+    { "id": "t1-two-fixes", "group": "two", "app": "both", "messages": ["Two fixes landed today: the retry decorator no longer swallows KeyboardInterrupt, and the cache key now includes the user's locale. Both are merged. Anything else I should check in that decorator?"], "lines": 2, "kind": "did" },
+    { "id": "t2-fix-and-decision", "group": "two", "app": "both", "messages": ["Fixed the N+1 query on the orders page with select_related. Also, we decided to drop the legacy XML export, nobody has used it in a year. How should I tell the two clients who still have it enabled?"], "lines": 2, "kinds": ["did", "decided"] },
+    { "id": "t3-two-one-closes", "group": "two", "app": "both", "messages": ["Good news on two fronts: the nightly backup runs again after I split the attachments table dump into chunks, and the broken link in the onboarding email is fixed."], "lines": 2, "kind": "did", "closes": "backup" },
+
+    { "id": "s1-question", "group": "spot", "app": "both", "messages": ["What's the difference between a Postgres advisory lock and SELECT FOR UPDATE, in two lines?"], "lines": 0 },
+    { "id": "s2-options", "group": "spot", "app": "both", "messages": ["For the audit log, should we use a separate table or Postgres logical replication?", "Hmm, both have trade-offs. Let me think about it over the weekend."], "lines": 0 },
+    { "id": "s3-fix", "group": "spot", "app": "both", "messages": ["The invoice PDF shows the wrong currency symbol for EUR customers. The template uses locale from the server, not the customer.", "Passed the customer's locale into the template like you said. That worked, EUR invoices show € now."], "lines": 1, "kind": "did" },
+    { "id": "s4-decision", "group": "spot", "app": "both", "messages": ["We keep going back and forth on soft deletes for orders. Pros and cons, briefly?", "Ok, decided: soft deletes with a deleted_at column, because support needs to restore orders customers delete by mistake."], "lines": 1, "kind": "decided" },
+
+    { "id": "d1-example", "group": "keep", "app": "both", "messages": ["I'm revising my sliding window note. The variable-size part never clicked for me. Can you walk me through it with longest substring without repeating characters?", "Oh, that finally makes sense: the left pointer only ever jumps forward, so nothing is checked twice."], "lines": 0, "offer": true, "reply": "yes", "note": "Variable-size window" },
+    { "id": "d2-term", "group": "keep", "app": "both", "messages": ["My sliding window note says amortised O(n). What does amortised mean there? The inner while loop makes it look quadratic to me.", "Right, so the total number of left moves over the whole run is at most n. Got it now."], "lines": 0, "offer": true, "reply": "yes", "note": "Complexity" },
+    { "id": "d3-skipped-step", "group": "keep", "app": "both", "messages": ["In the fixed-size window part of my sliding window note it says sum the first k, then slide. How exactly do I update the sum when sliding? I keep getting off by one on the indices.", "Subtract nums[i - k], add nums[i], start at i = k. That's the bit I was missing."], "lines": 0, "offer": true, "reply": "yes", "note": "Fixed-size window" },
+
+    { "id": "n1-small", "group": "notworth", "app": "both", "messages": ["In my sliding window note, does contiguous mean the elements have to be next to each other?", "ok got it"], "lines": 0, "offer": false, "note": null },
+    { "id": "n2-tangent", "group": "notworth", "app": "both", "messages": ["Totally unrelated to my notes: is Python's collections.deque thread-safe for appends from two threads?"], "lines": 0, "offer": false, "note": null },
+    { "id": "n3-answered", "group": "notworth", "app": "both", "messages": ["What's the space complexity of the fixed-size version in my sliding window note?"], "lines": 0, "offer": false, "note": null },
+
+    { "id": "w1-add-that", "group": "word", "app": "both", "messages": ["Explain why we shrink from the left in a variable-size window, using minimum size subarray sum as the example."], "say": "Add that to my sliding window note.", "lines": 0, "note": "Variable-size window", "_note": "their own word: written with no further ask (the offer is not graded)" },
+    { "id": "w2-said-no", "group": "word", "app": "both", "messages": ["Walk me through maximum sum of a subarray of size k using my sliding window note's fixed-size approach.", "Nice, the running sum is the whole trick then."], "lines": 0, "offer": true, "reply": "no", "note": null, "_note": "graded only when offered: after 'no', nothing written and no second offer in the next reply" },
+
+    { "id": "b1-claude", "group": "bothapps", "app": "claude", "round": "both", "messages": ["I'm revising my sliding window note. The variable-size part never clicked for me. Can you walk me through it with longest substring without repeating characters?", "Oh, that finally makes sense: the left pointer only ever jumps forward, so nothing is checked twice."], "lines": 0, "offer": true, "reply": "yes", "note": "Variable-size window" },
+    { "id": "b2-chatgpt", "group": "bothapps", "app": "chatgpt", "round": "both", "messages": ["Going over my sliding window note again. Explain the variable-size window with longest substring without repeating characters, please.", "Yes, the left pointer only moves forward. That's the key."], "lines": 0, "reply": "yes", "note": "Variable-size window", "already": true, "_note": "the same example after claude.ai added it: one note in the section; if it offers and gets a yes, the answer says it is already there; no second note" },
+
+    { "id": "m1-fact-claude", "group": "samefact", "app": "claude", "round": "both", "messages": ["By the way, I started a pottery class on Saturday mornings, it's a nice break from screens. Anyway, what's a good way to practise system design on weekends?"], "lines": 0, "memory": "pottery" },
+    { "id": "m2-fact-chatgpt", "group": "samefact", "app": "chatgpt", "round": "both", "messages": ["Saturday mornings are for ceramics now, so I'll do the mock interview on Sunday. Can you give me three system design questions for it?"], "lines": 0, "memory": "pottery", "_note": "the same fact in other words: one memory after a night (connector-after.ts)" }
+  ],
+  "after": [
+    { "id": "memory-7", "what": "claude.ai's 7 memory cases of 11-19 with the new line (chats-rerun.json r1-r4 on a fresh person, setup-fresh.ts): 7 of 7 reached" },
+    { "id": "memory-both-apps", "what": "the 'both' person after a night (connector-after.ts): one memory about the Saturday pottery class, not two" },
+    { "id": "ask-ai", "what": "Ask AI on the claude round's person with the AI on: 'What got done and what's still open?' names both results of t1 and of t3" }
+  ]
+}

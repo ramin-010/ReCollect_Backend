@@ -18,7 +18,9 @@ import { prisma } from '../../db/prisma';
 import { poke } from '../scheduler/scheduler';
 import { addDays, resolveTimeZone, today as todayIn } from '../learning';
 import { fromDbDay, toDbDay } from '../learningDb/common';
-import { aiModel, getAiClient, isAiConfigured, type BatchRequest, type BatchResultLine } from '../claude/client';
+import { aiModel, getAiClient, isAiConfigured, type BatchRequest, type BatchResultLine, type MessageBatch } from '../claude/client';
+import { HOUSE_KEY, keyFor, keyState, noteAiFailure } from '../claude/access';
+import { allowanceOf } from '../claude/allowance';
 import { isUnderCap, recordAiUsage } from '../claude/usage.service';
 import { earlierQuestions, materialOf, recallRevisionInclude } from './material';
 import { ModelOutputError, type RecallQuestion } from './output';
@@ -54,6 +56,11 @@ export async function planNightlyRecall(now: Date = new Date()): Promise<Planned
         const today = todayIn(resolveTimeZone(user.timezone), now);
         if (!user.lastSeenDay || fromDbDay(user.lastSeenDay) < addDays(today, -ACTIVE_WITHIN_DAYS)) continue;
         if (!(await isUnderCap(user.id, now))) continue;
+        // Only accounts on the server's key (a person's own key gets Recall on demand: stage 10).
+        if ((await keyFor(user.id)).keyId !== HOUSE_KEY) continue;
+        // Stage 11: a friend whose free AI waits gets no questions written tonight (Recall on demand once it runs again).
+        const allowance = await allowanceOf(user.id, now);
+        if (allowance?.reason) continue;
 
         const revisions = await prisma.revision.findMany({
             where: { userId: user.id, status: 'pending', scheduledFor: { lte: toDbDay(addDays(today, 1)) } },
@@ -89,12 +96,20 @@ export async function planNightlyRecall(now: Date = new Date()): Promise<Planned
 /** Plans tonight's sets and submits them as one Message Batch. */
 export async function submitNightlyRecallBatch(now: Date = new Date()): Promise<{ batchId: string | null; requests: number }> {
     if (!isAiConfigured()) return { batchId: null, requests: 0 };
+    // The batch runs on the server's key, for the accounts on it; a paused key sends none (ECOSYSTEM_V2_PLAN stage 2).
+    if ((await keyState(HOUSE_KEY)).state !== 'ok') return { batchId: null, requests: 0 };
     const planned = await planNightlyRecall(now);
     if (planned.length === 0) return { batchId: null, requests: 0 };
 
-    const client = getAiClient();
+    const client = getAiClient(HOUSE_KEY);
     const model = aiModel();
-    const batch = await client.createBatch(planned.map((p) => p.request));
+    let batch: MessageBatch;
+    try {
+        batch = await client.createBatch(planned.map((p) => p.request));
+    } catch (err) {
+        await noteAiFailure(HOUSE_KEY, err, now);
+        throw err;
+    }
     try {
         await prisma.$transaction(
             async (tx) => {

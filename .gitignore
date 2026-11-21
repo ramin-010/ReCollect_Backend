@@ -36,3 +36,7 @@ tsconfig.tsbuildinfo
 
 # the manager test set's run results (each run writes one; QA account data)
 evals/results/
+
+# MCP_MEMORY_PLAN stage 5: the connector simulation's local ids and chat windows
+scripts/sim/connector/*.local.json
+scripts/sim/connector/*.local.md

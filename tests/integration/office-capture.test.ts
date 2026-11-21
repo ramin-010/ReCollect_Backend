@@ -26,20 +26,20 @@ describe('office words (P1-14)', () => {
         const { user, words } = await hook();
         const office = await words(1, true);
         expect(office.status).toBe(202);
-        expect(office.body.data).toEqual({ queued: 0, office: true });
+        expect(office.body.data).toEqual({ queued: 0, office: true, capture: 2 });
         expect(await prisma.buddyChunk.count({ where: { userId: user.id } })).toBe(0);
         const day = await prisma.buddyCaptureDay.findFirstOrThrow({ where: { userId: user.id } });
         expect(day).toMatchObject({ seen: 1, dropped: 1, chunks: 0 });
 
         const personal = await words(2, false);
         expect(personal.status).toBe(202);
-        expect(personal.body.data).toEqual({ queued: 1 });
+        expect(personal.body.data).toEqual({ queued: 1, capture: 2 });
         expect(await prisma.buddyChunk.count({ where: { userId: user.id } })).toBe(1);
     });
 
     it('unset: an office piece is queued, marked as office work, as before', async () => {
         const { user, words } = await hook();
-        expect((await words(3, true)).body.data).toEqual({ queued: 1 });
+        expect((await words(3, true)).body.data).toEqual({ queued: 1, capture: 2 });
         expect(await prisma.buddyChunk.findFirstOrThrow({ where: { userId: user.id } })).toMatchObject({ office: true });
     });
 });

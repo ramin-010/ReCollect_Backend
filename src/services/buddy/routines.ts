@@ -132,7 +132,7 @@ export async function runRoutines(userId: string, now: Date = new Date()): Promi
             if (text) {
                 const item = await createFocusItem(userId, text, now);
                 await recordAgentEdit(actor, { kind: 'focus_add', summary: `Set today's focus line ${quoted(text)} from the week by itself`, entityId: item._id });
-                done.push(`set today's focus line to ${quoted(text)} from his week`);
+                done.push(`set today's focus line to ${quoted(text)} from the week`);
                 runs++;
             }
         }
@@ -140,7 +140,7 @@ export async function runRoutines(userId: string, now: Date = new Date()): Promi
             const moved = await moveOffBusyDays(userId, now);
             if (moved.changes.length && moved.until) {
                 await recordAgentEdit(actor, { kind: 'revisions_spread', summary: `Moved ${moved.moved} ${moved.moved === 1 ? 'review' : 'reviews'} off your busy days to after ${moved.until}`, undoData: { changes: moved.changes } });
-                done.push(`moved ${moved.moved} ${moved.moved === 1 ? 'review' : 'reviews'} that didn't fit his busy days to after ${moved.until}`);
+                done.push(`moved ${moved.moved} ${moved.moved === 1 ? 'review' : 'reviews'} that didn't fit the busy days to after ${moved.until}`);
                 runs++;
             }
         }

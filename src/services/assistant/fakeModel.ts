@@ -98,7 +98,7 @@ function docAskOf(system: unknown): DocAsk | null {
     const text = Array.isArray(system) ? system.map((b) => (b as { text?: string }).text ?? '').join('\n') : typeof system === 'string' ? system : '';
     const docId = /\(docId ([A-Za-z0-9_-]+)\), as it is now/.exec(text)?.[1];
     if (!docId) return null;
-    const focusLine = text.split('\n').find((l) => l.startsWith('His focus:')) ?? '';
+    const focusLine = text.split('\n').find((l) => l.startsWith('Their focus:')) ?? '';
     const focus = [...focusLine.matchAll(/\[([^\]]+)\]/g)].map((m) => m[1]!);
     const marked = text.split('\n').find((l) => focus[0] && l.trimStart().startsWith(`» [${focus[0]}] `));
     return { docId, focus, emptyLine: /empty line/.test(focusLine), firstLine: marked ? marked.trimStart().slice(`» [${focus[0]}] `.length) : '' };
@@ -152,9 +152,9 @@ function firstStep(text: string, system?: unknown): BetaMessage {
         return tools(['create_doc', { title, markdown: `A note the fake model made for testing the Ask AI page.\n\n- It was made through the real tools.\n- Undo takes it back.` }]);
     }
     if (/\bremind\b/.test(t)) return tools(['set_reminder', { title: titleFrom(text, 'A reminder from the fake model'), at: '23:59' }]);
-    if (/\b(spread|backlog)\b/.test(t)) return tools(['spread_backlog', { reason: 'He asked in Ask AI.' }]);
+    if (/\b(spread|backlog)\b/.test(t)) return tools(['spread_backlog', { reason: 'They asked in Ask AI.' }]);
     if (/\btask\b/.test(t) && /\badd\b/.test(t)) return tools(['add_task', { title: titleFrom(text, 'A task from the fake model') }]);
-    if (/\btrash\b/.test(t) && /\bempty\b/.test(t)) return tools(['empty_trash', { reason: 'He asked in Ask AI.' }]);
+    if (/\btrash\b/.test(t) && /\bempty\b/.test(t)) return tools(['empty_trash', { reason: 'They asked in Ask AI.' }]);
     if (/\b(break|fail)\b/.test(t)) return tools(['read_doc', { docId: 'doc-that-does-not-exist' }]);
     if (/\bweek\b/.test(t)) return tools(['get_week', {}], ['list_sessions', {}]);
     if (/\b(due|today)\b/.test(t)) return tools(['list_due', {}]);

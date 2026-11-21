@@ -1,7 +1,7 @@
 // The coach's numbers are checked (LOOP_COMPLETE_SPEC 1.7): every number in a note must be in the
 // evidence; otherwise a plain note written by code.
 import { describe, expect, it } from 'vitest';
-import { numbersIn, plainCoachNote, unsupportedNumbers } from '../../../src/services/coach/check';
+import { figuresIn, numbersIn, plainCoachNote, unsupportedNumbers } from '../../../src/services/coach/check';
 import type { CoachEvidence } from '../../../src/services/coach/evidence';
 
 const evidence = {
@@ -21,6 +21,12 @@ const note = (strong: string) => ({ lines: { strong, slipping: 'Dijkstra came ba
 describe('the number check', () => {
     it('reads every number written with digits', () => {
         expect(numbersIn('4 of 5 reviews, 0.5 a week, 1,200 minutes, 07 days')).toEqual(['4', '5', '0.5', '1200', '7']);
+    });
+
+    it('the buddy’s guard also reads the words two to twenty (and twenty-one to twenty-nine whole); the coach keeps to digits', () => {
+        expect(figuresIn('Two reviews, then twelve pages; Twenty-three days; one more; 4 runs')).toEqual(['4', '2', '12', '23']);
+        expect(figuresIn('someone, often, tone, weight, tension')).toEqual([]);
+        expect(numbersIn('Two reviews')).toEqual([]);
     });
 
     it('passes a note whose numbers are all in the evidence (titles count too); names the others', () => {

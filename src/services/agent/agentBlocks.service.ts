@@ -24,6 +24,8 @@ import { liveDocument, withLiveDoc } from './liveDoc';
 import { logDocChange, normalizeHeading, requireEditableDoc } from './agentDocs.service';
 import { prisma } from '../../db/prisma';
 import { plural, quoted, type AgentActor } from './agentEditLog';
+import { loadLearningContext } from '../learningDb/common';
+import { NOTES_PER_DOC_DAY, NOTE_MAX, afterIndex, footerDay, noteFooter, noteRepeats, notesOnDay } from './docNotes';
 
 const OLD_EDITOR = 'This doc is still on the old editor: change it with append_to_doc or replace_section (block tools work once it is on the new editor)';
 
@@ -229,6 +231,80 @@ export async function appendBlocksForAgent(actor: AgentActor, docId: string, mar
 
 const headingText = (b: DocBlock) =>
     (Array.isArray(b.content) ? (b.content as InlineNode[]) : []).map((n) => (n.type === 'text' ? n.text : n.content.map((c) => c.text).join(''))).join('');
+
+/** A block's words, its children's too (a table's cells; a canvas or an image has none). */
+export function blockText(b: DocBlock): string {
+    const inline = (c: DocBlock['content']): string => {
+        if (typeof c === 'string') return c;
+        if (Array.isArray(c)) return (c as InlineNode[]).map((n) => (n.type === 'text' ? n.text : n.content.map((x) => x.text).join(''))).join('');
+        if (c && c.type === 'tableContent') return c.rows.flatMap((r) => r.cells.map((cell) => inline((Array.isArray(cell) ? cell : cell.content) as InlineNode[]))).join(' ');
+        return '';
+    };
+    return [inline(b.content), ...b.children.map(blockText)].filter(Boolean).join('\n');
+}
+
+/** A 404 that lists the doc's top-level headings. */
+function headingMissing(heading: string, top: readonly DocBlock[]): ErrorResponse {
+    const heads = top.filter((b) => b.type === 'heading').map((b) => quoted(headingText(b), 60)).slice(0, 30);
+    return new ErrorResponse(404, `Heading ${quoted(heading.replace(/^\s*#{1,6}\s*/, ''), 100)} not found in this doc.${heads.length ? ` Its headings: ${heads.join(', ')}.` : ' It has no headings.'}`);
+}
+
+/** The section under the first top-level heading with this text: its heading's index and the end (exclusive). */
+function sectionOf(top: readonly DocBlock[], heading: string): { at: number; end: number } | null {
+    const target = normalizeHeading(heading);
+    const at = top.findIndex((b) => b.type === 'heading' && normalizeHeading(headingText(b)) === target);
+    if (at < 0) return null;
+    const level = Number(top[at]!.props['level']) || 1;
+    let end = at + 1;
+    while (end < top.length && !(top[end]!.type === 'heading' && (Number(top[end]!.props['level']) || 1) <= level)) end += 1;
+    return { at, end };
+}
+
+/** An empty paragraph (the editor keeps one at a doc's end; people leave them between sections). */
+const blankBlock = (b: DocBlock) => b.type === 'paragraph' && !blockText(b).trim() && !b.children.length;
+
+/**
+ * Stage 14 (ECOSYSTEM_V2_PLAN): a note inside one section, on the person's yes: right after the block that holds the
+ * quoted `after` words, else at the section's end; with a quiet last line (the day and the app). Under the doc's live
+ * connection (synchronous inside, so two chats saving the same note at once write it once): a note the section already
+ * holds is not added (`already`), and a fourth note into the doc on one day is refused. No model call: it works with
+ * no AI credits.
+ */
+export async function appendNoteInBlocks(actor: AgentActor, docId: string, input: { heading: string; after?: string | undefined; markdown: string }, now: Date = new Date()) {
+    const doc = await requireEditableDoc(docId, actor.userId);
+    if (input.markdown.trim().length > NOTE_MAX) throw new ErrorResponse(400, `A note is at most ${NOTE_MAX.toLocaleString('en')} characters: keep the point, the example that worked and one line on what confused them.`);
+    const { tz } = await loadLearningContext(actor.userId, now);
+    const day = footerDay(now, tz);
+    const parsed = await markdownToBlocks(`${input.markdown.trim()}\n\n*${noteFooter(day, actor.agentName)}*`, {});
+    if (parsed.blocks.length < 2) throw new ErrorResponse(400, 'markdown is empty');
+    const out = await withLiveDoc(docId, actor.agentName, (live) => {
+        if (!onNewEditor(live.doc)) throw new ErrorResponse(409, OLD_EDITOR);
+        const top = readBlocks(live.doc);
+        const section = sectionOf(top, input.heading);
+        if (!section) throw headingMissing(input.heading, top);
+        const heading = headingText(top[section.at]!).trim();
+        if (notesOnDay(top.map(blockText), day) >= NOTES_PER_DOC_DAY)
+            throw new ErrorResponse(409, `${NOTES_PER_DOC_DAY} notes were added to this doc from chats today, the most for a day: it can wait until tomorrow, or they can add it themselves in Recollect.`);
+        const body = top.slice(section.at + 1, section.end);
+        const texts = body.map(blockText);
+        if (noteRepeats(input.markdown, texts)) return { already: true as const, heading };
+        // After the block that holds the quoted words; else after the section's last block with something in it.
+        const hit = afterIndex(texts, input.after);
+        let last = body.length - 1;
+        while (last >= 0 && blankBlock(body[last]!)) last -= 1;
+        const anchor = hit >= 0 ? body[hit]! : last >= 0 ? body[last]! : top[section.at]!;
+        const { blocks, boards } = renameCanvases(parsed.blocks, parsed.boards, takenCanvasIds(live.doc));
+        let ids: string[] = [];
+        const change = live.apply(() => {
+            ids = ops.insert(live.doc, blocks, { after: anchor.id });
+            writeBoards(live.doc, boards);
+        });
+        return { already: false as const, heading, change, ids, placed: hit >= 0 ? ('after' as const) : ('section_end' as const) };
+    });
+    if (out.already) return { id: docId, heading: out.heading, already: true as const, placed: null, appended: 0, editId: null };
+    const editId = await logDocChange(actor, docId, out.change, 'doc_append', `Added a note under ${quoted(out.heading)} in ${quoted(doc.title)}`);
+    return { id: docId, heading: out.heading, placed: out.placed, appended: parsed.blocks.length, ids: out.ids, editId };
+}
 
 /**
  * replace_section on a doc with blocks: the section under the first top-level heading with this text

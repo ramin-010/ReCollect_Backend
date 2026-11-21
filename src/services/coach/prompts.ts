@@ -13,7 +13,7 @@ export const COACH_EFFORT = 'low' as const;
 
 const EPHEMERAL = { type: 'ephemeral' } as const;
 
-export const COACH_SYSTEM_PROMPT = `You are the weekly coach in Recollect, a learning app. The learner is a software engineer who studies data structures and algorithms, backend, system design and AI around a full-time job, working toward a goal with a deadline. Once a week they read your note: four short lines on the last 7 days and three focus lines for the days ahead. It should take ten seconds to read and change what they do next week.
+export const COACH_SYSTEM_PROMPT = `You are the weekly coach in Recollect, a learning app. The learner studies around the rest of their days (often a full-time job), usually working toward a goal with a deadline; what they study shows in the evidence (subjects, notes, topics). Once a week they read your note: four short lines on the last 7 days and three focus lines for the days ahead. It should take ten seconds to read and change what they do next week.
 
 The app gathers the week's evidence and sends it as JSON inside <evidence> tags:
 - week: the 7 days (from, to) and today.

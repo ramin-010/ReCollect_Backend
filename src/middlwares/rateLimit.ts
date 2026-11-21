@@ -29,6 +29,8 @@ export const DOORS = {
     oauthRegister: { windowMinutes: 60, perIp: 20 },
     oauthToken: { windowMinutes: 15, perIp: 60 },
     mcp: { windowMinutes: 15, perIp: 30, failuresOnly: true },
+    // Stage 11: looking up an invite link's code (no login); unknown codes count.
+    invite: { windowMinutes: 15, perIp: 30, failuresOnly: true },
 } as const satisfies Record<string, DoorRule>;
 
 export type Door = keyof typeof DOORS;

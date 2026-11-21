@@ -528,7 +528,8 @@ export const logReminderSet = agentEdit('reminder_set', {
     after: ({ data }) => ({
         summary: `Set a reminder for ${quoted(String(data.task))}${data.createdTask ? ' (a new task)' : ''}`,
         entityId: data._id,
-        undoData: { createdTaskId: data.createdTask ? String(data.taskId) : null },
+        // A set that changed a reminder already there (the same again, a day added to a series) is undone back to how it was.
+        undoData: { createdTaskId: data.createdTask ? String(data.taskId) : null, before: data.before ?? null },
     }),
 });
 

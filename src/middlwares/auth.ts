@@ -7,8 +7,12 @@ import { findUserById, toAuthUser } from '../services/users/users.service';
 import { API_TOKEN_PREFIX, findApiToken, storedScopes, touchApiToken } from '../services/apiTokens/apiTokens.service';
 import { tokenRouteScopes } from '../services/apiTokens/tokenRoutes';
 import { API_SCOPES, type AuthUser, type RequestAuth } from '../types/auth';
+import { AiHttpError } from '../services/claude/errors';
 
 const COOKIE_AUTH: RequestAuth = Object.freeze({ via: 'cookie', scopes: API_SCOPES });
+
+/** 403 for an account whose access the owner ended (stage 11): the account and its data are kept; he can restore it. */
+const accessEnded = () => new AiHttpError(403, 'ACCESS_ENDED', 'This account’s access has ended. Ask the person who invited you.');
 
 /** Longest agent name kept (AgentEdit.agentName). */
 export const AGENT_NAME_MAX = 60;
@@ -46,10 +50,11 @@ async function authenticateApiToken(req: Request, token: string): Promise<void> 
 
     const user = await findUserById(row.userId);
     if (!user) throw new ErrorResponse(404, "User not found");
+    if (user.accessEndedAt) throw accessEnded(); // stage 11: the owner ended this account's access
 
     await touchApiToken(row);
     req.user = toAuthUser(user);
-    req.auth = { via: 'token', tokenId: row.id, scopes, agentName: agentNameFor(req.headers['x-agent-name'], row.name) };
+    req.auth = { via: 'token', tokenId: row.id, scopes, agentName: agentNameFor(req.headers['x-agent-name'], row.name), ...(row.oauthClientId ? { connector: true } : {}) };
 }
 
 /**
@@ -90,6 +95,7 @@ const authMiddleware = async (req: Request, res: Response, next: NextFunction) :
         if (!user) {
             throw new ErrorResponse(404, "User not found");
         }
+        if (user.accessEndedAt) throw accessEnded(); // stage 11: the owner ended this account's access
 
         req.user = toAuthUser(user);
         req.auth = COOKIE_AUTH;

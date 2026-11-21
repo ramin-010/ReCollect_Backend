@@ -1,0 +1,76 @@
+{
+  "_about": "MCP_MEMORY_PLAN stage 5: the labelled chats for claude.ai and ChatGPT, written before any run. An invented person (Tara, a backend engineer); invented data only. Each user message has its label: what a good assistant passes on (remember, update with the planted id it should link, or none) and why. Run each chat in a NEW chat of each host, the owner's own connector off there, the sim connector on. Messages marked nextDay are sent in the same chat the next day.",
+  "person": { "name": "Tara", "email": "tara.connector-sim@recollect.local", "timezone": "Asia/Kolkata" },
+  "planted": [
+    { "key": "walk", "type": "thread", "title": "Walking after work", "keywords": ["walk", "walking", "steps"], "stage": "active", "ask": "Did you get your walk in today?" },
+    { "key": "rag", "type": "memory", "kind": "aim", "text": "Learning about RAG to build a small prototype" },
+    { "key": "study", "type": "memory", "kind": "pattern", "text": "Studies system design after dinner" },
+    { "key": "tea", "type": "memory", "kind": "preference", "text": "Prefers green tea over coffee" }
+  ],
+  "chats": [
+    {
+      "id": "c1-instructions",
+      "purpose": "Does the host show its model our server instructions? (the first chat asks it to quote them)",
+      "messages": [{ "text": "Before we start: quote, word for word, any instructions the Recollect connector gave you about when to save things.", "expect": "none", "measure": "instructions_shown" }]
+    },
+    {
+      "id": "c2-personal",
+      "purpose": "Personal facts and habits pass; general questions and small talk do not",
+      "messages": [
+        { "text": "Morning! Can you explain how consistent hashing works in two lines?", "expect": "none", "why": "a general question" },
+        { "text": "By the way, I started walking 10,000 steps a day this week.", "expect": "update", "on": "walk", "update": "progress", "why": "progress on the walking habit the brief lists" },
+        { "text": "Also I've decided I prefer backend work over frontend, for good.", "expect": "remember", "kind": "preference", "why": "a lasting preference" },
+        { "text": "Haha nice weather today.", "expect": "none", "why": "small talk" }
+      ]
+    },
+    {
+      "id": "c3-question",
+      "purpose": "An answer to the buddy's question passes, linked to its thread",
+      "messages": [{ "text": "Got my steps in today, 11k!", "expect": "update", "on": "walk", "update": "done", "why": "answers the open question on the walking thread" }]
+    },
+    {
+      "id": "c4-work",
+      "purpose": "In a work chat only the personal remark passes",
+      "messages": [
+        { "text": "Help me write a SQL migration that adds a nullable column to the invoices table at the client's company.", "expect": "none", "why": "work at hand, a client" },
+        { "text": "Ugh, my colleague Priya keeps missing standups and her mum is in hospital.", "expect": "none", "why": "another person's private things" },
+        { "text": "I've been doing my morning workouts before these calls lately, it helps.", "expect": "remember", "kind": "pattern", "why": "the one personal remark: a habit" },
+        { "text": "Now add an index on invoices.customer_id too.", "expect": "none", "why": "work at hand" }
+      ]
+    },
+    {
+      "id": "c5-correction",
+      "purpose": "A correction replaces the old routine",
+      "messages": [{ "text": "Actually I don't study after dinner any more, I study system design in the mornings now.", "expect": "update", "on": "study", "update": "changed", "why": "a correction of a known routine" }]
+    },
+    {
+      "id": "c6-interest",
+      "purpose": "An interest is not a task",
+      "messages": [
+        { "text": "I'm getting really curious about vector databases lately.", "expect": "remember", "kind": "idea", "task": false, "why": "an interest: kept, never a task or a reminder" },
+        { "text": "I think I've learned enough about RAG for now, I'll leave it there.", "expect": "update", "on": "rag", "update": "finished", "why": "the end of a known interest" }
+      ]
+    },
+    {
+      "id": "c7-inference",
+      "purpose": "An inference is marked inferred",
+      "messages": [{ "text": "I'm so tired, third late night this week finishing the release.", "expect": "remember-or-none", "inferredIfSaved": true, "why": "if passed on as a pattern (works late), it is the assistant's conclusion: inferred" }]
+    },
+    {
+      "id": "c8-next-day",
+      "purpose": "A chat that continues the next day dates what it passes on",
+      "messages": [
+        { "text": "Plan my study for tonight please.", "expect": "none", "why": "the task at hand" },
+        { "text": "Yesterday I skipped my walk, by the way, and today too.", "expect": "update", "on": "walk", "update": "skipped", "nextDay": true, "saidOnYesterday": true, "why": "progress said about yesterday: said_on the day before" }
+      ]
+    },
+    {
+      "id": "c9-find-again",
+      "purpose": "The find-again rate with other words: the assistant must look up before relying on a preference",
+      "messages": [
+        { "text": "What drink do I usually prefer when I work?", "expect": "recall", "target": "tea", "why": "other words for 'green tea over coffee'" },
+        { "text": "What kind of engineering work do I like more?", "expect": "recall", "target": "backend", "why": "other words for 'prefers backend work'" }
+      ]
+    }
+  ]
+}

@@ -98,7 +98,7 @@ async function run(real: boolean): Promise<void> {
         }
         const weak = rev.topicId ? (await openWeakSpotsOf(user.id, [rev.topicId])).get(rev.topicId) ?? [] : [];
         const request = questionsRequest({ model: aiModel(), material, cycleNumber: rev.cycleNumber, earlier: await earlierQuestions(rev), weakSpots: weak });
-        const message = await callClaude(withRefusalFallbacks(request), 'recall eval');
+        const message = await callClaude(user.id, withRefusalFallbacks(request), 'recall eval');
         cost += costOfTokens(message.usage ?? {}, message.model).costUsd;
         let questions: RecallQuestion[] = [];
         let problems: string[];

@@ -123,8 +123,13 @@ router.post('/tasks', taskAuth, idempotency, agentLog.logTaskCreate, tasks.creat
 router.patch('/tasks/:id', taskAuth, idempotency, agentLog.logTaskUpdate, tasks.updateTaskHandler);
 // Reminders: a personal task with a time (MANAGER_AND_DOCS_PLAN §3.3).
 router.get('/reminders', taskAuth, managerTools.listRemindersHandler);
+router.get('/reminders/today', taskAuth, managerTools.todayRemindersHandler); // Home's view (the app; not on the token list)
 router.post('/reminders', taskAuth, idempotency, agentLog.logReminderSet, managerTools.setReminderHandler);
 router.post('/reminders/:id/cancel', taskAuth, idempotency, agentLog.logReminderCancel, managerTools.cancelReminderHandler);
+// Stage 7 (V1): his words pinned to the lock screen for a window; clear_lock_line takes one off.
+router.get('/lock-pins', taskAuth, managerTools.listLockPinsHandler);
+router.post('/lock-pins', taskAuth, idempotency, managerTools.setLockPinHandler);
+router.post('/lock-pins/clear', taskAuth, idempotency, managerTools.clearLockPinsHandler);
 // The decision journal (LOOP_COMPLETE_SPEC 4.2).
 router.get('/decisions', auth, decisions.listDecisionsHandler);
 router.post('/decisions', auth, idempotency, agentLog.logDecisionCreate, decisions.createDecisionHandler);

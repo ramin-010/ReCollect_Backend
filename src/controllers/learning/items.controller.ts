@@ -24,6 +24,7 @@ import {
     updateTopic,
 } from '../../services/learningDb/items.service';
 import { uploadToCloud } from '../../services/learningDb/uploads.service';
+import { hearPocketNote } from '../../services/buddy/chatEar';
 import { handler, ok, param, parse, zAttachment, zId } from './common';
 
 const text = (max: number) => z.string().max(max);
@@ -151,7 +152,12 @@ const quickNotePutSchema = z.object({
 const quickNotePatchSchema = z.object({ isPinned: z.boolean() });
 
 export const putQuickNoteHandler = handler(async (req, res) => {
-    const { created, note } = await putQuickNote(requireUser(req).id, param(req, 'id'), parse(quickNotePutSchema, req.body));
+    const userId = requireUser(req).id;
+    const { created, note } = await putQuickNote(userId, param(req, 'id'), parse(quickNotePutSchema, req.body));
+    // A new note of his own (not an agent's) is one of the buddy's ears; a failure there never fails the save.
+    if (created && req.auth?.via !== 'token') {
+        await hearPocketNote(userId, { id: note._id, content: note.content }).catch((err: unknown) => console.warn(`[buddy] a pocket note was not queued: ${(err as Error).message}`));
+    }
     ok(res, note, created ? 201 : 200);
 });
 export const pinQuickNoteHandler = handler(async (req, res) => {

@@ -11,6 +11,7 @@ import { agentActor } from '../services/agent/agentEditLog';
 import {
     AGENT_TITLE_MAX,
     SEARCH_LIMIT_MAX,
+    appendNoteForAgent,
     appendToDocForAgent,
     createDocForAgent,
     readDocForAgent,
@@ -86,11 +87,23 @@ export const updateDoc = handler(async (req, res) => {
     ok(res, await updateDocForAgent(agentActor(req), param(req, 'id'), input));
 });
 
-const appendSchema = z.object({ markdown: markdown.min(1, 'markdown is empty') });
+const appendSchema = z
+    .object({
+        markdown: markdown.min(1, 'markdown is empty'),
+        // Stage 14: inside one section (a note on the person's yes), after the block holding these words.
+        heading: z.string().trim().min(1, 'heading is empty').max(300).optional(),
+        after: z.string().trim().max(300).optional(),
+    })
+    .refine((v) => !v.after || v.heading, { message: 'after needs heading: the section the note goes in' });
 
-/** POST /api/agent/docs/:id/append {markdown} → { id, appended, editId, canvases? } (canvases: a report per canvas written) */
+/**
+ * POST /api/agent/docs/:id/append {markdown, heading?, after?} → { id, appended, editId, canvases? } (canvases: a report
+ * per canvas written). With heading (stage 14): a note inside that section → { id, heading, placed, appended, editId }
+ * or { id, heading, already: true, appended: 0, editId: null } when the section already holds it.
+ */
 export const appendToDoc = handler(async (req, res) => {
-    const { markdown: md } = parse(appendSchema, req.body);
+    const { markdown: md, heading, after } = parse(appendSchema, req.body);
+    if (heading) return ok(res, await appendNoteForAgent(agentActor(req), param(req, 'id'), { heading, after, markdown: md }));
     ok(res, await appendToDocForAgent(agentActor(req), param(req, 'id'), md));
 });
 

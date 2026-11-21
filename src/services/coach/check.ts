@@ -12,6 +12,25 @@ export function numbersIn(text: string): string[] {
     return (text.match(/\d+(?:[.,]\d+)?/g) ?? []).map((n) => n.replace(/,(?=\d{3}\b)/g, '').replace(/^0+(?=\d)/, ''));
 }
 
+const WORD_FIGURES: Readonly<Record<string, number>> = {
+    one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+    eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20,
+};
+const FIGURE_WORDS = /\b(?:twenty(?:-(?:one|two|three|four|five|six|seven|eight|nine))?|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen)\b/g;
+
+/**
+ * Every figure a text holds (the buddy's number guard, ECOSYSTEM_V2_PLAN §4.16 rule 9): the digits numbersIn
+ * reads, and the words two to twenty as digits ("twenty-one" to "twenty-nine" read whole; "one" is left out,
+ * it is mostly not a count).
+ */
+export function figuresIn(text: string): string[] {
+    const words = (text.toLowerCase().match(FIGURE_WORDS) ?? []).map((w) => {
+        const [tens, unit] = w.split('-');
+        return String((WORD_FIGURES[tens!] ?? 0) + (unit ? (WORD_FIGURES[unit] ?? 0) : 0));
+    });
+    return [...numbersIn(text), ...words];
+}
+
 /** The numbers in the note that the evidence does not hold (empty: the note passes). */
 export function unsupportedNumbers(output: CoachOutput, evidence: CoachEvidence): string[] {
     const allowed = new Set([...ALWAYS, ...numbersIn(JSON.stringify(evidence))]);

@@ -31,11 +31,13 @@ import agentRoutes from './routers/agent.routes';
 import apiTokenRoutes from './routers/apiToken.routes';
 import canvasRoutes from './routers/canvas.routes';
 import recallRoutes, { aiRouter } from './routers/recall.routes';
+import aiAccessRoutes, { aiKeyRouter } from './routers/aiAccess.routes';
 import assistantRoutes from './routers/assistant.routes';
 import alwaysOnRoutes from './routers/alwaysOn.routes';
 import mcpRoutes from './routers/mcp.routes';
 import phoneRoutes from './routers/phone.routes';
 import buddyRoutes from './routers/buddy.routes';
+import { feedbackRouter, inviteRouter, ownerRouter } from './routers/owner.routes';
 import { consentRouter, publicOAuthRouter } from './routers/oauth.routes';
 import { healthDbRouter, healthzRouter } from './routers/health.routes';
 import { allowedOrigins } from './config/origins';
@@ -48,7 +50,7 @@ import { authOnce } from './middlwares/scopes';
  */
 export const BODY_LIMIT = '2mb';
 export const LARGE_BODY_LIMIT = '10mb';
-export const LARGE_BODY_PATHS = ['/api/docs', '/api/agent', '/api/canvas'];
+export const LARGE_BODY_PATHS = ['/api/docs', '/api/agent', '/api/canvas', '/api/buddy/import'];
 const isLargeBodyPath = (path: string) => LARGE_BODY_PATHS.some((p) => path === p || path.startsWith(`${p}/`));
 const BODYLESS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
@@ -118,6 +120,8 @@ export function createApp(): Application {
     app.use('/api', authRouter);
     // Published docs, for anyone with the link (MANAGER_AND_DOCS_PLAN §2).
     app.use('/api/public', publicRouter);
+    // Stage 11: an invite link's code, for the signup page (no login; before userRoutes' login check).
+    app.use('/api/invites', inviteRouter);
     app.use('/api', tagQueryRouter)
     app.use('/api', otpRoutes);
 
@@ -141,8 +145,13 @@ export function createApp(): Application {
     // AI (HOME_DOCS_AGENT_PLAN §4, the Claude API): Recall mode and the spend meter. Cookie only;
     // 503 AI_NOT_CONFIGURED without CLAUDE_API_KEY.
     app.use('/api/recall', recallRoutes);
+    app.use('/api/ai/access', aiAccessRoutes); // before /api/ai: it answers whatever the AI's state (stage 2)
+    app.use('/api/ai/key', aiKeyRouter); // stage 10: their own Claude key, also with no AI set up on the server
     app.use('/api/ai', aiRouter);
     app.use('/api/assistant', assistantRoutes);
+    // Stage 11: the People page (the owner only), "Send feedback" and the phone's diagnostics.
+    app.use('/api/owner', ownerRouter);
+    app.use('/api', feedbackRouter);
     // The buddy (BUDDY_MEMORY_PLAN): what it knows about the user, its settings, the ways in.
     app.use('/api/buddy', buddyRoutes);
     // Stage 6 (ALWAYS_ON_SPEC): the phone's wallpaper + widget, and the morning notification.

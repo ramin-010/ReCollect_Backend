@@ -6,16 +6,23 @@
 // what is written without it.
 import type { BuddyChunk, Memory, MemoryKind, Prisma } from '@prisma/client';
 import { z } from 'zod';
-import { prisma } from '../../db/prisma';
+import { prisma, type TxClient } from '../../db/prisma';
 import { callClaude } from '../claude/client';
 import { recordAiUsage } from '../claude/usage.service';
 import { parseJson, responseText } from '../recall/output';
 import { withRefusalFallbacks, type CreateParams } from '../recall/prompts';
-import { addDays, isValidDay, type DayString } from '../learning';
+import { addDays, dayOf, isValidDay, type DayString } from '../learning';
 import { loadLearningContext, toDbDay } from '../learningDb/common';
 import { bumpDay, type ChunkMessage } from './capture.service';
 import { MEMORY_KINDS, cleanNoteText, memoryKey } from './memory.service';
 import { summariseWork, workLogOn } from './work';
+import { DIGEST_LOOP_SCHEMA, DIGEST_LOOP_SYSTEM, applyThreadOps, threadBlocks, zDigestLoop } from './understand';
+import { threadIndex, withPersonLock } from './threads';
+import { closeTasksFromWords, openTasksForDigest, tasksFromWordsOk, writeTasksFromWords } from './tasks';
+import { applyScreenOps } from './screens';
+import { freshToday, stampToday } from './liveDay';
+import { scrubSecrets } from './scrub';
+import { poke } from '../scheduler/scheduler';
 
 export const GATE_MODEL = process.env['BUDDY_GATE_MODEL'] || 'claude-haiku-5-5';
 export const DIGEST_MODEL = process.env['BUDDY_DIGEST_MODEL'] || 'claude-sonnet-5-5';
@@ -33,7 +40,11 @@ const MEMORIES_SHOWN = 150;
 export const GATE_LABELS = ['none', 'about_him', 'item'] as const;
 /** With his work log on (B9): a fourth label for the work itself. */
 export const GATE_LABELS_WORK = ['none', 'about_him', 'item', 'work'] as const;
-export type GateLabel = (typeof GATE_LABELS_WORK)[number];
+/** Stage 4, the loop on (ECOSYSTEM_V2_PLAN §10): the gate for anyone, with `update` (and `work` with the work log). */
+export const GATE_LABELS_LOOP = ['none', 'personal', 'item', 'update'] as const;
+export const GATE_LABELS_LOOP_WORK = ['none', 'personal', 'item', 'update', 'work'] as const;
+const ALL_GATE_LABELS = ['none', 'about_him', 'personal', 'item', 'update', 'work'] as const;
+export type GateLabel = (typeof ALL_GATE_LABELS)[number];
 
 export const GATE_SCHEMA: Record<string, unknown> = {
     type: 'object',
@@ -77,9 +88,52 @@ export const GATE_SCHEMA_WORK: Record<string, unknown> = {
     },
 };
 
-/** The gate's request; `work`: his work log is on (else the request is exactly the one before B9). */
-export function gateRequest(messages: readonly ChunkMessage[], opts: { work?: boolean } = {}): CreateParams {
-    const numbered = messages.map((m, i) => `[${i + 1}] ${m.text.replace(/\s+/g, ' ').slice(0, 1500)}`).join('\n');
+const gateSchema = (labels: readonly string[]): Record<string, unknown> => ({
+    type: 'object',
+    additionalProperties: false,
+    required: ['labels'],
+    properties: {
+        labels: {
+            type: 'array',
+            items: { type: 'object', additionalProperties: false, required: ['i', 'label'], properties: { i: { type: 'integer' }, label: { type: 'string', enum: [...labels] } } },
+        },
+    },
+});
+export const GATE_SCHEMA_LOOP = gateSchema(GATE_LABELS_LOOP);
+export const GATE_SCHEMA_LOOP_WORK = gateSchema(GATE_LABELS_LOOP_WORK);
+
+const GATE_LOOP_LABELS = `- update: news about something on their mind, or an answer to one of the buddy's open questions, however short ("did my run", "yes", "skipped it today", "pushed it to Friday", "we moved the trip"), or a word that one of their open tasks is done ("booked it", "paid the bill"). Use it when the message names or clearly continues something in <on_their_mind> or <open_tasks>, or answers something in <open_questions>.
+- personal: it says something about them as a person: a preference or habit, how they like to work, a feeling, a worry or a stress, a plan, an intention, an aim or a value, a decision about their work, study or life, something they are proud of, something they promised.
+- item: something they want kept or brought back to them later, outside the work at hand: a reminder they ask for ("remind me…"), a task of their own with a day, a thing to save, a decision about their own life or study with its reason.`;
+
+/**
+ * The gate with the loop on (stage 4): written for any person and any kind of chat. It sees what is on
+ * their mind (thread titles) and the buddy's open questions, so a short update or answer is kept.
+ */
+export const GATE_SYSTEM_LOOP = `You sort the messages a person typed to their AI agents (for work, study, planning or anything else), for the memory of their personal buddy. You get what is on their mind (<on_their_mind>: one title per line), their open tasks (<open_tasks>), the buddy's questions waiting for an answer (<open_questions>), then their numbered messages. For each numbered message, give one label:
+${GATE_LOOP_LABELS}
+- none: everything else: instructions to the agent about the code or the task at hand, questions about a topic, pasted logs or code, approvals of the agent's work ("yes, do it", "ok", "go on") when no question of the buddy is open, small talk.
+A message marked (context only, already read) is there to help you read the next one: label it none. If a message is several of these, answer update first, then personal, then item. Judge only by what they wrote; when unsure, answer none, except that a short reply while one of the buddy's questions is open is an update when it can answer it.`;
+
+/** The loop's gate with the work log on (B9): the same labels and `work` for the work itself. */
+export const GATE_SYSTEM_LOOP_WORK = `You sort the messages a person typed to their AI agents (for work, study, planning or anything else), for their personal buddy: its memory of them, and a log of their work. You get what is on their mind (<on_their_mind>: one title per line), their open tasks (<open_tasks>), the buddy's questions waiting for an answer (<open_questions>), then their numbered messages. For each numbered message, give one label:
+${GATE_LOOP_LABELS}
+- work: they direct, describe or decide something about the work at hand, saying what it is: what to build, fix, change, test or check; a decision about the work and why; a problem they hit or parked; a result they report; what comes next in the work.
+- none: everything else: approvals like "yes, do it" or "ok" when no question of the buddy is open, questions about a topic, pasted logs or code, small talk.
+A message marked (context only, already read) is there to help you read the next one: label it none. If a message is several of these, answer update first, then personal, then item, then work. A decision or a next step about the work itself is work, not an item. Judge only by what they wrote; when unsure, answer none, except that a short reply while one of the buddy's questions is open is an update when it can answer it.`;
+
+/** What the loop's gate is given beside the messages: the thread titles and the open questions (stage 5b: and the open tasks' titles). */
+export interface GateLoopContext {
+    titles: readonly string[];
+    asks: readonly string[];
+    tasks?: readonly string[];
+}
+
+/** The gate's request; `work`: his work log is on (else the request is exactly the one before B9); `loop`: the loop's gate (stage 4). */
+export function gateRequest(messages: readonly ChunkMessage[], opts: { work?: boolean; loop?: GateLoopContext } = {}): CreateParams {
+    if (opts.loop) return gateLoopRequest(messages, opts.loop, opts.work === true);
+    // A message already read comes along as context only (stage 4): shown, never to be labelled for keeping.
+    const numbered = messages.map((m, i) => `[${i + 1}] ${m.context ? '(context only, already read) ' : ''}${m.text.replace(/\s+/g, ' ').slice(0, 1500)}`).join('\n');
     return {
         model: GATE_MODEL,
         // Haiku 5.5 at high effort (the owner, 11-16: the gate decides what of his chats reaches the buddy; it
@@ -91,7 +145,34 @@ export function gateRequest(messages: readonly ChunkMessage[], opts: { work?: bo
     } as CreateParams;
 }
 
-const zGate = z.object({ labels: z.array(z.object({ i: z.number().int(), label: z.enum(GATE_LABELS_WORK) })) });
+function gateLoopRequest(messages: readonly ChunkMessage[], loop: GateLoopContext, work: boolean): CreateParams {
+    const numbered = messages.map((m, i) => `[${i + 1}] ${m.context ? '(context only, already read) ' : ''}${m.text.replace(/\s+/g, ' ').slice(0, 1500)}`).join('\n');
+    const text = [
+        `<on_their_mind>\n${loop.titles.slice(0, 200).join('\n') || 'nothing yet'}\n</on_their_mind>`,
+        `<open_tasks>\n${(loop.tasks ?? []).slice(0, 30).join('\n') || 'none'}\n</open_tasks>`,
+        `<open_questions>\n${loop.asks.join('\n') || 'none'}\n</open_questions>`,
+        `<messages>\n${numbered}\n</messages>`,
+    ].join('\n\n');
+    return {
+        model: GATE_MODEL,
+        max_tokens: Math.min(12_000, 3000 + 120 * messages.length),
+        output_config: { effort: 'high', format: { type: 'json_schema', schema: work ? GATE_SCHEMA_LOOP_WORK : GATE_SCHEMA_LOOP } },
+        system: [{ type: 'text', text: work ? GATE_SYSTEM_LOOP_WORK : GATE_SYSTEM_LOOP, cache_control: EPHEMERAL }],
+        messages: [{ role: 'user', content: [{ type: 'text', text }] }],
+    } as CreateParams;
+}
+
+/** What the loop's gate sees of the person: every open thread's title (and those closed lately), the open questions. */
+export async function gateLoopContext(userId: string, now: Date): Promise<GateLoopContext> {
+    const [index, asks, tasks] = await Promise.all([
+        threadIndex(userId, now),
+        prisma.buddyAsk.findMany({ where: { userId, state: { in: ['open', 'replied'] }, untilAt: { gt: new Date(now.getTime() - 24 * 3600_000) } }, select: { text: true }, take: 10 }),
+        prisma.todo.findMany({ where: { userId, workspaceId: null, status: { not: 'complete' } }, select: { title: true }, orderBy: { createdAt: 'desc' }, take: 30 }),
+    ]);
+    return { titles: index.map((t) => t.title), asks: asks.map((a) => a.text), tasks: tasks.map((t) => t.title) };
+}
+
+const zGate = z.object({ labels: z.array(z.object({ i: z.number().int(), label: z.enum(ALL_GATE_LABELS) })) });
 
 function labelled(output: unknown, count: number, want: (label: GateLabel) => boolean): number[] {
     const parsed = zGate.safeParse(output);
@@ -101,7 +182,7 @@ function labelled(output: unknown, count: number, want: (label: GateLabel) => bo
 
 /** The indexes (0-based) the gate kept for his memory (about him, or an item); a message it didn't label is dropped. */
 export function keptIndexes(output: unknown, count: number): number[] {
-    return labelled(output, count, (l) => l === 'about_him' || l === 'item');
+    return labelled(output, count, (l) => l === 'about_him' || l === 'personal' || l === 'item' || l === 'update');
 }
 
 /** The indexes (0-based) the gate marked as work (B9: they send the piece to the work log). */
@@ -149,7 +230,7 @@ You get, in tags:
 - <today>: his date and weekday, and the project folder of the chat.
 
 Write:
-- notes: things about HIM, not about the code or the topic. Each one short and specific, in the third person ("Studies best after 9 pm", "Worried his DSA is behind for the job search this month"), with its time frame when it has one. kind:
+- notes: things about THEM, not about the code or the topic. Each one short and specific, in the third person without he or she ("Studies best after 9 pm", "Worried their DSA is behind for the job search this month"), with its time frame when it has one. kind:
   fact (about his life or work), preference (how he likes things), value (what matters to him), aim (a direction with no date), idea (something he wants to build or try), decision (a choice with its reason), pattern (a habit he shows), state (a mood, a worry, a stress: now, not forever), thread (a promise or a plan he means to follow up), win (something he did and is glad of).
   private: true for health, money, family, other people, guilt, fear, conflicts at work, and anything about leaving his job; else false.
   seenMemoryId: when the note says the same as a line in <known>, that line's id (it then counts as seen again); else "".
@@ -229,17 +310,25 @@ export interface DigestWrite {
 }
 
 /** Notes become Observations (a repeat also bumps its memory); items become the buddy's suggestions. */
-export async function writeDigest(userId: string, chunk: Pick<BuddyChunk, 'sessionKey' | 'project'>, out: DigestOutput, today: DayString): Promise<DigestWrite> {
+export async function writeDigest(
+    userId: string,
+    chunk: Pick<BuddyChunk, 'sessionKey' | 'project'> & Partial<Pick<BuddyChunk, 'source' | 'via' | 'saidFrom'>>,
+    out: DigestOutput,
+    today: DayString,
+    db: TxClient | typeof prisma = prisma,
+    /** The loop (stage 3): rows take their times from the `now` they are given (ECOSYSTEM_V2_PLAN §10.1). */
+    now?: Date
+): Promise<DigestWrite> {
     const result: DigestWrite = { notes: 0, seen: 0, items: 0 };
     for (const n of out.notes) {
         const text = cleanNoteText(n.text);
         if (!text || !memoryKey(text)) continue;
         let memoryId: string | null = null;
         if (n.seenMemoryId) {
-            const m = await prisma.memory.findFirst({ where: { id: n.seenMemoryId, userId, status: { in: ['active', 'faded'] } } });
+            const m = await db.memory.findFirst({ where: { id: n.seenMemoryId, userId, status: { in: ['active', 'faded'] } } });
             if (m) {
                 memoryId = m.id;
-                await prisma.memory.update({
+                await db.memory.update({
                     where: { id: m.id },
                     data: {
                         seenCount: { increment: 1 },
@@ -252,24 +341,24 @@ export async function writeDigest(userId: string, chunk: Pick<BuddyChunk, 'sessi
                 result.seen++;
             }
         }
-        await prisma.observation.create({
-            data: { userId, text, kind: n.kind as MemoryKind, sensitivity: n.private ? 'private' : 'open', source: 'hook', sessionKey: chunk.sessionKey, project: chunk.project, day: toDbDay(today), memoryId },
+        await db.observation.create({
+            data: { userId, text, kind: n.kind as MemoryKind, sensitivity: n.private ? 'private' : 'open', source: chunk.source ?? 'hook', sessionKey: chunk.sessionKey, project: chunk.project, day: toDbDay(today), memoryId, saidAt: chunk.saidFrom ?? null, via: chunk.via ?? null, ...(now ? { createdAt: now } : {}) },
         });
         result.notes++;
     }
 
-    const urgentToday = await prisma.suggestion.count({ where: { userId, proposedBy: 'buddy', status: 'pending', createdAt: { gte: new Date(Date.now() - 86_400_000) } } });
+    const urgentToday = await db.suggestion.count({ where: { userId, proposedBy: 'buddy', status: 'pending', createdAt: { gte: new Date(Date.now() - 86_400_000) } } });
     let urgentLeft = Math.max(0, URGENT_ITEMS_PER_DAY - urgentToday);
     for (const item of out.items) {
         const text = clip(cleanNoteText(item.text), 140);
         if (!text) continue;
-        const dup = await prisma.suggestion.findFirst({ where: { userId, kind: item.kind, status: { in: ['pending', 'candidate'] }, text: { equals: text, mode: 'insensitive' } }, select: { id: true } });
+        const dup = await db.suggestion.findFirst({ where: { userId, kind: item.kind, status: { in: ['pending', 'candidate'] }, text: { equals: text, mode: 'insensitive' } }, select: { id: true } });
         if (dup) continue;
         const dueDay = item.kind === 'task' && isValidDay(item.dueDay) && item.dueDay >= today ? (item.dueDay as DayString) : null;
         const urgent = !!dueDay && dueDay <= addDays(today, 2) && urgentLeft > 0;
         if (urgent) urgentLeft--;
         const why = clip(cleanNoteText(item.why), 200);
-        await prisma.suggestion.create({
+        await db.suggestion.create({
             data: {
                 userId,
                 kind: item.kind,
@@ -291,16 +380,20 @@ export async function writeDigest(userId: string, chunk: Pick<BuddyChunk, 'sessi
  * work log is on and the gate marked work). Throws on a failed gate or digest call; a failed work
  * summary is logged and skipped (the next piece of that session rewrites its lines anyway).
  */
-export async function digestChunk(chunk: BuddyChunk, now: Date = new Date()): Promise<{ kept: number; work: number } & DigestWrite> {
+export async function digestChunk(chunk: BuddyChunk, now: Date = new Date(), opts: { alsoIds?: readonly string[] } = {}): Promise<{ kept: number; work: number } & DigestWrite> {
     const messages = (Array.isArray(chunk.messages) ? chunk.messages : []) as unknown as ChunkMessage[];
     const ctx = await loadLearningContext(chunk.userId, now);
     if (!messages.length) return { kept: 0, notes: 0, seen: 0, items: 0, work: 0 };
 
+    // ECOSYSTEM_V2_PLAN stage 3: with the loop on, the digest also understands what is in motion.
+    const loop = (await prisma.buddyState.findUnique({ where: { userId: chunk.userId }, select: { loop: true } }))?.loop === true;
+    if (loop) return digestLoop(chunk, messages, ctx, now, opts.alsoIds ?? []);
+
     const workLog = await workLogOn(chunk.userId);
-    const gate = await callClaude(withRefusalFallbacks(gateRequest(messages, { work: workLog })), 'buddy gate');
+    const gate = await callClaude(chunk.userId, withRefusalFallbacks(gateRequest(messages, { work: workLog })), 'buddy gate');
     await recordAiUsage(chunk.userId, 'buddy_gate', gate);
     const labels = parseJson(responseText(gate));
-    const kept = keptIndexes(labels, messages.length);
+    const kept = unread(keptIndexes(labels, messages.length), messages);
     let work = 0;
     if (workLog && workIndexes(labels, messages.length).length) {
         try {
@@ -313,11 +406,12 @@ export async function digestChunk(chunk: BuddyChunk, now: Date = new Date()): Pr
 
     const [known, saved, tasks] = await Promise.all([
         prisma.memory.findMany({ where: { userId: chunk.userId, status: 'active' }, select: { id: true, text: true, kind: true }, orderBy: [{ lastSeenDay: 'desc' }], take: MEMORIES_SHOWN }),
-        prisma.observation.findMany({ where: { userId: chunk.userId, sessionKey: chunk.sessionKey, source: 'agent' }, select: { text: true }, take: 20 }),
+        savedLately(chunk.userId, messages),
         prisma.todo.findMany({ where: { userId: chunk.userId, workspaceId: null, status: { not: 'complete' } }, select: { title: true }, orderBy: { createdAt: 'desc' }, take: 30 }),
     ]);
     const weekday = new Intl.DateTimeFormat('en-GB', { weekday: 'long', timeZone: ctx.tz }).format(now);
     const digest = await callClaude(
+        chunk.userId,
         withRefusalFallbacks(
             digestRequest({
                 chat: chatBlock(messages, kept),
@@ -334,4 +428,187 @@ export async function digestChunk(chunk: BuddyChunk, now: Date = new Date()): Pr
     await recordAiUsage(chunk.userId, 'buddy_digest', digest);
     const written = await writeDigest(chunk.userId, chunk, parseDigest(parseJson(responseText(digest))), ctx.today);
     return { kept: kept.length, work, ...written };
+}
+
+// ─── The loop (ECOSYSTEM_V2_PLAN §4.2, stage 3) ─────────────────────────────
+
+/** The two hours a save counts as "already saved" for a piece: before its newest message (§4.9). */
+const SAVED_WINDOW_MS = 2 * 3600_000;
+
+/**
+ * What any agent or the app saved for this person in the two hours before the piece's newest message (MCP_MEMORY_PLAN
+ * §4.9): the digest's "already saved in this chat" hint, by time, since remember never sends the session.
+ */
+function savedLately(userId: string, messages: readonly ChunkMessage[]) {
+    const times = messages.map((m) => Date.parse(m.at)).filter((t) => !Number.isNaN(t));
+    const newest = times.length ? Math.max(...times) : Date.now();
+    return prisma.observation.findMany({
+        where: { userId, source: { in: ['agent', 'app'] }, createdAt: { gte: new Date(newest - SAVED_WINDOW_MS), lte: new Date(newest + 60_000) } },
+        select: { text: true },
+        orderBy: { createdAt: 'desc' },
+        take: 20,
+    });
+}
+
+/** The loop's digest request text (the digest and the stage 5b sets build it the same way). */
+export function digestLoopText(p: {
+    chat: string;
+    known: ReadonlyArray<{ id: string; kind: string; text: string }>;
+    threads: string;
+    events: string;
+    asks: string;
+    saved: readonly string[];
+    tasks: ReadonlyArray<{ id: string; title: string; day: string | null }>;
+    weekday: string;
+    today: string;
+    project?: string | null;
+    source: string;
+}): string {
+    return [
+        `<chat>\n${p.chat}\n</chat>`,
+        `<known>\n${p.known.map((m) => `${m.id} · ${m.kind} · ${m.text}`).join('\n') || 'nothing yet'}\n</known>`,
+        `<threads>\n${p.threads}\n</threads>`,
+        `<thread_events>\n${p.events}\n</thread_events>`,
+        `<open_questions>\n${p.asks}\n</open_questions>`,
+        `<saved>\n${p.saved.join('\n') || 'nothing'}\n</saved>`,
+        `<open_tasks>\n${p.tasks.map((t) => `${t.id} · ${t.title} · ${t.day ?? 'no day'}`).join('\n') || 'none'}\n</open_tasks>`,
+        `<today>${p.weekday} ${p.today}${p.project ? ` · project ${p.project}` : ''} · ${p.source}</today>`,
+    ].join('\n\n');
+}
+
+/** The loop's digest request (Sonnet 5.5, low effort, structured). */
+export function digestLoopRequest(text: string): CreateParams {
+    return {
+        model: DIGEST_MODEL,
+        max_tokens: 8000,
+        thinking: { type: 'adaptive' },
+        output_config: { effort: 'low', format: { type: 'json_schema', schema: DIGEST_LOOP_SCHEMA } },
+        system: [{ type: 'text', text: DIGEST_LOOP_SYSTEM, cache_control: EPHEMERAL }],
+        messages: [{ role: 'user', content: [{ type: 'text', text }] }],
+    } as CreateParams;
+}
+
+/** What the piece is, for the digest's <today> line. */
+export function sourceLine(chunk: Pick<BuddyChunk, 'via' | 'noteId'>): string {
+    // MCP_MEMORY_PLAN §4.7: details they saved while the buddy could not read them, newest version only, oldest first.
+    if (chunk.via === 'catchup') return 'details they saved while the buddy could not read them (a catch-up: each line has its own day; an ended one says so; it builds history with those dates, never a question)';
+    if (chunk.noteId && chunk.via === 'agent') return 'notes an AI agent saved about them (each line said by them unless marked otherwise; their own later words win)';
+    if (chunk.noteId) return 'their own words to the buddy ("Tell")';
+    if (chunk.via === 'ask_ai' || chunk.via === 'answer') return 'their chat with the buddy';
+    if (chunk.via === 'doc_ask') return 'their questions inside a document';
+    // A note they jotted in the app's pocket (the simulation's issue 9): their own words, often an idea or a plan.
+    if (chunk.via === 'pocket') return 'a note they jotted in their pocket of quick notes (their own words, often an idea or a plan; a snippet, command or quote kept for later says nothing about them)';
+    // Stage 8: an export they brought in: their words from before, history only.
+    if (chunk.via === 'import') return 'an old chat of theirs with another AI, brought in from an export (old news: it builds history, never a question)';
+    return 'a chat with an AI agent';
+}
+
+/** The kept messages less those already read (a context message is never read twice: §4.11 rule 2). */
+export const unread = (kept: readonly number[], messages: readonly ChunkMessage[]): number[] => kept.filter((i) => !messages[i]?.context);
+
+/**
+ * The chat block with numbers (the loop's operations name the message they rest on). Given the day, a message
+ * said on an earlier day says so ("(said Sat 21 Nov, 2026-11-21)"): words held while the AI was paused, or a
+ * session read late, keep their own "today" (J9 on the real models, 11-18: both held updates landed on the day
+ * they arrived).
+ */
+export function numberedChat(messages: readonly ChunkMessage[], kept: readonly number[], when?: { today: DayString; tz: string }): string {
+    const keep = new Set(kept);
+    const lines: string[] = [];
+    messages.forEach((m, i) => {
+        if (m.before) lines.push(`buddy: ${m.before.replace(/\s+/g, ' ')}`);
+        lines.push(`[${i + 1}] ${keep.has(i) ? 'KEEP' : 'context'}${when ? saidOn(m.at, when) : ''}: ${m.text.replace(/\s+/g, ' ')}`);
+        if (m.reply) lines.push(`  agent: ${m.reply}`);
+    });
+    return lines.join('\n');
+}
+
+/** " (said Sat 21 Nov, 2026-11-21)" for a message said on an earlier calendar day than today, else nothing. */
+function saidOn(at: string, when: { today: DayString; tz: string }): string {
+    const t = Date.parse(at);
+    if (Number.isNaN(t)) return '';
+    const day = dayOf(new Date(t), when.tz);
+    if (day >= when.today) return '';
+    return ` (said ${new Intl.DateTimeFormat('en-GB', { timeZone: when.tz, weekday: 'short', day: 'numeric', month: 'short' }).format(new Date(t))}, ${day})`;
+}
+
+/**
+ * One piece with the loop on: his own words from the app skip the gate (every message is read with its
+ * context); other sources keep it. The digest writes notes, items and thread operations; code applies
+ * them, and deletes the piece, in one transaction under the person's lock, so a piece read twice
+ * writes nothing twice (§4.11).
+ */
+async function digestLoop(chunk: BuddyChunk, messages: readonly ChunkMessage[], ctx: Awaited<ReturnType<typeof loadLearningContext>>, now: Date, alsoIds: readonly string[] = []): Promise<{ kept: number; work: number } & DigestWrite> {
+    // His own words in the app (the chat, his answers, his pocket notes), and saved notes (already curated), skip
+    // the gate (stage 3, stage 4).
+    const own = chunk.via === 'ask_ai' || chunk.via === 'answer' || chunk.via === 'pocket' || !!chunk.noteId;
+    let kept: number[];
+    let work = 0;
+    if (own) kept = unread(messages.map((_, i) => i), messages);
+    else {
+        const workLog = await workLogOn(chunk.userId);
+        // Stage 4: the gate for anyone, given what is on their mind and the open questions.
+        const gate = await callClaude(chunk.userId, withRefusalFallbacks(gateRequest(messages, { work: workLog, loop: await gateLoopContext(chunk.userId, now) })), 'buddy gate');
+        await recordAiUsage(chunk.userId, 'buddy_gate', gate);
+        const labels = parseJson(responseText(gate));
+        kept = unread(keptIndexes(labels, messages.length), messages);
+        if (workLog && workIndexes(labels, messages.length).length) {
+            try {
+                work = (await summariseWork(chunk, messages, now)).lines;
+            } catch (err) {
+                console.error(`[buddy] the work summary failed: ${err instanceof Error ? err.message : String(err)}`);
+            }
+        }
+    }
+    if (!kept.length) return { kept: 0, notes: 0, seen: 0, items: 0, work };
+
+    const chat = numberedChat(messages, kept, { today: ctx.today, tz: ctx.tz });
+    // Saved details (MCP_MEMORY_PLAN §4.5) are read with the threads and the open questions only: no notes or items are
+    // written for them, so the memories and the tasks are not read. Stage 5b: "Tell" (his own words, saved as a note)
+    // still makes his to-dos tasks and ticks his tasks done, so it is shown his open tasks.
+    const savedDetails = !!chunk.noteId;
+    const tellPiece = savedDetails && chunk.via === 'tell';
+    const [known, saved, tasks, blocks] = await Promise.all([
+        savedDetails ? Promise.resolve([]) : prisma.memory.findMany({ where: { userId: chunk.userId, status: 'active' }, select: { id: true, text: true, kind: true }, orderBy: [{ lastSeenDay: 'desc' }], take: MEMORIES_SHOWN }),
+        savedDetails ? Promise.resolve([]) : savedLately(chunk.userId, messages),
+        savedDetails && !tellPiece ? Promise.resolve([]) : openTasksForDigest(chunk.userId, ctx.tz),
+        threadBlocks(chunk.userId, chat, now),
+    ]);
+    const weekday = new Intl.DateTimeFormat('en-GB', { weekday: 'long', timeZone: ctx.tz }).format(now);
+    const text = digestLoopText({ chat, known, ...blocks, saved: saved.map((s) => s.text), tasks, weekday, today: ctx.today, project: chunk.project, source: sourceLine(chunk) });
+    const digest = await callClaude(chunk.userId, withRefusalFallbacks(digestLoopRequest(text)), 'buddy digest');
+    await recordAiUsage(chunk.userId, 'buddy_digest', digest);
+    const parsed = zDigestLoop.safeParse(parseJson(responseText(digest)));
+    if (!parsed.success) throw new Error('the digest answered in the wrong shape');
+    const out = parsed.data;
+
+    // Stage 5b: a message the digest may act on (read now, not context), and whether this source's to-dos may become tasks.
+    const readable = (n: number) => !!messages[n - 1] && !messages[n - 1]!.context && kept.includes(n - 1);
+    const ownWords = tasksFromWordsOk(chunk);
+    const result = await withPersonLock(chunk.userId, async (tx) => {
+        const applied = await applyThreadOps(tx, chunk.userId, chunk, messages, out.threads, { now, tz: ctx.tz, today: ctx.today });
+        // Never both an item and a thread for the same words (§4.2): code drops the item. Stage 5b: a task beside an event
+        // on the same message is kept ("the wedding is on the 5th and I still need a gift").
+        const items = out.items.filter((i) => !applied.threadMessages.has(i.message) || (i.kind === 'task' && applied.eventOnly.has(i.message)));
+        // Stage 5b (A): their own to-dos with a day are tasks at once, with an early reminder; the rest stay suggestions.
+        const asTasks = ownWords ? items.filter((i) => i.kind === 'task' && readable(i.message) && isValidDay(i.dueDay) && i.dueDay >= ctx.today) : [];
+        const tasksMade = asTasks.length ? await writeTasksFromWords(tx, chunk.userId, asTasks, { now, tz: ctx.tz, today: ctx.today }) : { made: 0, reminders: 0, dropped: [] };
+        const closed = ownWords ? await closeTasksFromWords(tx, chunk.userId, out.tasksDone.filter((d) => readable(d.message)), new Set(tasks.map((t) => t.id)), { now }) : { closed: 0, dropped: [] };
+        // Stage 5b (B): their wishes about when it may ask and what stays off their screens.
+        const screens = out.screens.length ? await applyScreenOps(tx, chunk.userId, out.screens, { now, tz: ctx.tz, direct: chunk.source !== 'agent' && ownWords, context: new Set(messages.flatMap((m, i) => (m.context ? [i + 1] : []))), messages: messages.length }) : null;
+        const rest = items.filter((i) => !asTasks.includes(i)).map(({ message: _m, deadline: _d, time: _t, ...r }) => r);
+        // Saved notes are stored already: only what they mean for the threads is written.
+        const written = chunk.noteId
+            ? { notes: 0, seen: 0, items: 0 }
+            : await writeDigest(chunk.userId, { ...chunk, saidFrom: chunk.saidFrom ?? (messages[0] ? new Date(messages[0].at) : null) }, { notes: out.notes, items: rest }, ctx.today, tx, now);
+        if (tasksMade.dropped.length || closed.dropped.length || screens?.dropped.length) console.log(`[buddy] 5b dropped: ${[...tasksMade.dropped, ...closed.dropped, ...(screens?.dropped ?? [])].map((d) => `${d.what} (${d.why})`).join('; ')}`);
+        // The piece (and the pieces of its session read with it) go in the same transaction.
+        await tx.buddyChunk.deleteMany({ where: { id: { in: [chunk.id, ...alsoIds] } } });
+        return { kept: kept.length, work, ...written, tasks: tasksMade.made, reminders: tasksMade.reminders, tasksDone: closed.closed, screenRules: screens?.made ?? 0 };
+    });
+    if (result.reminders || result.tasksDone) poke('reminders');
+    // Stage 18: their own fresh words that change what is fit to say today: a pulse follows within minutes (pulseDue).
+    const todays = out.today && ownWords ? kept.filter((i) => !!messages[i] && !messages[i]!.context && freshToday(new Date(messages[i]!.at), now, ctx.tz, ctx.today)) : [];
+    if (todays.length) await stampToday(chunk.userId, ctx.today, now, todays.map((i) => scrubSecrets(messages[i]!.text)).join(' / '));
+    return result;
 }

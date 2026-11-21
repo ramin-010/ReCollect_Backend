@@ -139,11 +139,7 @@ export const deleteUserAccount = async (req: Request, res: Response, next: NextF
       throw new ErrorResponse(401, "Not authenticated");
     }
     const userId = req.user.id;
-    const { password } = req.body ?? {};
-
-    if (!password) {
-      throw new ErrorResponse(400, "Password required to delete account");
-    }
+    const { password, confirm } = req.body ?? {};
 
     const user = await findUserByIdWithPassword(userId);
 
@@ -151,10 +147,21 @@ export const deleteUserAccount = async (req: Request, res: Response, next: NextF
       throw new ErrorResponse(404, "User not found");
     }
 
-    const isMatch = await verifyPassword(String(password), user.password);
+    // Stage 11 (§9.6): an account made with Google has no password of its own: its typed email is the confirmation.
+    if (user.authProvider === 'google' && !password) {
+      if (typeof confirm !== 'string' || confirm.trim().toLowerCase() !== user.email.trim().toLowerCase()) {
+        throw new ErrorResponse(400, "Type your email address to delete your account");
+      }
+    } else {
+      if (!password) {
+        throw new ErrorResponse(400, "Password required to delete account");
+      }
 
-    if (!isMatch) {
-      throw new ErrorResponse(401, "Invalid password");
+      const isMatch = await verifyPassword(String(password), user.password);
+
+      if (!isMatch) {
+        throw new ErrorResponse(401, "Invalid password");
+      }
     }
 
     // Postgres cascades the user's own rows (docs, todos, owned workspaces, …); Mongo left them orphaned.

@@ -32,13 +32,21 @@ export interface Catalogue {
 
 interface EmbeddedModule {
     openCatalogue(options: { baseUrl: string; token: string; agentName: string; timeoutMs?: number }): Promise<Catalogue>;
-    handleMcpHttp(req: unknown, res: unknown, options: { baseUrl: string; token: string; agentName: string; timeoutMs?: number }): Promise<void>;
+    handleMcpHttp(req: unknown, res: unknown, options: { baseUrl: string; token: string; agentName: string; timeoutMs?: number; trace?: (call: { tool: string; args: unknown; answer?: string }) => void }): Promise<void>;
 }
 
 /** Remote MCP (ALWAYS_ON_SPEC 6.5): one Streamable HTTP request served by the same catalogue, on the caller's token. */
 export async function serveMcpHttp(req: unknown, res: unknown, options: { baseUrl: string; token: string; agentName: string }): Promise<void> {
     const mod = await embedded();
-    await mod.handleMcpHttp(req, res, options);
+    // MCP_MEMORY_PLAN stage 5: the connector simulation traces each tool call (its name, arguments, answer, app and time) to a
+    // file; off unless MCP_TRACE_FILE is set (development only). Never the token.
+    const file = process.env['MCP_TRACE_FILE'];
+    const trace = file
+        ? (call: { tool: string; args: unknown; answer?: string }) => {
+              void import('node:fs').then((fs) => fs.promises.appendFile(file, `${JSON.stringify({ at: new Date().toISOString(), app: options.agentName, ...call })}\n`)).catch(() => {});
+          }
+        : undefined;
+    await mod.handleMcpHttp(req, res, { ...options, ...(trace ? { trace } : {}) });
 }
 
 // TypeScript turns `import()` into `require()` for CommonJS output; an ES module needs the real one.

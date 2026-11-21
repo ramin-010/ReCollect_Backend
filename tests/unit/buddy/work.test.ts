@@ -10,10 +10,10 @@ describe('the work summariser', () => {
             { at: '2026-11-15T09:05:00Z', text: 'yes   do\nit' },
         ]);
         const [first, reply, second] = chat.split('\n');
-        expect(first!.length).toBeLessThanOrEqual('him: '.length + 600);
+        expect(first!.length).toBeLessThanOrEqual('user: '.length + 600);
         expect(first!.endsWith('…')).toBe(true);
         expect(reply).toBe('agent: Fixed the export.');
-        expect(second).toBe('him: yes do it');
+        expect(second).toBe('user: yes do it');
     });
 
     it('cleans its lines: no label, no secret, short, no repeat, nothing he removed, six at most', () => {

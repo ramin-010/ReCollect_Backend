@@ -2,6 +2,7 @@
 // accept list). The scheduler's clock is moved by hand (tests/helpers/manualClock.ts), starting at
 // the real time so rows the database stamps agree with it; the database's own I/O stays real.
 // Accept 1 (poll mode keeps every existing job test) is the rest of this suite.
+import { LOCK_SCHEMA } from '../../src/services/buddy/think';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import pg from 'pg';
@@ -239,10 +240,15 @@ describe('the quiet scheduler: the buddy and the day', () => {
             note: '', followUp: '', suggestions: [], notebook: '', insight: '',
             weekly: { use: false, strong: '', slipping: '', fix: '', deadline: '', focus: [] },
         };
+        // Since stage 3 (ECOSYSTEM_V2_PLAN §4.8) every line is lock-checked, so each step is followed by its check.
+        const lock = () => fakeMessage({ lines: ['morning', 'afternoon', 'evening'].map((slot) => ({ slot, reveals: false })), note: false, insight: false }, { model: 'claude-sonnet-5-5' });
         fake.push(
             fakeMessage(night),
+            lock(),
             fakeMessage({ lines: [{ slot: 'afternoon', text: 'The mock moved: one problem after lunch', form: 'push', lockOk: true, sourceId: '' }], note: '' }, { model: 'claude-sonnet-5-5' }),
+            lock(),
             fakeMessage(night),
+            lock(),
         );
         const jobs = quietJobs().filter((j) => j.name === 'rollover' || j.name === 'nudge' || j.name === 'buddy');
         const { advance } = await startQuiet(clock, jobs);
@@ -271,6 +277,7 @@ describe('the quiet scheduler: the buddy and the day', () => {
         expect((await api(user).patch('/api/learning/settings', { timezone: 'America/New_York' })).status).toBe(200);
         await advance(at('2026-11-19T14:00:00Z')); // 09:00 Thu 19 Nov in New York
         expect(await state()).toEqual({ rolled: '2026-11-19', nudged: '2026-11-19', emails: 2, steps: ['night 2026-11-18', 'pulse 2026-11-18', 'night 2026-11-19'] });
-        expect(fake.calls).toHaveLength(3); // no second pulse: nothing new after the first
+        // Two nights and one pulse (no second pulse: nothing new after the first); the pulse's line needs no check here.
+        expect(fake.calls.filter((c) => c.output_config?.format?.schema !== LOCK_SCHEMA)).toHaveLength(3);
     });
 });

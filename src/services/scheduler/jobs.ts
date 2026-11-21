@@ -18,7 +18,8 @@ import { nextMorningPushDue, runMorningPushPass } from '../push/push.service';
 import { nextRecallNightly, nextRecallPollDue, pollRecallBatches, startRecallCrons, submitNightlyRecallBatch } from '../recall/batch.service';
 import { startTrashCron, trashHousekeeping } from '../docs/trash.service';
 import { drainBuddyQueue, nextBuddyDue, nextCaptureDue, runDueNights, startBuddyWorker } from '../buddy/worker';
-import { isAiConfigured } from '../claude/client';
+import { isAiConfigured, probeDueKeys } from '../claude/client';
+import { nextProbeDue } from '../claude/access';
 import { nextReminderDue, processDueReminders, REMINDER_BATCH_SIZE } from '../reminders/reminders.service';
 import { Scheduler, poke, setActiveScheduler, type Job } from './scheduler';
 
@@ -94,6 +95,16 @@ export function quietJobs(env: NodeJS.ProcessEnv = process.env): Job[] {
             },
             next: async (now) => nextRecallNightly(now),
         },
+        {
+            // A paused AI key (out of credit, or rejected): probed every 6 hours (or at once on the user's
+            // "Try again"); when it works again the buddy's queue and nights start again (ECOSYSTEM_V2_PLAN stage 2).
+            name: 'aiProbe',
+            run: async (now) => {
+                if (!isAiConfigured()) return;
+                if ((await probeDueKeys(now)).length) poke('capture', 'buddy');
+            },
+            next: () => nextProbeDue(),
+        },
     ];
     if (!buddyOff(env)) {
         jobs.push(
@@ -134,6 +145,9 @@ export async function housekeeping(): Promise<void> {
     const removed = await deleteExpiredOtps();
     if (removed > 0) console.log(`🧹 Removed ${removed} expired OTP(s)`);
     await trashHousekeeping();
+    // MCP_MEMORY_PLAN §4.7: the code-only fading and promotion, once a day for every account (AI or not).
+    const { upkeepMemories } = await import('../buddy/catchup');
+    await upkeepMemories();
 }
 
 let running: Scheduler | null = null;
@@ -150,6 +164,10 @@ export function startBackgroundJobs(env: NodeJS.ProcessEnv = process.env): Sched
         startRecallCrons(); // the nightly questions at 02:30, the batch poll every 10 minutes
         startTrashCron(); // the trash, old chats, agent history, OAuth leftovers: hourly
         startBuddyWorker(); // the buddy's queue every minute, its nights every 15 minutes
+        // A paused AI key: probed when due (every 6 hours after a failure), checked every 15 minutes.
+        cron.schedule('*/15 * * * *', () => {
+            if (isAiConfigured()) probeDueKeys().catch((err: unknown) => console.error('[ai] probe failed:', err));
+        });
         return mode;
     }
     const minutes = sweepMinutes(env);

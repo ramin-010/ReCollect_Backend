@@ -30,41 +30,36 @@ describe('ambientFor', () => {
     it('morning: what today holds, then the next topic and focus lines', () => {
         const a = ambientFor(brief({ planned: 3, est: 12, next: 'Caching part 2', focus: [{ text: 'Finish the LRU note', done: false }] }), 'normal', 8, date);
         expect(a.state).toBe('morning');
-        expect(a.headline).toBe('3 reviews · about 12 min');
+        // Stage 16: no estimated time (the owner, 11-20).
+        expect(a.headline).toBe('3 reviews');
         expect(a.lines).toEqual(['Next: Caching part 2', 'Finish the LRU note']);
     });
 
     it('working hours: the focus line only', () => {
         const a = ambientFor(brief({ planned: 2, est: 9, focus: [{ text: 'Ship the share popover', done: false }] }), 'normal', 14, date);
-        expect(a).toMatchObject({ state: 'working', headline: 'Ship the share popover', lines: ['2 reviews · about 9 min'] });
+        expect(a).toMatchObject({ state: 'working', headline: 'Ship the share popover', lines: ['2 reviews'] });
     });
 
     it('evening: one line on the day, never an overdue count', () => {
         const a = ambientFor(brief({ planned: 1, est: 5, done: 2 }), 'normal', 20, date);
-        expect(a).toMatchObject({ state: 'evening', headline: '2 reviews done today', lines: ['1 left · about 5 min'] });
+        expect(a).toMatchObject({ state: 'evening', headline: '2 reviews done today', lines: ['1 left'] });
     });
 
-    it('a done day is a clean picture: the night sky, "Done for today" and the date, nothing to do', () => {
+    it('a done day with nothing ahead is the picture alone: the night sky, no words (stage 16: the home picture is what is ahead)', () => {
         const a = ambientFor(brief({ done: 3 }), 'normal', 16, date);
         expect(a).toMatchObject({ state: 'done', headline: '', lines: [] });
         const svg = wallpaperSvg(a, 1080, 2340, 'dark');
-        expect(svg).toContain(`>${date.toUpperCase()}<`); // the date as a small eyebrow (B8)
-        expect(svg).toContain('Done for today');
         expect(svg).toContain('mask="url(#crescent)"');
-        expect(svg.match(/<text/g)).toHaveLength(2);
+        expect(svg.match(/<text/g)).toBeNull();
     });
 
-    it('the sky follows the state; the last seven days show as dots under the lines', () => {
+    it('the sky follows the state; the week’s dots and the date are gone from the home picture (stage 16)', () => {
         const week = ['2026-11-09', '2026-11-10', '2026-11-11', '2026-11-12', '2026-11-13', '2026-11-14', '2026-11-15'].map((day, i) => ({ day, active: i !== 2 }));
         const morning = wallpaperSvg({ ...ambientFor(brief({ planned: 3, est: 12 }), 'normal', 8, date), week }, 1080, 2340, 'light');
         const evening = wallpaperSvg({ ...ambientFor(brief({ planned: 1, est: 5, done: 2 }), 'normal', 20, date), week }, 1080, 2340, 'light');
-        // The state is the sky's light (B8: the state's pill is gone; the date is the eyebrow).
-        expect(morning).not.toContain('>Morning<');
         expect(morning.match(/<linearGradient id="sky"[^]*?<\/linearGradient>/)?.[0]).not.toBe(evening.match(/<linearGradient id="sky"[^]*?<\/linearGradient>/)?.[0]);
-        // Seven dots, six filled and one hollow of the same size; the weekday letters under them end on Sunday (today).
-        expect(morning.match(/<circle [^>]*r="11.3" fill="#211F1D"/g)).toHaveLength(6);
-        expect(morning.match(/<circle [^>]*r="10" fill="none"/g)).toHaveLength(1);
-        expect(morning).toMatch(/>M<[^]*>S<\/text><\/svg>$/);
+        expect(morning.match(/<circle [^>]*r="11.3"/g)).toBeNull();
+        expect(morning).not.toContain(date.toUpperCase());
     });
 
     it('lines wrap by real widths, evenly, never starting with a separator or splitting "3 reviews"', () => {
@@ -82,24 +77,24 @@ describe('ambientFor', () => {
     });
 
     it('busy and comeback modes are lighter', () => {
-        expect(ambientFor(brief({ planned: 1, est: 5 }), 'busy', 9, date)).toMatchObject({ state: 'rest', headline: 'A light day: 1 review · about 5 min' });
-        expect(ambientFor(brief({ planned: 2, est: 8, next: 'Heaps' }), 'comeback', 9, date)).toMatchObject({ state: 'rest', headline: 'Welcome back: 2 reviews · about 8 min', lines: ['Next: Heaps'] });
+        expect(ambientFor(brief({ planned: 1, est: 5 }), 'busy', 9, date)).toMatchObject({ state: 'rest', headline: 'A light day: 1 review' });
+        expect(ambientFor(brief({ planned: 2, est: 8, next: 'Heaps' }), 'comeback', 9, date)).toMatchObject({ state: 'rest', headline: 'Welcome back: 2 reviews', lines: ['Next: Heaps'] });
     });
 
     it('"Hide titles": counts and plain words, never a topic or focus name', () => {
         const focus = [{ text: 'Finish the LRU note', done: false }, { text: 'Ship the share popover', done: false }];
         const morning = ambientFor(brief({ planned: 3, est: 12, next: 'Caching part 2', focus, tasks: 1 }), 'normal', 8, date, new Date(), { titles: false });
-        expect(morning).toMatchObject({ state: 'morning', headline: '3 reviews · about 12 min', lines: ['Focus: 2 open', '1 task due'] });
+        expect(morning).toMatchObject({ state: 'morning', headline: '3 reviews', lines: ['Focus: 2 open', '1 task due'] });
         const free = ambientFor(brief({ focus: focus.slice(0, 1) }), 'normal', 8, date, new Date(), { titles: false });
         expect(free).toMatchObject({ headline: 'Focus: 1 open', lines: [] });
-        expect(ambientFor(brief({ planned: 2, est: 9, focus }), 'normal', 14, date, new Date(), { titles: false })).toMatchObject({ state: 'working', headline: 'Focus: 2 open', lines: ['2 reviews · about 9 min'] });
+        expect(ambientFor(brief({ planned: 2, est: 9, focus }), 'normal', 14, date, new Date(), { titles: false })).toMatchObject({ state: 'working', headline: 'Focus: 2 open', lines: ['2 reviews'] });
         expect(ambientFor(brief({ planned: 2, est: 8, next: 'Heaps' }), 'comeback', 9, date, new Date(), { titles: false })).toMatchObject({ state: 'rest', lines: [] });
         const text = JSON.stringify(morning) + wallpaperSvg(morning, 1080, 2340, 'light');
         for (const name of ['Caching part 2', 'Finish the LRU note', 'Ship the share popover']) expect(text).not.toContain(name);
     });
 
     it('the wallpaper escapes text and keeps it off the clock area', () => {
-        const a = ambientFor(brief({ planned: 1, est: 5, focus: [{ text: 'Read <b> & "quotes"', done: false }] }), 'normal', 9, date);
+        const a = { ...ambientFor(brief({ planned: 1, est: 5 }), 'normal', 9, date), pickUp: { id: 'pu_1', at: '', text: 'Read <b> & "quotes"' } };
         const svg = wallpaperSvg(a, 1080, 2340, 'light');
         expect(svg).toContain('Read &lt;b&gt; &amp; &quot;quotes&quot;');
         const ys = [...svg.matchAll(/<text x="\d+" y="(\d+)"/g)].map((m) => Number(m[1]));
@@ -177,46 +172,46 @@ describe('the two pictures', () => {
     );
     const a = { ...ambientFor(brief({ planned: 2, est: 16, done: 1 }), 'normal', 17, date), ...day };
 
-    it('home (B4, B8): the sky over its hills and the day in numbers: the numeral, "left today" and the time beside it; no list', () => {
-        const svg = wallpaperSvg(a, 1080, 2340, 'dark', 'home');
+    const ahead = {
+        pickUp: { id: 'pu_s1', at: '', text: '3Sum', detail: 'has the two-pointer idea; duplicates still break it' },
+        comingUp: [
+            { id: 'tk_t1', at: 'Sun', text: 'Get a gift for my sister' },
+            { id: 'tk_t2', at: 'Mon', text: 'Book the dentist' },
+            { id: 'th_e1', at: 'Thu 3 pm', text: 'Interview' },
+            { id: 'tk_t9', at: 'Fri', text: 'A fourth one' },
+        ],
+    };
+
+    it('home (stage 16): what is ahead at the left above the dock: Pick up, Coming up; no number, minutes, date, dots or reminders', () => {
+        const svg = wallpaperSvg({ ...a, ...ahead, reminders: [{ at: '6:30 pm', text: 'Call the bank' }] }, 1080, 2340, 'dark', 'home');
         expect(svg).toContain('id="hill0"');
-        expect(svg).toMatch(/font-size="178.2" font-weight="600"[^>]*>3<\/text>/); // the numeral, 0.165 of the width
-        expect(svg).toContain('>left today<');
-        expect(svg).toContain('>about 16 min<');
-        expect(svg).toContain('>SUNDAY 15 NOVEMBER<');
-        expect(svg).not.toContain('>Monotonic stack<');
-        expect(svg).not.toContain('>Heaps<');
-        // Nothing smaller than the quiet size (0.031 of the width).
-        for (const m of svg.matchAll(/font-size="([\d.]+)"/g)) expect(Number(m[1])).toBeGreaterThanOrEqual(1080 * 0.031 - 0.1);
-    });
-
-    it("home: today's reminders under the day's number (time and words, three at most); none: the picture as before", () => {
-        const plain = wallpaperSvg(a, 1080, 2340, 'dark', 'home');
-        const withNone = wallpaperSvg({ ...a, reminders: [] }, 1080, 2340, 'dark', 'home');
-        expect(withNone).toBe(plain);
-        const reminders = [
-            { at: '6:30 pm', text: 'Call the bank' },
-            { at: '9 pm', text: 'Write up the contest' },
-            { at: '10 pm', text: 'Pack the bag' },
-            { at: '11 pm', text: 'A fourth one' },
-        ];
-        const svg = wallpaperSvg({ ...a, reminders }, 1080, 2340, 'dark', 'home');
-        for (const r of reminders.slice(0, 3)) {
-            expect(svg).toContain(`>${r.at}<`);
-            expect(svg).toContain(`>${r.text}<`);
-        }
+        for (const words of ['>Pick up<', '>3Sum<', '>Coming up<', '>Sun<', '>Get a gift for my sister<', '>Thu 3 pm<', '>Interview<']) expect(svg).toContain(words);
+        // Where they stopped, wrapped (two lines at most).
+        expect([...svg.matchAll(/>([^<>]+)<\/text>/g)].map((m) => m[1]).join(' ')).toContain('has the two-pointer idea; duplicates still break it');
         expect(svg).not.toContain('A fourth one');
-        // The words of the rows start in one column; the block grew upward (its bottom stays above the dock).
-        const xs = reminders.slice(0, 3).map((r) => Number(new RegExp(`<text x="([\\d.]+)" [^>]*>${r.text}<`).exec(svg)?.[1]));
-        expect(xs.every((v) => v > 0)).toBe(true);
+        for (const gone of ['left today', 'about 16 min', 'SUNDAY 15 NOVEMBER', 'Call the bank', 'Monotonic stack']) expect(svg).not.toContain(gone);
+        // The days in one column, the words after them in another.
+        const xs = ['Get a gift for my sister', 'Book the dentist', 'Interview'].map((t) => Number(new RegExp(`<text x="([\\d.]+)" [^>]*>${t}<`).exec(svg)?.[1]));
         expect(new Set(xs).size).toBe(1);
-        const eyebrowY = (s: string) => Number(/<text x="[\d.]+" y="([\d.]+)"[^>]*>SUNDAY 15 NOVEMBER</.exec(s)?.[1]);
-        expect(eyebrowY(svg)).toBeLessThan(eyebrowY(plain));
+        // Nothing smaller than the quiet size (0.031 of the width); the block's foot above the dock.
+        for (const m of svg.matchAll(/font-size="([\d.]+)"/g)) expect(Number(m[1])).toBeGreaterThanOrEqual(1080 * 0.031 - 0.1);
+        const ys = [...svg.matchAll(/<text x="[\d.]+" y="([\d.]+)"/g)].map((m) => Number(m[1]));
+        expect(Math.max(...ys)).toBeLessThanOrEqual(2340 * 0.745);
+        expect(Math.min(...ys)).toBeGreaterThan(2340 * 0.36);
     });
 
-    it("home: the buddy's thought under the reminders (its mark, the words wrapped, three lines at most); none: the picture as before", () => {
-        const plain = wallpaperSvg(a, 1080, 2340, 'dark', 'home');
-        expect(wallpaperSvg({ ...a, insight: '' }, 1080, 2340, 'dark', 'home')).toBe(plain);
+    it('home: each part only when there is one; nothing ahead and no thought: the picture alone', () => {
+        const none = wallpaperSvg(a, 1080, 2340, 'dark', 'home');
+        expect(none.match(/<text/g)).toBeNull();
+        const onlyAhead = wallpaperSvg({ ...a, comingUp: ahead.comingUp }, 1080, 2340, 'dark', 'home');
+        expect(onlyAhead).not.toContain('Pick up');
+        expect(onlyAhead).toContain('Coming up');
+        const onlyPick = wallpaperSvg({ ...a, pickUp: ahead.pickUp }, 1080, 2340, 'dark', 'home');
+        expect(onlyPick).toContain('Pick up');
+        expect(onlyPick).not.toContain('Coming up');
+    });
+
+    it("home: the buddy's thought last (its mark, the words wrapped, three lines at most); alone it is the only block", () => {
         const insight = 'Your sharpest hours are before noon, so keep the monotonic stack review there tomorrow';
         const svg = wallpaperSvg({ ...a, insight }, 1080, 2340, 'dark', 'home');
         expect(svg).toContain('M7.9 20A9 9 0 1 0 4 16.1L2 22Z'); // the message mark
@@ -225,34 +220,32 @@ describe('the two pictures', () => {
         expect(rows.length).toBeLessThanOrEqual(3);
         expect(rows.map((m) => m[4]).join(' ')).toBe(insight);
         expect(new Set(rows.map((m) => m[1])).size).toBe(1); // one left edge, after the mark
-        expect(Number(rows[0]![3])).toBeCloseTo(1080 * 0.039, 0); // the reminders' size
-        // After the reminders (whose words start in the same column), and the block grew upward.
-        const both = wallpaperSvg({ ...a, reminders: [{ at: '9 pm', text: 'Write up the contest' }], insight }, 1080, 2340, 'dark', 'home');
+        expect(Number(rows[0]![3])).toBeCloseTo(1080 * 0.039, 0);
+        // With what is ahead: the thought comes last, and the whole block grew upward.
+        const both = wallpaperSvg({ ...a, ...ahead, insight }, 1080, 2340, 'dark', 'home');
         const yOf = (s: string, words: string) => Number(new RegExp(`<text x="[\\d.]+" y="([\\d.]+)"[^>]*>${words}<`).exec(s)?.[1]);
-        const first = rows[0]![4]!;
-        expect(yOf(both, first)).toBeGreaterThan(yOf(both, 'Write up the contest'));
-        expect(yOf(both, 'SUNDAY 15 NOVEMBER')).toBeLessThan(yOf(svg, 'SUNDAY 15 NOVEMBER'));
+        expect(yOf(both, rows[0]![4]!)).toBeGreaterThan(yOf(both, 'Interview'));
         // Never a fourth line: a long one steps down to the quiet size, then ends with "…".
         const long = wallpaperSvg({ ...a, insight: `${insight} and then ${insight} and once more ${insight}` }, 1080, 2340, 'dark', 'home');
-        const longRows = [...long.matchAll(/font-weight="400"[^>]*>([^<]+)</g)].filter((m) => m[1]!.length > 10 && !/^(about|left|Nothing)/.test(m[1]!));
+        const longRows = [...long.matchAll(/font-weight="400"[^>]*>([^<]+)</g)].filter((m) => m[1]!.length > 10);
         expect(longRows.length).toBeLessThanOrEqual(3);
         for (const m of long.matchAll(/font-size="([\d.]+)"/g)) expect(Number(m[1])).toBeGreaterThanOrEqual(1080 * 0.031 - 0.1);
     });
 
     it('home (B8): drawn for the zoom the phone shows it at: the words smaller about the centre, the backdrop whole', () => {
-        const flat = wallpaperSvg(a, 1080, 2340, 'dark', 'home');
-        const zoomed = wallpaperSvg(a, 1080, 2340, 'dark', 'home', { zoom: 1.1 });
+        const flat = wallpaperSvg({ ...a, ...ahead }, 1080, 2340, 'dark', 'home');
+        const zoomed = wallpaperSvg({ ...a, ...ahead }, 1080, 2340, 'dark', 'home', { zoom: 1.1 });
         // s = 1/1.1; the shift keeps the centre: 540 × (1 − s), 1170 × (1 − s).
         expect(zoomed).toContain('<g transform="matrix(0.90909 0 0 0.90909 49.1 106.4)">');
         expect(flat).not.toContain('<g transform="matrix(');
         // Only the words and marks are inside the group: the hills are drawn before it, at full size.
         const group = zoomed.slice(zoomed.indexOf('<g transform="matrix('));
         expect(group).not.toContain('hill0');
-        expect(group).toContain('>left today<');
+        expect(group).toContain('>3Sum<');
         // The zoom a picture may be drawn for: 1 to 1.25.
         expect([pictureZoom('1.1'), pictureZoom(2), pictureZoom(0.9), pictureZoom('x'), pictureZoom(undefined)]).toEqual([1.1, 1.25, 1, 1, 1]);
         // A style's marks that belong with the words zoom with them (Mono's frame).
-        const mono = wallpaperSvg(a, 1080, 2340, 'dark', 'home', { style: 'mono', zoom: 1.1 });
+        const mono = wallpaperSvg({ ...a, ...ahead }, 1080, 2340, 'dark', 'home', { style: 'mono', zoom: 1.1 });
         expect(mono.slice(mono.indexOf('<g transform="matrix(')).match(/<rect x="64.8"/)).not.toBeNull();
     });
 
@@ -262,18 +255,19 @@ describe('the two pictures', () => {
         expect(svg).toContain('id="lineGlow"');
         const said = [...svg.matchAll(/>([^<>]+)<\/text>/g)].map((m) => m[1]).join(' ');
         expect(said).toContain('Stop before midnight tonight');
-        // B8: one row of the day in words (no icons), then the goal's days.
-        expect(svg).toContain('>2 reviews · 1 focus line · 16 min<');
-        expect(svg).toContain('>LEFT<');
+        // B8: one row of the day in words (no icons), then the goal's days (stage 16: no estimated time).
+        expect(svg).toContain('>2 reviews · 1 focus line<');
+        expect(svg).toContain('>left<');
         expect(svg).toContain('182 days to Backend SDE offer');
         expect(svg).not.toContain('Monotonic stack');
         // The ring of the day over the line (the owner, 11-16: a whole circle, not the half arc): one segment per thing.
         expect((svg.match(/<path d="M[^"]+A[^"]+" fill="none" stroke=/g) ?? []).length).toBeGreaterThanOrEqual(3);
         // Without a line: the dial of the day (what is left inside the ring), as before the buddy.
         const plain = wallpaperSvg(a, 1080, 2340, 'dark', 'lock');
-        expect(plain).toContain('>LEFT TODAY<');
-        expect(plain).toContain('>Next · Monotonic stack · 8 min<');
-        expect(plain).toContain('>2 reviews · 1 focus line · 16 min<');
+        expect(plain).toContain('>left today<');
+        // Stage 16: the "Next ·" row is gone (today's rows take its place).
+        expect(plain).not.toContain('Next ·');
+        expect(plain).toContain('>2 reviews · 1 focus line<');
         // A style draws its own backdrop and ring; an unknown style is the sky.
         const mono = wallpaperSvg({ ...a, line: { dayId: 'd1', slot: 'morning', text: 'Stop before midnight tonight' } }, 1080, 2340, 'dark', 'lock', { style: 'mono', color: 'lime' });
         expect((mono.match(/<line /g) ?? []).length).toBe(60);
@@ -282,6 +276,82 @@ describe('the two pictures', () => {
         const ys = [...svg.matchAll(/<text x="[\d.]+" y="([\d.]+)"/g)].map((m) => Number(m[1]));
         expect(Math.min(...ys)).toBeGreaterThan(2340 * 0.33);
         expect(Math.max(...ys)).toBeLessThan(2340 * 0.79);
+    });
+
+    it('lock (stage 16): today’s next things under the day’s row, the times in one column; the goal only when given; never an estimated time', () => {
+        const today = [
+            { id: 'rm_1', at: '6:30 pm', text: 'Call the bank' },
+            { id: 'th_1', at: '9 pm', text: 'Contest on Codeforces' },
+            { id: 'tk_1', at: '', text: 'Send the invoice' },
+        ];
+        const line = { dayId: 'd1', slot: 'evening', text: 'Stop before midnight tonight' };
+        for (const withLine of [true, false]) {
+            const svg = wallpaperSvg({ ...a, today, ...(withLine ? { line } : {}) }, 1080, 2340, 'dark', 'lock');
+            for (const r of today) expect(svg).toContain(`>${r.text}<`);
+            expect(svg).toContain('>6:30 pm<');
+            expect(svg).toContain('>9 pm<');
+            const xs = today.map((r) => Number(new RegExp(`<text x="([\\d.]+)" [^>]*>${r.text}<`).exec(svg)?.[1]));
+            expect(new Set(xs).size).toBe(1);
+            expect(svg).not.toMatch(/\d+ min</);
+            // Between the clock and the fingerprint.
+            const ys = [...svg.matchAll(/<text x="[\d.]+" y="([\d.]+)"/g)].map((m) => Number(m[1]));
+            expect(Math.min(...ys)).toBeGreaterThan(2340 * 0.26);
+            expect(Math.max(...ys)).toBeLessThan(2340 * 0.8);
+        }
+        // The goal's row only when the picture is given one (their switch, stage 16).
+        expect(wallpaperSvg({ ...a, today, line }, 1080, 2340, 'dark', 'lock')).toContain('182 days to Backend SDE offer');
+        expect(wallpaperSvg({ ...a, today, line, goal: null }, 1080, 2340, 'dark', 'lock')).not.toContain('days to');
+    });
+
+    it('lock (the owner, 11-21): the schedule reads as an agenda at the left: times in one column, "Today" and "Late" quieter, the titles in one column after them; the line at the same left edge; the ring without its glow', () => {
+        const today = [
+            { id: 'rm_1', at: '6:30 pm', text: 'Call the bank' },
+            { id: 'tk_1', at: '', text: 'Send the invoice' },
+            { id: 'tk_2', at: 'late', text: 'Renew the passport' },
+        ];
+        for (const withLine of [true, false]) {
+            const svg = wallpaperSvg({ ...a, today, ...(withLine ? { line: { dayId: 'd1', slot: 'evening', text: 'Stop before midnight tonight' } } : {}) }, 1080, 2400, 'dark', 'lock');
+            const cell = (words: string) => new RegExp(`<text x="([\\d.]+)" y="([\\d.]+)"( text-anchor="end")? font-family="Inter" font-size="[\\d.]+" font-weight="(\\d+)"[^>]*fill="([^"]+)">${words}<`).exec(svg);
+            const times = ['6:30 pm', 'Today', 'Late'].map(cell);
+            // One left edge for the times, at the picture's left like the home picture (the owner, 11-21); a real time
+            // stands out, "Today" and "Late" are quieter.
+            for (const t of times) expect(t?.[3], `${withLine}`).toBeUndefined();
+            expect(new Set(times.map((t) => t?.[1])).size).toBe(1);
+            expect(Number(times[0]?.[1])).toBeCloseTo(1080 * 0.08, 0);
+            expect(times.map((t) => t?.[4])).toEqual(['600', '500', '500']);
+            expect(times[1]?.[5]).not.toBe(times[0]?.[5]);
+            // One left edge for the titles, after the times, each on its time's baseline.
+            const titles = today.map((r) => cell(r.text));
+            expect(new Set(titles.map((t) => t?.[1])).size).toBe(1);
+            expect(Number(titles[0]?.[1])).toBeGreaterThan(Number(times[0]?.[1]));
+            titles.forEach((t, i) => expect(t?.[2]).toBe(times[i]?.[2]));
+            // Sentence case, never caps.
+            expect(svg).not.toMatch(/>(TODAY|LATE|LEFT|LEFT TODAY|COMING UP|PICK UP)</);
+            // No chat mark on the lock (the owner, 11-21: the home picture's thought keeps it).
+            expect(svg).not.toContain('M7.9 20A9 9 0 1 0 4 16.1L2 22Z');
+            // No soft light under the ring's lit part.
+            expect(svg).not.toContain('stroke-opacity="0.16"');
+        }
+    });
+
+    it('lock (stage 16): on a short phone two rows always show (the ring shrinks, then goes); the third only when it fits', () => {
+        const today = [
+            { id: 'rm_1', at: '6:30 pm', text: 'Call the bank' },
+            { id: 'rm_2', at: '9 pm', text: 'Contest on Codeforces' },
+            { id: 'tk_1', at: '', text: 'Send the invoice' },
+        ];
+        const long = 'You said the interview prep felt rushed last week; one mock system design today would make Friday easier.';
+        for (const [w, h] of [[720, 1600], [1080, 1920], [1080, 2340]] as const) {
+            const svg = wallpaperSvg({ ...a, today, line: { dayId: 'd', slot: 'evening', text: long } }, w, h, 'dark', 'lock', { iconSlot: true });
+            expect(svg, `${w}x${h}`).toContain('>Call the bank<');
+            expect(svg, `${w}x${h}`).toContain('>Contest on Codeforces<');
+            const ys = [...svg.matchAll(/<text x="[\d.]+" y="([\d.]+)"/g)].map((m) => Number(m[1]));
+            expect(Math.max(...ys), `${w}x${h}`).toBeLessThan(h * 0.8);
+        }
+        // A tall phone keeps all three and the ring.
+        const tall = wallpaperSvg({ ...a, today, line: { dayId: 'd', slot: 'evening', text: 'Stop before midnight tonight' } }, 1080, 2400, 'dark', 'lock');
+        expect(tall).toContain('>Send the invoice<');
+        expect(tall).toContain('>left<');
     });
 
     it('the live lock screen (app 0.4.0): a band under the words for the notification icons, its place on the picture', () => {
@@ -307,6 +377,8 @@ describe('the two pictures', () => {
         const done = { ...a, ...dayItems(todayLike({ doneToday: ['Heaps', 'Tries'] }), now) };
         const svg = wallpaperSvg(done, 1080, 2340, 'light', 'lock');
         expect(svg).toContain('>Done for today<');
+        // Once: inside the ring, not again under it (seen in the day-in-the-life sheet, 11-21).
+        expect(svg.split('>Done for today<').length - 1).toBe(1);
         expect(svg).not.toContain('left today');
         const free = wallpaperSvg({ ...a, ...dayItems(todayLike(), now) }, 1080, 2340, 'light', 'lock');
         expect(free).toContain('>A free day<');

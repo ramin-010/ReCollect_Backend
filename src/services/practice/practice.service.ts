@@ -63,7 +63,7 @@ export async function createPracticeNote(userId: string, input: PracticeNoteInpu
 
     const language = codeLanguage(input.language);
     const request = practiceNoteRequest({ model: aiModel(), problem: input.problem, solution: input.solution, language, struggles: input.struggles });
-    const message = await callClaude(withRefusalFallbacks(request), 'practice note');
+    const message = await callClaude(userId, withRefusalFallbacks(request), 'practice note');
     await recordAiUsage(userId, 'practice_note', message);
     let note: PracticeNote;
     try {

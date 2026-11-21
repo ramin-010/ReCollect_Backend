@@ -1,7 +1,7 @@
 // The buddy talks, it doesn't file things (the owner, 11-16: "From your notes: …" reads like a bot): a label
 // in front of a line or a note comes off, the words after it stay; anything else is left alone.
 import { describe, expect, it } from 'vitest';
-import { unlabel } from '../../../src/services/buddy/think';
+import { strayNumbers, unlabel } from '../../../src/services/buddy/think';
 import { characterPrompt } from '../../../src/services/buddy/character';
 
 describe('the buddy’s voice', () => {
@@ -19,7 +19,7 @@ describe('the buddy’s voice', () => {
 
     it('the character asks for a friend’s voice, without labels', () => {
         const p = characterPrompt({ name: null, tone: 'candid' });
-        expect(p).toContain('like a close friend texting him');
+        expect(p).toContain('like a close friend texting them');
         expect(p).toContain('Never open with a label');
         expect(p).not.toContain('say where it came from');
     });
@@ -31,5 +31,40 @@ describe('the buddy’s voice', () => {
         expect(none).toMatch(/^You are the user's buddy/);
         // Who the person is comes from the portrait and the memories, never from this text.
         expect(none).not.toMatch(/India|full-time job|job offer|software engineer/);
+    });
+
+    it('three voices (stage 5): candid, gentle and bro; anything unknown is candid', async () => {
+        const { toneOf } = await import('../../../src/services/buddy/state.service');
+        expect(characterPrompt({ name: null, tone: 'bro' })).toContain('Your tone is "bro"');
+        expect(characterPrompt({ name: null, tone: 'gentle' })).toContain('warm and gentle');
+        expect([toneOf('bro'), toneOf('gentle'), toneOf('candid'), toneOf('loud'), toneOf(null)]).toEqual(['bro', 'gentle', 'candid', 'candid', 'candid']);
+    });
+});
+
+describe('stage 5: the character with the loop on, and the number guard’s words (ECOSYSTEM_V2_PLAN §4.3, §4.16 rule 9)', () => {
+    it('with the loop on, relevance wins over "never twice in a week" and a plan with a time comes back at its time, as a question; off, today’s text', () => {
+        const on = characterPrompt({ name: null, tone: 'candid', loop: true });
+        expect(on).toContain('What matters now wins over variety');
+        expect(on).toContain('how they answered');
+        expect(on).toContain('A plan with a time is different: it comes back at its time, as a question, never as an assumption.');
+        expect(on).not.toContain('Never the same point twice in a week');
+        const off = characterPrompt({ name: null, tone: 'candid' });
+        expect(off).toContain('Never the same point twice in a week');
+        expect(off).not.toContain('A plan with a time');
+        // Ideas still come back only when touched, on or off.
+        for (const p of [on, off]) expect(p).toContain('Ideas and old decisions come back when today\'s notes touch them, not on a timer.');
+    });
+
+    it('a count written as a word must be one it was given, like digits (two to twenty; "one" is not read as a count)', () => {
+        const sources = '{"reviewsLeft":3,"week":{"activeDays":4}} Runs three times a week. Read 12 pages.';
+        expect(strayNumbers('Three quick reviews and you are clear.', sources)).toEqual([]);
+        expect(strayNumbers('Four days this week, the habit is back.', sources)).toEqual([]);
+        expect(strayNumbers('3 runs this week, as planned.', sources)).toEqual([]);
+        expect(strayNumbers('Twelve pages, then sleep.', sources)).toEqual([]);
+        expect(strayNumbers('Ten minutes of guitar is plenty tonight.', sources)).toEqual(['10']);
+        expect(strayNumbers('Five reviews left, then one more push.', sources)).toEqual(['5']);
+        expect(strayNumbers('Twenty-one days in a row now.', sources)).toEqual(['21']);
+        expect(strayNumbers('The one you saved last week fits here.', sources)).toEqual([]);
+        expect(strayNumbers('A two-minute review before bed.', sources)).toEqual(['2']);
     });
 });

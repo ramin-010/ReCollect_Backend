@@ -213,8 +213,8 @@ describe('the work log', () => {
         // The same chat again: its lines for the day are replaced, not doubled.
         await agent.post('/api/buddy/work', body({ lines: [{ kind: 'did', text: 'Fixed the GST rounding in the invoice report and its tests', at: '10:15–12:00' }] }));
         expect(await prisma.workLine.count({ where: { userId: user.id, hidden: false } })).toBe(1);
-        // Another chat: a line that says the same is skipped; a new one is kept.
-        const other = await agent.post('/api/buddy/work', body({ key: 'lw_chat2', lines: [{ kind: 'did', text: 'Fixed GST rounding in the invoice report', at: '16:00' }, { kind: 'did', text: 'Reviewed the payroll migration' }] }));
+        // Another chat: the same line again is skipped (stage 12: only nearly the same words; the writer judges the rest); a new one is kept.
+        const other = await agent.post('/api/buddy/work', body({ key: 'lw_chat2', lines: [{ kind: 'did', text: 'Fixed the GST rounding in the invoice report and its tests.', at: '16:00' }, { kind: 'did', text: 'Reviewed the payroll migration' }] }));
         expect(other.body.data).toMatchObject({ saved: 1, skipped: 1 });
         // A line he removed is never written again, by any chat.
         const kept = await prisma.workLine.findFirstOrThrow({ where: { userId: user.id, sessionKey: 'lw_chat2' } });

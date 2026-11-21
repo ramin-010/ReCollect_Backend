@@ -94,6 +94,20 @@ export interface CreateUserInput {
     authProvider?: AuthProvider;
     isGhost?: boolean;
     status?: UserStatus;
+    /** Stage 11 (§9.6): the browser's time zone at signup (an IANA name); a wrong one is left out (the default stays). */
+    timezone?: string;
+}
+
+/** An IANA time zone this server knows ("Europe/Berlin"), else null. */
+export function validTimeZone(tz: string | undefined | null): string | null {
+    const t = tz?.trim();
+    if (!t || t.length > 64) return null;
+    try {
+        new Intl.DateTimeFormat('en-GB', { timeZone: t });
+        return t;
+    } catch {
+        return null;
+    }
 }
 
 export async function createUser(input: CreateUserInput, db: DbClient = prisma): Promise<SafeUser> {
@@ -114,6 +128,8 @@ export async function createUser(input: CreateUserInput, db: DbClient = prisma):
     if (input.authProvider !== undefined) data.authProvider = input.authProvider;
     if (input.isGhost !== undefined) data.isGhost = input.isGhost;
     if (input.status !== undefined) data.status = input.status;
+    const tz = validTimeZone(input.timezone);
+    if (tz) data.timezone = tz;
 
     return db.user.create({ data });
 }

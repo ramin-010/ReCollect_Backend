@@ -167,7 +167,8 @@ async function authenticateUser(token: string): Promise<CollabUser | null> {
     const decoded = jwt.verify(token, process.env.JWT_SECRET) as { id?: unknown };
     const user = typeof decoded.id === 'string' ? await findUserById(decoded.id) : null;
 
-    if (!user) return null;
+    // Stage 11: an account whose access the owner ended edits nothing live either.
+    if (!user || user.accessEndedAt) return null;
 
     return {
       id: user.id,

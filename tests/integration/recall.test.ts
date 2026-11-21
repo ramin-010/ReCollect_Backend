@@ -185,14 +185,26 @@ describe('POST /api/recall/start', () => {
         expect((await start(user, rev.id)).status).toBe(200);
     });
 
-    it('a rejected API key is 503 AI_NOT_CONFIGURED; a rate limit is 502 AI_BUSY', async () => {
+    it('a rejected API key pauses the key: 503 AI_PAUSED, and no call is made until it works again (stage 2)', async () => {
         const { user, rev } = await dueTopic();
         const err = (status: number, type: string) => Anthropic.APIError.generate(status, { type: 'error', error: { type, message: type } }, type, new Headers());
         fake.push(err(401, 'authentication_error'));
         const rejected = await start(user, rev.id);
         expect(rejected.status).toBe(503);
-        expect(rejected.body.code).toBe('AI_NOT_CONFIGURED');
+        expect(rejected.body.code).toBe('AI_PAUSED');
+        expect(fake.calls).toHaveLength(1);
 
+        // Paused: the next start is refused before any call.
+        const again = await start(user, rev.id);
+        expect([again.status, again.body.code]).toEqual([503, 'AI_PAUSED']);
+        expect(fake.calls).toHaveLength(1);
+        expect(await usageRows(user.id)).toHaveLength(0);
+        await prisma.aiKeyState.deleteMany();
+    });
+
+    it('a rate limit is 502 AI_BUSY and pauses nothing', async () => {
+        const { user, rev } = await dueTopic();
+        const err = (status: number, type: string) => Anthropic.APIError.generate(status, { type: 'error', error: { type, message: type } }, type, new Headers());
         fake.push(err(429, 'rate_limit_error'));
         const busy = await start(user, rev.id);
         expect(busy.status).toBe(502);

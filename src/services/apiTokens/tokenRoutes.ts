@@ -124,6 +124,9 @@ export const TOKEN_ROUTES: readonly TokenRoute[] = [
     route('GET', '/api/reminders', 'read'),
     route('POST', '/api/reminders', 'tasks:write'),
     route('POST', '/api/reminders/:id/cancel', 'tasks:write'),
+    route('GET', '/api/lock-pins', 'read'),
+    route('POST', '/api/lock-pins', 'tasks:write'),
+    route('POST', '/api/lock-pins/clear', 'tasks:write'),
     route('GET', '/api/topics/:id/recall', 'read'),
     route('GET', '/api/agent/docs/:id/sharing', 'read'),
     route('POST', '/api/revisions/spread', 'learning:write'),
@@ -133,8 +136,11 @@ export const TOKEN_ROUTES: readonly TokenRoute[] = [
     route('GET', '/api/ambient/styles', 'read', 'ambient'),
     route('POST', '/api/ambient/disconnect', 'ambient'),
     route('POST', '/api/ambient/reminders/scheduled', 'ambient'),
+    route('POST', '/api/ambient/later', 'ambient'),
     // The buddy (BUDDY_MEMORY_PLAN §7): a note about the user, his memories, an agent's forget.
     route('POST', '/api/buddy/remember', 'sessions:write'),
+    // MCP_MEMORY_PLAN §4.2: progress on, a change to, or the end of something known (update_memory).
+    route('POST', '/api/buddy/update', 'sessions:write'),
     route('GET', '/api/buddy/memories', 'read'),
     route('POST', '/api/buddy/memories/:id/close', 'sessions:write'),
     // B2: the hooks send his typed words and fetch the buddy's note for the session.
@@ -142,13 +148,24 @@ export const TOKEN_ROUTES: readonly TokenRoute[] = [
     route('GET', '/api/buddy/note', 'read'),
     // B4: the phone app's "Tell your buddy" and thumbs (its ambient token; nothing else).
     route('POST', '/api/buddy/tell', 'ambient'),
+    route('POST', '/api/buddy/asks/:id/answer', 'ambient'),
     route('POST', '/api/buddy/feedback', 'ambient'),
+    // Stage 11: the phone app's "Send feedback" and "Send diagnostics" (to the owner's People page).
+    route('POST', '/api/feedback', 'ambient'),
+    route('POST', '/api/phone/diagnostics', 'ambient'),
     // B7: his months, for recall_memory.
     route('GET', '/api/buddy/chapters', 'read'),
+    // Stage 3 of the loop: what is going on in his life (threads), for recall_memory.
+    route('GET', '/api/buddy/threads', 'read'),
     // B9: his work log, for get_work_log and Ask AI (removing a line is the app's alone).
     route('GET', '/api/buddy/work', 'read'),
+    // Stage 12: what a writer is shown before it logs (Claude Code's log_work).
+    route('GET', '/api/buddy/work/picture', 'read'),
     // B10: an agent logs a day's work when he asks (log_work, /log-work).
     route('POST', '/api/buddy/work', 'sessions:write'),
+    // Stage 12: one outcome from a connected chat, and the writing app's own changes to its line.
+    route('POST', '/api/buddy/work/line', 'sessions:write'),
+    route('PATCH', '/api/buddy/work/line/:id', 'sessions:write'),
 ];
 
 /**
@@ -209,11 +226,20 @@ export const SELF_LOGGED: Readonly<Record<string, string>> = {
     'POST /api/actions': 'a pending action is its own visible record (Home → Suggested, "Do it", naming who asked): nothing happens until the user taps it, and he can dismiss it',
     'POST /api/ambient/disconnect': "the phone app ends its own token and nothing else: Settings → Agents shows it as ended",
     'POST /api/ambient/reminders/scheduled': "the phone app says which of the user's reminders it will ring for: no email goes for those; nothing else changes",
+    'POST /api/ambient/later': "the user's own tap on Later: one silent reminder of the buddy's on that item, shown with today's reminders (Home's Reminders today), where he can take it back",
     'POST /api/buddy/remember': 'a memory is its own visible record (/you, naming the agent that saved it and its notes); the user edits, marks wrong or forgets any, and no agent can change one he touched',
+    'POST /api/buddy/update': 'progress or a mention is a note on its own visible memory (/you); a change or an end is logged as memory_close with an Undo that brings the old version back',
     'POST /api/buddy/tell': "the phone app hands on the user's own words: a note for tonight he sees on /you, nothing changes by it",
+    'POST /api/buddy/asks/:id/answer': "the phone app hands on the user's own answer to the buddy's question (a quick answer or his words): the question is answered, as on Home",
+    'POST /api/lock-pins': "a pin is its own visible record (it names who set it and shows only in its window, today only unless he named days); clear_lock_line or the user takes it off",
+    'POST /api/lock-pins/clear': "takes the user's pinned words off his lock screen (the one showing, one by id, or all); nothing else changes",
     'POST /api/buddy/feedback': "the phone app hands on the user's thumb on a line: a signal for the next night, nothing changes by it",
+    'POST /api/feedback': "the phone app hands on the user's own words for the owner of this server (Send feedback): shown on the owner's People page; nothing in the user's data changes",
+    'POST /api/phone/diagnostics': "the phone app sends its own facts for the owner's People page (model, Android version, screen size, permissions, last update times; nothing personal); nothing in the user's data changes",
     'POST /api/buddy/words': 'the hooks queue his own typed words for the buddy: scrubbed, digested into notes he sees on /you and suggestions he decides on, then deleted; nothing in the app changes by it',
     'POST /api/buddy/work': "an agent logs a day's work on the user's word: the lines are their own visible record (/you › Your work, each removable and never written again once removed); nothing else changes",
+    'POST /api/buddy/work/line': "a connected chat logs one outcome of the user's work: the line is their own visible record (/you › Your work, naming the app; each removable and never written again once removed); nothing else changes",
+    'PATCH /api/buddy/work/line/:id': 'the app that wrote a work line folds it into the line it repeats, rewords it the same day, links it to a known line, or removes it on the user\'s word: only its own lines, each still on /you (a fold is kept, a removal is the user\'s own removal); nothing else changes',
 };
 
 /** The path of a URL without its query string. */

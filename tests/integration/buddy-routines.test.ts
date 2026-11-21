@@ -59,7 +59,7 @@ describe('routines', () => {
         const undated = await item(user.id, 'Read DDIA someday');
         fake.push(fakeMessage(night));
         await nightIfDue(user.id, new Date(Date.UTC(2026, 10, 15, 23, 30)));
-        expect(JSON.stringify(fake.calls[0]!.messages)).toContain('By his standing yes you just: added the task');
+        expect(JSON.stringify(fake.calls[0]!.messages)).toContain('By their standing yes you just: added the task');
         expect((await prisma.suggestion.findUniqueOrThrow({ where: { id: dated.id } })).status).toBe('accepted');
         expect((await prisma.suggestion.findUniqueOrThrow({ where: { id: undated.id } })).status).toBe('pending');
         const task = await prisma.todo.findFirstOrThrow({ where: { userId: user.id, title: 'Send the form' } });
@@ -104,7 +104,7 @@ describe('routines', () => {
         fake.reset();
         fake.push(fakeMessage(night));
         await nightIfDue(user.id, new Date(AT.getTime() + 2 * 3600_000), { fresh: true });
-        expect(JSON.stringify(fake.calls[0]!.messages)).toContain("moved 2 reviews that didn't fit his busy days to after 2026-11-18");
+        expect(JSON.stringify(fake.calls[0]!.messages)).toContain("moved 2 reviews that didn't fit the busy days to after 2026-11-18");
         const after = await Promise.all(chains.map((c) => chainDays({ topicId: c.topicId })));
         // Monday keeps three (the order: cycle, lateness, then id), Tuesday keeps both; two chains moved whole, past Wednesday.
         const moved = after.filter((a, i) => a.join() !== before[i]!.join());

@@ -34,7 +34,7 @@ const night = (over: Record<string, unknown> = {}) => ({
         { slot: 'afternoon', text: 'You said the mock interview scares you a bit: pick a day?', form: 'question', lockOk: true, sourceId: '' },
         { slot: 'evening', text: 'Stop before midnight tonight', form: 'push', lockOk: true, sourceId: '' },
     ],
-    note: 'You built three stages in one night. Sleep before the fourth.',
+    note: 'You built the whole stage in one night. Sleep before the next one.',
     followUp: 'How did the mock interview plan go?',
     suggestions: [],
     notebook: 'Watching: late nights. Said: start with the reviews.',
@@ -77,7 +77,7 @@ describe('the night step', () => {
         const r = (await nightIfDue(user.id, AT))!;
         expect(fake.calls.map((c) => c.output_config?.format?.schema)).toEqual([NIGHT_SCHEMA, LOCK_SCHEMA]);
         expect(r.ops).toBe(2);
-        expect(r.dropped.map((d) => d.why).sort()).toEqual(['close: his own memory', 'names a private thing', 'seen: no such memory']);
+        expect(r.dropped.map((d) => d.why).sort()).toEqual(['close: their own memory', 'names a private thing', 'seen: no such memory']);
         expect((await prisma.memory.findUniqueOrThrow({ where: { id: mine._id } })).status).toBe('active');
         expect((await prisma.memory.findUniqueOrThrow({ where: { id: theirs._id } })).text).toBe('Likes short answers, bottom line first');
         const added = await prisma.memory.findFirstOrThrow({ where: { userId: user.id, source: 'buddy' } });
@@ -99,11 +99,11 @@ describe('the night step', () => {
         fake.push(fakeMessage(night({ who: 'A backend engineer who builds at night.' })));
         const res = await api(user).post('/api/buddy/think');
         expect(res.status).toBe(200);
-        expect((await api(user).get('/api/buddy/today')).body.data.day).toMatchObject({ note: 'You built three stages in one night. Sleep before the fourth.' });
+        expect((await api(user).get('/api/buddy/today')).body.data.day).toMatchObject({ note: 'You built the whole stage in one night. Sleep before the next one.' });
         const brief = (await chat.get('/api/brief')).body.data.buddy;
-        expect(brief).toMatchObject({ who: 'A backend engineer who builds at night.', note: 'You built three stages in one night. Sleep before the fourth.', followUp: 'How did the mock interview plan go?' });
+        expect(brief).toMatchObject({ who: 'A backend engineer who builds at night.', note: 'You built the whole stage in one night. Sleep before the next one.', followUp: 'How did the mock interview plan go?' });
         const hookNote = (await chat.get('/api/buddy/note')).body.data;
-        expect(hookNote).toMatchObject({ kind: 'note', text: 'You built three stages in one night. Sleep before the fourth.' });
+        expect(hookNote).toMatchObject({ kind: 'note', text: 'You built the whole stage in one night. Sleep before the next one.' });
         expect((await chat.get(`/api/buddy/note?after=${encodeURIComponent(hookNote.id)}`)).body.data).toMatchObject({ kind: 'followUp' });
         await api(user).patch('/api/buddy/settings', { paused: true });
         expect((await api(user).post('/api/buddy/think')).status).toBe(409);
@@ -155,12 +155,12 @@ describe('the night step', () => {
         expect(quiet.dropped).toEqual([]);
         // The home screen's thought: its own length, never a line's words, nothing it said lately.
         const dropped: Array<{ what: string; why: string }> = [];
-        const ctx = { sources: '', recent: ['Two quiet days: one easy review gets you moving'], lines: quiet.lines };
+        const ctx = { sources: '', recent: ['Quiet days: one easy review gets you moving'], lines: quiet.lines };
         expect(guardInsight('Your sharpest hours are before noon, so keep the hard topic there', ctx, dropped)).toBe('Your sharpest hours are before noon, so keep the hard topic there');
         expect(guardInsight('  ', ctx, dropped)).toBeNull();
         expect(guardInsight('y'.repeat(101), ctx, dropped)).toBeNull();
         expect(guardInsight('Graphs first today!', ctx, dropped)).toBeNull();
-        expect(guardInsight('Two quiet days: one easy review gets you moving', ctx, dropped)).toBeNull();
+        expect(guardInsight('Quiet days: one easy review gets you moving', ctx, dropped)).toBeNull();
         expect(guardInsight('Keep it to 3 problems', ctx, dropped)).toBeNull();
         expect(dropped.map((d) => d.why)).toEqual(['too long', 'a line says it', 'said lately', 'a number it was not given']);
         expect(tooClose('Pick a day for the mock interview', 'Pick a day for your mock interview?')).toBe(true);

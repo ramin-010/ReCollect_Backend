@@ -199,8 +199,19 @@ describe('which endpoints accept a token (tokenRoutes.ts)', () => {
             if (route.scope === 'ambient') continue; // the phone app's own door (its Disconnect), below
             expect(route.method === 'GET' || statelessPosts.includes(route.pattern)).toBe(route.scope === 'read');
         }
-        // `ambient` alone opens only the phone app's own doors (Disconnect, the reminders it rings for, Tell your buddy, a thumb); elsewhere it rides along with `read`.
-        expect(TOKEN_ROUTES.filter((r) => r.scope === 'ambient').map((r) => `${r.method} ${r.pattern}`)).toEqual(['POST /api/ambient/disconnect', 'POST /api/ambient/reminders/scheduled', 'POST /api/buddy/tell', 'POST /api/buddy/feedback']);
+        // `ambient` alone opens only the phone app's own doors (Disconnect, the reminders it rings for, Tell your buddy, a thumb, from
+        // app 0.6.0 an answer to the buddy's question, from stage 11 Send feedback and its diagnostics, and from stage 19 Later on
+        // the widget's card); elsewhere it rides along with `read`.
+        expect(TOKEN_ROUTES.filter((r) => r.scope === 'ambient').map((r) => `${r.method} ${r.pattern}`)).toEqual([
+            'POST /api/ambient/disconnect',
+            'POST /api/ambient/reminders/scheduled',
+            'POST /api/ambient/later',
+            'POST /api/buddy/tell',
+            'POST /api/buddy/asks/:id/answer',
+            'POST /api/buddy/feedback',
+            'POST /api/feedback',
+            'POST /api/phone/diagnostics',
+        ]);
     });
 
     it('pathOf drops the query string', () => {

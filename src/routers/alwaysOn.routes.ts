@@ -3,7 +3,7 @@
 import express, { RequestHandler } from 'express';
 import authMiddleware from '../middlwares/auth';
 import { cookieOnly, requireScope } from '../middlwares/scopes';
-import { ambientAddressesHandler, ambientDisconnectHandler, ambientRemindersHeldHandler, ambientStylesHandler, ambientWallpaperHandler, ambientWidgetHandler } from '../controllers/ambient.controller';
+import { ambientAddressesHandler, ambientDisconnectHandler, ambientLaterHandler, ambientRemindersHeldHandler, ambientStylesHandler, ambientWallpaperHandler, ambientWidgetHandler } from '../controllers/ambient.controller';
 import { pushStatusHandler, removePushSubscriptionHandler, savePushSubscriptionHandler, testPushHandler } from '../controllers/push.controller';
 
 const router = express.Router();
@@ -17,6 +17,8 @@ router.get('/ambient/styles', auth, requireScope('read', 'ambient'), ambientStyl
 router.post('/ambient/disconnect', auth, requireScope('ambient'), ambientDisconnectHandler);
 // App 0.5.0: the reminders the phone will ring for (no email for them).
 router.post('/ambient/reminders/scheduled', auth, requireScope('ambient'), ambientRemindersHeldHandler);
+// Stage 19: Later on the widget's card (a silent reminder of Buddy's on that item).
+router.post('/ambient/later', auth, requireScope('ambient'), ambientLaterHandler);
 // Settings → Phone app: where the phone can reach this server.
 router.get('/ambient/addresses', auth, cookieOnly, ambientAddressesHandler);
 

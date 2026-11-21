@@ -18,7 +18,7 @@
 // harmless. This file knows no job: src/services/scheduler/jobs.ts holds the table.
 import { retryOnConnectionError } from '../../db/retry';
 
-export type JobName = 'reminders' | 'capture' | 'rollover' | 'nudge' | 'buddy' | 'recallPoll' | 'recallNightly';
+export type JobName = 'reminders' | 'capture' | 'rollover' | 'nudge' | 'buddy' | 'recallPoll' | 'recallNightly' | 'aiProbe';
 
 export interface JobOutcome {
     /** Some of the pass failed (a user's step, an email): the job runs again on the backoff. */

@@ -4,12 +4,21 @@
 // done, lighter in busy and comeback modes. Never red, never an overdue count as the headline.
 import { getBrief, type Brief } from '../brief/brief.service';
 import { currentInsight, currentLine } from '../buddy/voice';
+import { openAsks } from '../buddy/asks';
+import { activePin } from '../reminders/lockPins.service';
 import { getToday } from '../learningDb/today.service';
 import type { PlanMode } from '../learning/plan';
 import { dayOf } from '../learning/time';
+import { loadLearningContext } from '../learningDb/common';
 import path from 'node:path';
 import { svgToPng } from '../docs/diagram/png';
 import { prisma } from '../../db/prisma';
+import { aheadFor, reminderWords, remindersOfToday, type AheadRow } from '../ahead/ahead.service';
+import { clockWords } from '../ahead/aheadRules';
+import { cardOf, ownReminderAt, pickCard, usualEvening, type NextCard } from '../ahead/later';
+
+/** Stage 19: the first phone app with the widget's card and Later. */
+export const CARD_APP = '0.7.0';
 import { poke } from '../scheduler/scheduler';
 import { drawLock, drawWallpaper, kindWords } from './wallpaperArt';
 
@@ -30,13 +39,13 @@ export interface Ambient {
     /** Today's things, open first then done: the home picture's list and the lock picture's dial. */
     items?: AmbientItem[];
     counts?: AmbientCounts;
-    /** The nearest active goal (the lock picture's last line). */
+    /** The nearest active goal (the lock picture's last line): only with their switch on (stage 16: a goal may be private). */
     goal?: AmbientGoal | null;
     /**
      * The buddy's line for now (BUDDY_MEMORY_PLAN §3.4), only one the lock check passed (never with
      * titles hidden): the lock picture's main words and the widget's line.
      */
-    line?: { dayId: string; slot: string; text: string } | null;
+    line?: { dayId: string; slot: string; text: string; until?: string; key?: string; askId?: string; pinId?: string } | null;
     /**
      * Today's reminders still to come (the owner, 11-16: "the home screen could show my reminders; if there
      * are none it stays clean"), soonest first, three at most; with titles hidden, plain words.
@@ -48,9 +57,61 @@ export interface Ambient {
      * lock check passed, never with titles hidden; none: the picture stays as it is.
      */
     insight?: string;
+    /** Stage 6 (app 0.6.0): when the home thought ends (ISO; every word on a screen has an end time, §4.13). */
+    insightUntil?: string;
+    /** Stage 6 (app 0.6.0 and later only): the buddy's open questions for the phone, with their quick answers. */
+    asks?: PhoneAsk[];
+    /** Stage 16: the lock picture's rows (now): today's next scheduled things, three at most ("7 pm · Call the bank"). */
+    today?: AmbientRow[];
+    /** 11-21: the rows of the plain twin when Buddy's line stands in for one of them (a Later back at its time, once). */
+    todayPlain?: AmbientRow[];
+    /** Stage 16: the home picture's Pick up (ahead): a problem or topic left unfinished this week, or none. */
+    pickUp?: AmbientRow | null;
+    /** Stage 16: the home picture's Coming up (ahead): the next days' dated to-dos and events, three at most. */
+    comingUp?: AmbientRow[];
+    /** Stage 19 (app 0.7.0 and later): the widget's card, one item with Later; none: the widget shows the day's numbers. */
+    next?: NextCard | null;
     /** Changes whenever either picture would: the phone app fetches them again only then. */
     key?: string;
+    /** Stage 6: the key of the plain twins (the pictures without the buddy's words). */
+    plainKey?: string;
 }
+
+/** One of the buddy's questions on the phone (app 0.6.0): a silent notification with its quick answers and a reply box. */
+export interface PhoneAsk {
+    _id: string;
+    text: string;
+    answers: Array<{ label: string; meaning: string }>;
+    /** ISO: the notification removes itself then. */
+    until: string;
+    /** The lock check passed its words: shown on the lock screen (else the notification hides them there). */
+    lockOk: boolean;
+}
+
+/** The first phone app that can drop words by itself (§4.14): questions reach the phone only from it on. */
+export const ASKS_APP = '0.6.0';
+
+/** "0.6.0", "0.6.1-qa": at least `min`? An unknown or missing version is an older app. */
+export function appAtLeast(app: string | null | undefined, min: string): boolean {
+    const v = /^(\d+)\.(\d+)\.(\d+)/.exec(app ?? '');
+    if (!v) return false;
+    const m = min.split('.').map(Number);
+    for (let i = 0; i < 3; i++) {
+        const d = Number(v[i + 1]) - (m[i] ?? 0);
+        if (d !== 0) return d > 0;
+    }
+    return true;
+}
+
+/** Stage 16: one row of what is ahead as the pictures draw it ("7 pm" · "Call the bank"; Pick up: its title and where they stopped). */
+export interface AmbientRow {
+    id: string;
+    at: string;
+    text: string;
+    detail?: string;
+}
+
+const rowOf = (r: AheadRow): AmbientRow => ({ id: r.id, at: r.at, text: r.text, ...(r.detail ? { detail: r.detail } : {}) });
 
 export interface AmbientReminder {
     /** "7 pm", "6:30 pm" (his zone). */
@@ -86,14 +147,6 @@ export interface AmbientGoal {
 }
 
 type TodayPayload = Awaited<ReturnType<typeof getToday>>;
-
-function clockWords(d: Date, tz: string): string {
-    const parts = new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour: 'numeric', minute: '2-digit', hour12: true }).formatToParts(d);
-    const hour = parts.find((p) => p.type === 'hour')?.value ?? '';
-    const minute = parts.find((p) => p.type === 'minute')?.value ?? '00';
-    const half = (parts.find((p) => p.type === 'dayPeriod')?.value ?? '').toLowerCase().replace(/\./g, '');
-    return minute === '00' ? `${hour} ${half}` : `${hour}:${minute} ${half}`;
-}
 
 /**
  * Today's things for the phone pictures (pure): the reviews planned and done today, the focus lines,
@@ -146,14 +199,13 @@ export function dayItems(t: Pick<TodayPayload, 'plan' | 'focus' | 'tasks' | 'goa
     };
 }
 
-/** The day in numbers, as the pictures say it: "3 left today · about 21 min", "Done for today", "A free day". */
+/** The day in numbers, as the widget says it: "3 left today", "Done for today", "A free day" (stage 16: no estimated time, the owner's word). */
 export function dayNumbers(a: Pick<Ambient, 'items' | 'counts'>): string {
     const items = a.items ?? [];
     if (!items.length) return 'A free day';
     const open = items.filter((i) => !i.done).length;
     if (!open) return 'Done for today';
-    const minutes = a.counts?.minutesLeft ?? 0;
-    return `${open} left today${minutes ? ` · about ${minutes} min` : ''}`;
+    return `${open} left today`;
 }
 
 /**
@@ -164,13 +216,14 @@ export function dayBreakdown(a: Pick<Ambient, 'counts'>): string {
     return kindWords(a.counts);
 }
 
-/** The drawing's version (11-16: the lock picture's full ring; B8: the type system and the home picture's zoom). */
-const DRAWING = 'type-2';
+/** The drawing's version (11-16: the lock picture's full ring; B8: the type system and the home picture's zoom; stage 16: the lock is now, the home is ahead; 11-21: the lock's three groups at the left, Buddy's mark, the blue ring, sentence case). */
+const DRAWING = 'type-4';
 
 /** A short fingerprint of everything the pictures draw (FNV-1a over the words). */
 function pictureKey(a: Omit<Ambient, 'key' | 'updatedAt'>): string {
     // DRAWING: bumped when the drawing itself changes, so every phone fetches the new pictures.
-    const text = JSON.stringify([DRAWING, a.state, a.date, a.headline, a.lines, a.mode, a.week, a.items, a.counts, a.goal, a.line?.text ?? null, ...(a.reminders?.length ? [a.reminders] : []), ...(a.insight ? [{ insight: a.insight }] : [])]);
+    const rows = (list: readonly AmbientRow[] | undefined) => (list ?? []).map((r) => [r.at, r.text, r.detail ?? '']);
+    const text = JSON.stringify([DRAWING, a.state, a.date, a.headline, a.lines, a.mode, a.week, a.items, a.counts, a.goal ?? null, a.line?.text ?? null, rows(a.today), a.pickUp ? rows([a.pickUp]) : null, rows(a.comingUp), ...(a.insight ? [{ insight: a.insight }] : [])]);
     let h = 2166136261;
     for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 16777619);
     return (h >>> 0).toString(36);
@@ -184,6 +237,14 @@ export interface AmbientOptions {
      * a lock screen is seen by anyone who picks the phone up). Default true.
      */
     titles?: boolean;
+    /** The phone app's version ("0.6.0"): from 0.6.0 its day carries the questions (§4.14). */
+    app?: string | null;
+    /** The phone is in its quiet hours: no questions (one fetched then never showed, so it is not marked shown). */
+    quiet?: boolean;
+    /** Stage 19: where a card's doc opens (the web app's address). */
+    appUrl?: string | null;
+    /** Stage 19: a widget shows the card on the home screen, so the home picture leaves that item out (`card=0`). */
+    withoutCard?: boolean;
 }
 
 /** What to show, from the brief, the plan mode and the local hour (0–23). Pure: tested directly. */
@@ -203,7 +264,8 @@ export function ambientFor(b: Brief, mode: PlanMode, hour: number, date: string,
         return { ...base, state: 'done', headline: '', lines: [] };
     }
 
-    const revise = r.planned > 0 ? `${plural(r.planned, 'review')} · about ${r.estMinutes} min` : null;
+    // Stage 16: no estimated time on the screens (the owner, 11-20: "the expected time doesn't make sense").
+    const revise = r.planned > 0 ? plural(r.planned, 'review') : null;
 
     if (mode === 'busy' || mode === 'comeback') {
         const headline = mode === 'busy' ? (revise ? `A light day: ${revise}` : 'A light day') : revise ? `Welcome back: ${revise}` : 'Welcome back';
@@ -219,7 +281,7 @@ export function ambientFor(b: Brief, mode: PlanMode, hour: number, date: string,
         return { ...base, state: 'working', headline: focus ?? revise ?? 'Keep going', lines: focus && revise ? [revise] : [] };
     }
     const doneWords = r.done > 0 ? `${plural(r.done, 'review')} done today` : 'Nothing revised yet today';
-    const left = r.planned > 0 ? `${r.planned} left · about ${r.estMinutes} min` : null;
+    const left = r.planned > 0 ? `${r.planned} left` : null;
     return { ...base, state: 'evening', headline: doneWords, lines: [left].filter((x): x is string => !!x) };
 }
 
@@ -230,26 +292,57 @@ function localClock(now: Date, timezone: string): { hour: number; date: string }
     return { hour, date };
 }
 
-/** His reminders still to come today (pending; a finished task's left out), soonest first, three at most. */
+/** Stage 7: how long a silent reminder stays on the home picture past its time (the reader moved to ahead.service, stage 16). */
+export { SILENT_STAYS_MS } from '../ahead/ahead.service';
+
+/** His reminders still to come today (pending; a finished task's left out), soonest first, three at most; a silent one also until 2 hours past its time (the home picture). */
 export async function todayReminders(userId: string, now: Date, tz: string, titles = true): Promise<AmbientReminder[]> {
-    const rows = await prisma.reminder.findMany({
-        where: { userId, status: 'pending', reminderDate: { gte: now, lt: new Date(now.getTime() + 24 * 3600_000) } },
-        include: { todo: { select: { title: true, status: true } } },
-        orderBy: { reminderDate: 'asc' },
-        take: 8,
-    });
-    const today = dayOf(now, tz);
-    return rows
-        .filter((r) => r.todo?.status !== 'complete' && dayOf(r.reminderDate, tz) === today)
-        .slice(0, 3)
-        .map((r) => ({ at: clockWords(r.reminderDate, tz), text: titles ? reminderWords(r) : 'A reminder' }));
+    return (await remindersOfToday(userId, now, tz)).slice(0, 3).map((r) => ({ at: clockWords(r.when, tz), text: titles ? r.text : 'A reminder' }));
+}
+
+/** Stage 7 (V2): one of today's reminders on the web's Home. */
+export interface HomeReminder {
+    _id: string;
+    /** ISO instant. */
+    at: string;
+    /** HH:mm, his clock. */
+    time: string;
+    text: string;
+    /** It rings (an alarm on the phone, an email), or it is silent: it shows on his home screens, until 2 hours past its time. */
+    ring: boolean;
+    /** daily | weekdays | weekly, or null. */
+    repeat: string | null;
+    /** Its time has passed (only a silent one stays). */
+    past: boolean;
+    /** His own (a task's reminder) or the buddy's. */
+    by: 'you' | 'buddy';
+    taskId: string | null;
+}
+/** The web shows a few more than the picture's three. */
+export const HOME_REMINDERS_MAX = 6;
+
+/**
+ * Stage 7 (V2): today's reminders for the web's Home, by the home picture's rule (a silent reminder never rings or
+ * emails, so this and his phone's home screen are where he sees it), with the buddy's name for its own.
+ */
+export async function homeReminders(userId: string, now: Date = new Date()): Promise<{ items: HomeReminder[]; name: string | null }> {
+    const [{ tz }, state] = await Promise.all([loadLearningContext(userId, now), prisma.buddyState.findUnique({ where: { userId }, select: { name: true } })]);
+    const time = new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false });
+    const items = (await remindersOfToday(userId, now, tz)).slice(0, HOME_REMINDERS_MAX).map((r) => ({
+        _id: r.id,
+        at: r.when.toISOString(),
+        time: time.format(r.when),
+        text: r.text,
+        ring: r.ring,
+        repeat: r.repeat,
+        past: r.when.getTime() <= now.getTime(),
+        by: r.by,
+        taskId: r.taskId,
+    }));
+    return { items, name: state?.name ?? null };
 }
 
 /** A reminder's words: its task's title (the stored message is "Reminder: <title>", and the picture and the phone say "reminder" already). */
-function reminderWords(r: { message: string | null; todo: { title: string | null } | null }): string {
-    return r.todo?.title?.trim() || r.message?.replace(/^\s*reminder:\s*/i, '').trim() || 'A reminder';
-}
-
 /** One reminder for the phone to ring (app 0.5.0). */
 export interface AmbientAlarm {
     id: string;
@@ -267,7 +360,8 @@ export const ALARM_HOURS = 26;
  */
 export async function upcomingAlarms(userId: string, now: Date, titles = true): Promise<AmbientAlarm[]> {
     const rows = await prisma.reminder.findMany({
-        where: { userId, status: 'pending', reminderDate: { gt: now, lte: new Date(now.getTime() + ALARM_HOURS * 3600_000) }, todo: { is: { workspaceId: null } } },
+        // Stage 7: ringing ones only; a silent one never rings.
+        where: { userId, status: 'pending', silent: false, reminderDate: { gt: now, lte: new Date(now.getTime() + ALARM_HOURS * 3600_000) }, todo: { is: { workspaceId: null } } },
         include: { todo: { select: { title: true, status: true } } },
         orderBy: { reminderDate: 'asc' },
         take: 24,
@@ -291,21 +385,79 @@ export async function markPhoneHeld(userId: string, ids: readonly string[], now:
 
 export async function getAmbient(userId: string, now: Date = new Date(), options: AmbientOptions = {}): Promise<Ambient> {
     const titles = options.titles !== false;
-    const [brief, today, line, insight] = await Promise.all([
+    // Stage 6 (§4.14): questions reach the phone only from app 0.6.0, which drops them by itself at their end
+    // time, in quiet hours and offline; never with titles hidden. The notification's surface rules apply.
+    const withAsks = titles && appAtLeast(options.app, ASKS_APP) && !options.quiet;
+    const [brief, today, line, insight, asks, pin, ahead, state] = await Promise.all([
         getBrief(userId, {}, now),
         getToday(userId, now),
         titles ? currentLine(userId, now) : Promise.resolve(null),
         titles ? currentInsight(userId, now) : Promise.resolve(null),
+        withAsks ? openAsks(userId, 'notification', now) : Promise.resolve([]),
+        // Stage 7 (V1): his own pin, his words for the lock screen: it shows whatever "Hide titles" says.
+        activePin(userId, now),
+        // Stage 16: what is ahead (the lock's rows, Pick up, Coming up): code only, so an account with no AI has it too.
+        // One row more than shown: a row Buddy's line covers (below) leaves room for the next.
+        aheadFor(userId, now, { titles, leftMax: 3, todayMax: TODAY_ROWS + 1 }),
+        prisma.buddyState.findUnique({ where: { userId }, select: { goalOnScreens: true } }),
     ]);
     const reminders = await todayReminders(userId, now, brief.now.timezone, titles);
     const { hour, date } = localClock(now, brief.now.timezone);
     const mode = (today.plan?.mode ?? 'normal') as PlanMode;
     const week = today.stats?.rhythm?.last7?.map((d) => ({ day: d.day, active: d.active }));
     const day = dayItems(today, now, titles);
-    const buddyLine = line && line.lockOk && !line.fallback ? { dayId: line.dayId, slot: line.slot, text: line.text } : null;
-    const a = { ...ambientFor(brief, mode, hour, date, now, options), ...(week?.length === 7 ? { week } : {}), ...day, line: buddyLine, ...(reminders.length ? { reminders } : {}), ...(insight ? { insight: insight.text } : {}) };
-    return { ...a, key: pictureKey(a) };
+    // App 0.6.0: its end time, and its key for his thumbs (stage 7: a timed line's start; two may share a part of the day).
+    const buddyLine = line && line.lockOk && !line.fallback ? { dayId: line.dayId, slot: line.slot, text: line.text, ...(withAsks ? { until: line.until, key: line.key } : {}) } : null;
+    // App 0.6.0: a question the lock check passed is the lock line while it is open (it beats a line: never both about one thread on a day).
+    const lockAsk = asks.find((q) => q.lockOk);
+    const askLine = lockAsk ? { dayId: buddyLine?.dayId ?? '', slot: buddyLine?.slot ?? line?.slot ?? 'evening', text: lockAsk.text, until: lockAsk.until, askId: lockAsk._id } : buddyLine;
+    // His pin wins in its window (stage 7); the phone drops it at its end time (app 0.6.0).
+    const shownLine = pin ? { dayId: '', slot: line?.slot ?? 'evening', text: pin.text, until: pin.until, pinId: pin.id } : askLine;
+    const lineRefs = line?.refs ?? [];
+    // Once (the owner, 11-21): a Later whose time has come shows on the lock screen once: as Buddy's line when the line
+    // shown rests on it (its row then goes), else as its row; never on the home picture or the widget.
+    const lineShown = !pin && !lockAsk && !!buddyLine;
+    const covered = new Set(lineShown ? ahead.returned.filter((r) => lineRefs.includes(r.ref)).map((r) => r.rowId) : []);
+    const backRows = new Set(ahead.returned.map((r) => r.rowId));
+    const rowsShown = ahead.today.filter((r) => !covered.has(r.id)).slice(0, TODAY_ROWS);
+    // The plain twin has no line, so a covered row is back there.
+    const rowsPlain = ahead.today.slice(0, TODAY_ROWS);
+    // Stage 19 (app 0.7.0): the widget's card, one item with Later (the one Buddy's line rests on first); never what a
+    // Later brought back to the lock screen.
+    const cardRow = pickCard({ today: rowsShown.filter((r) => !backRows.has(r.id) && !ahead.deferred.has(r.id) && !ahead.deferRows.has(r.id)), comingUp: ahead.comingUp, leftOff: ahead.leftOff, lineRefs, todayDay: dayOf(now, brief.now.timezone) });
+    const withCard = appAtLeast(options.app, CARD_APP);
+    // Their own reminder for the card's item still ahead: Later keeps its time (the owner, 11-21).
+    const own = withCard && cardRow ? await ownReminderAt(userId, cardRow.id, now) : null;
+    const next = withCard && cardRow ? cardOf(cardRow, { now, tz: brief.now.timezone, usual: await usualEvening(userId, now, brief.now.timezone), appUrl: options.appUrl ?? null, own }) : null;
+    const notCard = (r: AheadRow) => !(options.withoutCard && cardRow && r.id === cardRow.id);
+    const phoneAsks: PhoneAsk[] = asks.map((q) => ({ _id: q._id, text: q.text, answers: q.answers, until: q.until, lockOk: q.lockOk }));
+    const a = {
+        ...ambientFor(brief, mode, hour, date, now, options),
+        ...(week?.length === 7 ? { week } : {}),
+        ...day,
+        // Stage 16: the goal on the pictures only with their switch on (the owner, 11-20: a goal may be private).
+        goal: state?.goalOnScreens ? day.goal : null,
+        today: rowsShown.map(rowOf),
+        ...(covered.size ? { todayPlain: rowsPlain.map(rowOf) } : {}),
+        pickUp: ahead.leftOff.filter(notCard)[0] ? rowOf(ahead.leftOff.filter(notCard)[0]!) : null,
+        comingUp: ahead.comingUp.filter(notCard).map(rowOf),
+        ...(withCard ? { next } : {}),
+        line: shownLine,
+        ...(reminders.length ? { reminders } : {}),
+        ...(insight ? { insight: insight.text, ...(withAsks ? { insightUntil: insight.until } : {}) } : {}),
+        ...(withAsks ? { asks: phoneAsks } : {}),
+    };
+    // The plain twins (stage 6): the same pictures without the buddy's words; their own key.
+    const { insight: _insight, insightUntil: _until, asks: _asks, todayPlain: _plainRows, ...rest } = a as typeof a & { insight?: string; insightUntil?: string; asks?: PhoneAsk[]; todayPlain?: AmbientRow[] };
+    void _insight;
+    void _until;
+    void _asks;
+    void _plainRows;
+    return { ...a, key: pictureKey(a), ...(withAsks ? { plainKey: pictureKey({ ...rest, line: null, today: rowsPlain.map(rowOf) }) } : {}) };
 }
+
+/** The lock picture's rows: today's next things, three at most (stage 16). */
+export const TODAY_ROWS = 3;
 
 // ── The wallpaper ────────────────────────────────────────────────────────────────────────
 
@@ -341,6 +493,10 @@ export function wallpaperSvg(a: Ambient, width: number, height: number, theme: '
         line: a.line?.text ?? null,
         ...(a.reminders?.length ? { reminders: a.reminders } : {}),
         ...(a.insight ? { insight: a.insight } : {}),
+        // Stage 16: the lock is now (today's rows), the home is ahead (Pick up, Coming up).
+        ...(a.today?.length ? { today: a.today } : {}),
+        ...(a.pickUp ? { pickUp: a.pickUp } : {}),
+        ...(a.comingUp?.length ? { comingUp: a.comingUp } : {}),
     };
     return screen === 'lock' ? drawLock(input, width, height, theme) : drawWallpaper(input, width, height, theme);
 }

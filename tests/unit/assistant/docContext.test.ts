@@ -55,24 +55,24 @@ describe('the doc as the model reads it', () => {
             '```',
             '[e1] (empty line)',
         ]);
-        expect(lines[lines.length - 1]).toBe('His focus: his cursor is in block [p1].');
+        expect(lines[lines.length - 1]).toBe('Their focus: their cursor is in block [p1].');
     });
 
     it('says when the cursor is on an empty line, names a selection and drops unknown ids', () => {
         const empty = docForModel(docWith(blocks), META, { blockIds: ['e1', 'nope'] });
         expect(empty.focusIds).toEqual(['e1']);
-        expect(empty.text).toContain('His focus: his cursor is on an empty line, [e1]. New text goes there: insert_blocks before [e1]');
+        expect(empty.text).toContain('Their focus: their cursor is on an empty line, [e1]. New text goes there: insert_blocks before [e1]');
 
         const words = docForModel(docWith(blocks), META, { blockIds: ['p1'], text: '  takes a\n token ' });
-        expect(words.text).toContain('His focus: he selected words inside block [p1].');
-        expect(words.text).toContain('The words he selected: "takes a token"');
+        expect(words.text).toContain('Their focus: they selected words inside block [p1].');
+        expect(words.text).toContain('The words they selected: "takes a token"');
 
         const many = docForModel(docWith(blocks), META, { blockIds: ['n1', 'n2'] });
-        expect(many.text).toContain('His focus: the 2 blocks he selected: [n1], [n2].');
+        expect(many.text).toContain('Their focus: the 2 blocks they selected: [n1], [n2].');
         expect(many.text).toContain('» [n1] 1. first');
 
         const none = docForModel(docWith(blocks), META, { blockIds: [] });
-        expect(none.text).toContain('His focus: none given');
+        expect(none.text).toContain('Their focus: none given');
     });
 
     it('a long doc keeps whole only the blocks near his focus', () => {
