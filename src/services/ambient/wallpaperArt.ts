@@ -54,6 +54,11 @@ export interface WallpaperInput {
     pickUp?: { text: string; detail?: string } | null;
     /** Stage 16: the home picture's Coming up (ahead): the next days' to-dos and events ("Sun" · "Sister's birthday"). */
     comingUp?: ReadonlyArray<{ at: string; text: string }>;
+    /**
+     * The picture's layout (the owner, 11-22: each screen's is his choice in the app): 'glass' (one frosted panel), 'stack'
+     * (a frosted card each); none: the classic one (the words on the backdrop).
+     */
+    layout?: 'glass' | 'stack';
 }
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -209,7 +214,8 @@ interface Sky {
     grain: number;
 }
 
-const DARK_INK = { head: '#F7F5F2', body: 'rgba(247,245,242,0.80)', meta: 'rgba(247,245,242,0.66)', tag: 'rgba(255,255,255,0.12)', tagInk: '#F7F5F2', tagRing: 'rgba(255,255,255,0.22)', dotOn: '#F7F5F2', dotOff: 'rgba(247,245,242,0.28)' };
+// 11-22: brighter body and meta (his phone dims the wallpaper on both screens; the words read washed out).
+const DARK_INK = { head: '#FFFFFF', body: 'rgba(250,249,247,0.90)', meta: 'rgba(250,249,247,0.74)', tag: 'rgba(255,255,255,0.12)', tagInk: '#F7F5F2', tagRing: 'rgba(255,255,255,0.22)', dotOn: '#F7F5F2', dotOff: 'rgba(247,245,242,0.28)' };
 const LIGHT_INK = { head: '#211F1D', body: 'rgba(33,31,29,0.80)', meta: 'rgba(33,31,29,0.66)', tag: 'rgba(255,255,255,0.58)', tagInk: '#211F1D', tagRing: 'rgba(33,31,29,0.10)', dotOn: '#211F1D', dotOff: 'rgba(33,31,29,0.20)' };
 
 /** The palettes, by state and theme. Never red; never an alarm colour. */
@@ -654,6 +660,7 @@ function comingUpRows(list: ReadonlyArray<{ at: string; text: string }>, W: numb
  * now), the date and the week's dots are gone (the owner, 11-20: nothing on both screens).
  */
 export function drawWallpaper(input: WallpaperInput, width: number, height: number, theme: Theme): string {
+    if (input.layout === 'glass' || input.layout === 'stack') return drawHomeV2(input, width, height, theme, input.layout);
     const W = width;
     const H = height;
     const look = lookOf(input, W, H, theme, 'home');
@@ -890,6 +897,7 @@ function softLight(defs: string[], look: Look, cx: number, cy: number, rx: numbe
  * check): the dial.
  */
 export function drawLock(input: WallpaperInput, width: number, height: number, theme: Theme): string {
+    if (input.layout === 'glass' || input.layout === 'stack') return drawLockV2(input, width, height, theme, input.layout);
     const main = (input.line ?? '').trim();
     if (!main) return drawDial(input, width, height, theme);
     const W = width;
@@ -995,4 +1003,295 @@ export function drawDial(input: WallpaperInput, width: number, height: number, t
     const y = top + 2 * reach + pick.countsH;
     words.push(...rows.draw(y, cx, ink));
     return picture(W, H, defs, art, words, input.zoom, input.iconSlot ? iconSlotAt(y + rows.h, W, ink.body) : undefined);
+}
+
+
+// ── The lock picture, rethought (the owner, 11-22: "as if Apple did it on their lock screen") ──────────────────
+//
+// Two layouts to compare. Both keep the day at the top, under the phone's own clock: the ring with what is left in it
+// and the kinds under it, centred. Below it, everything else sits low on the screen, where iOS puts its Live Activities
+// and notifications, on frosted glass: the backdrop itself, blurred inside each card, with a thin tint and a hairline.
+//  - 'glass': one panel, the buddy's line at the top and today's next things under a hairline, as an agenda.
+//  - 'stack': the buddy's line on its own card, then each of today's next things on a slimmer card of its own, the
+//    time at the right, as a notification stack.
+// Nothing is cut: a line that won't fit three lines gets smaller; rows that won't fit go, the last first.
+
+interface Glass {
+    fill: string;
+    edge: string;
+    sheen: string;
+    head: string;
+    body: string;
+    meta: string;
+}
+
+function glassOf(theme: Theme): Glass {
+    return theme === 'dark'
+        ? { fill: 'rgba(255,255,255,0.09)', edge: 'rgba(255,255,255,0.18)', sheen: 'rgba(255,255,255,0.07)', head: '#FFFFFF', body: 'rgba(255,255,255,0.90)', meta: 'rgba(255,255,255,0.66)' }
+        : { fill: 'rgba(255,255,255,0.52)', edge: 'rgba(255,255,255,0.70)', sheen: 'rgba(255,255,255,0.18)', head: '#141311', body: 'rgba(20,19,17,0.82)', meta: 'rgba(20,19,17,0.56)' };
+}
+
+let frostSeq = 0;
+/** A frosted card: the backdrop blurred inside the rounded rectangle, a tint over it, a hairline edge and a faint top sheen. */
+function frosted(defs: string[], art: string[], x: number, y: number, w: number, h: number, r: number, g: Glass, W: number): string[] {
+    const id = `frost${++frostSeq}`;
+    const blur = W * 0.035;
+    const pad = blur * 3;
+    defs.push(`<clipPath id="${id}c"><rect x="${r1(x)}" y="${r1(y)}" width="${r1(w)}" height="${r1(h)}" rx="${r1(r)}"/></clipPath>`);
+    defs.push(`<filter id="${id}f" filterUnits="userSpaceOnUse" x="${r1(x - pad)}" y="${r1(y - pad)}" width="${r1(w + 2 * pad)}" height="${r1(h + 2 * pad)}"><feGaussianBlur stdDeviation="${r1(blur)}"/></filter>`);
+    defs.push(`<linearGradient id="${id}s" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${g.sheen}"/><stop offset="0.5" stop-color="${g.sheen}" stop-opacity="0"/></linearGradient>`);
+    return [
+        `<g clip-path="url(#${id}c)"><g filter="url(#${id}f)">${art.join('')}</g></g>`,
+        `<rect x="${r1(x)}" y="${r1(y)}" width="${r1(w)}" height="${r1(h)}" rx="${r1(r)}" fill="${g.fill}"/>`,
+        `<rect x="${r1(x)}" y="${r1(y)}" width="${r1(w)}" height="${r1(h)}" rx="${r1(r)}" fill="url(#${id}s)"/>`,
+        `<rect x="${r1(x + 0.75)}" y="${r1(y + 0.75)}" width="${r1(w - 1.5)}" height="${r1(h - 1.5)}" rx="${r1(r - 0.75)}" fill="none" stroke="${g.edge}" stroke-width="1.5"/>`,
+    ];
+}
+
+/** The buddy's line at a size that fits `lines` lines of `width` (smaller only when it must), filling each line in turn. */
+function lineFit(main: string, W: number, width: number, maxLines: number, weight: Weight, big: number, floor: number): { size: number; lines: string[] } {
+    let size = W * big;
+    let lines: string[] = [];
+    for (; ; size -= W * 0.002) {
+        lines = wrapText(main, size, weight, width, 99, size * TRACK.line, false);
+        if (lines.length <= maxLines || size <= W * floor) break;
+    }
+    return { size, lines: lines.slice(0, maxLines) };
+}
+
+function drawLockV2(input: WallpaperInput, width: number, height: number, theme: Theme, layout: 'glass' | 'stack'): string {
+    const W = width;
+    const H = height;
+    const u = W / 100;
+    const cx = W / 2;
+    const look = lookOf(input, W, H, theme, 'lock');
+    const { defs, art } = look;
+    const ink = look.ink;
+    const g = glassOf(theme);
+    const ring = lockRing(look, theme, input);
+    const items = input.items ?? [];
+    const main = (input.line ?? '').trim();
+    const today = [...(input.today ?? [])];
+    const band = input.iconSlot ? iconBand(W) : 0;
+
+    // The day: a ring a little heavier than before (an activity ring), its numeral, and the kinds under it.
+    const counts = countsRow(input, W, !main);
+    const day = (scale: number) => {
+        const R = W * 0.15 * scale;
+        const stroke = Math.max(4, W * 0.024 * scale);
+        const reach = ringReach(R, stroke, { ...ring, ticks: false, dotted: false });
+        const countsH = counts.words ? 4 * u + counts.size * CAP : 0;
+        return { R, stroke, reach, h: 2 * reach + countsH, countsH, scale };
+    };
+
+    // The cards, low on the screen: their bottom at 80 % of the height (above the fingerprint), the stack growing up.
+    const x = W * 0.055;
+    const cw = W * 0.89;
+    const pad = 5.2 * u;
+    const radius = W * 0.062;
+    const timed = (at: string) => at !== '' && at !== 'late';
+    const rowSize = W * 0.037;
+
+    type Card = { h: number; draw: (top: number) => string[] };
+    const lineCard = (maxLines: number): Card | null => {
+        if (!main) return null;
+        const { size, lines } = lineFit(main, W, cw - 2 * pad, maxLines, 500, 0.049, 0.04);
+        const lh = size * 1.3;
+        // No "Buddy" label (the owner, 11-22: an iPhone wouldn't name it; the words are enough).
+        const labelH = 0;
+        const h = pad + labelH + size * CAP + (lines.length - 1) * lh + pad;
+        return {
+            h,
+            draw: (top) => {
+                const out = frosted(defs, art, x, top, cw, h, radius, g, W);
+                lines.forEach((l, i) => out.push(text(x + pad, top + pad + labelH + size * CAP + i * lh, l, size, 500, g.head, { track: TRACK.line })));
+                return out;
+            },
+        };
+    };
+    const agendaRows = (rows: ReadonlyArray<{ at: string; text: string }>, left: number, right: number) => {
+        const atW = Math.max(0, ...rows.map((r) => textWidth(scheduleAt(r.at), rowSize, timed(r.at) ? 600 : 500)));
+        const tx = left + atW + 3.2 * u;
+        const step = rowSize * 2.05;
+        return {
+            h: rows.length ? rowSize * CAP + (rows.length - 1) * step : 0,
+            draw: (top: number) =>
+                rows.flatMap((r, i) => {
+                    const base = top + rowSize * CAP + i * step;
+                    return [
+                        text(left, base, scheduleAt(r.at), rowSize, timed(r.at) ? 600 : 500, timed(r.at) ? g.head : g.meta),
+                        text(tx, base, fit(r.text, rowSize, 400, right - tx), rowSize, 400, g.body),
+                    ];
+                }),
+        };
+    };
+
+    // 'glass': one panel with the line, a hairline, and the agenda.
+    const panel = (lineLines: number, rows: number): Card | null => {
+        const lc = main ? lineFit(main, W, cw - 2 * pad, lineLines, 500, 0.049, 0.04) : null;
+        const list = today.slice(0, rows);
+        if (!lc && !list.length) return null;
+        const labelSize = W * 0.029;
+        const labelH = labelSize * CAP + 2.6 * u;
+        const lh = lc ? lc.size * 1.3 : 0;
+        const lineH = lc ? lc.size * CAP + (lc.lines.length - 1) * lh : 0;
+        const agenda = agendaRows(list, x + pad, x + cw - pad);
+        const upLabelH = !lc && list.length ? labelH : 0;
+        const sep = lc && list.length ? 9 * u : 0;
+        const h = pad + lineH + sep + upLabelH + agenda.h + pad;
+        return {
+            h,
+            draw: (top) => {
+                const out = frosted(defs, art, x, top, cw, h, radius, g, W);
+                let y = top + pad;
+                if (lc) {
+                    lc.lines.forEach((l, i) => out.push(text(x + pad, y + lc.size * CAP + i * lh, l, lc.size, 500, g.head, { track: TRACK.line })));
+                    y += lineH;
+                }
+                if (sep) {
+                    out.push(`<line x1="${r1(x + pad)}" y1="${r1(y + sep / 2)}" x2="${r1(x + cw - pad)}" y2="${r1(y + sep / 2)}" stroke="${g.edge}" stroke-width="2"/>`);
+                    y += sep;
+                }
+                if (upLabelH) {
+                    out.push(text(x + pad, y + labelSize * CAP, 'Up next', labelSize, 600, g.meta, { track: 0.01 }));
+                    y += upLabelH;
+                }
+                out.push(...agenda.draw(y));
+                return out;
+            },
+        };
+    };
+
+    // 'stack': the line's card, then a slimmer card per row (the time at the right), each a step apart.
+    const stack = (lineLines: number, rows: number): Card | null => {
+        const lc = lineCard(lineLines);
+        const list = today.slice(0, rows);
+        const rowPad = 3.9 * u;
+        const rowH = rowPad * 2 + rowSize * CAP;
+        const gap = 2 * u;
+        const cards: Card[] = [];
+        if (lc) cards.push(lc);
+        list.forEach((r) => {
+            cards.push({
+                h: rowH,
+                draw: (top) => {
+                    const out = frosted(defs, art, x, top, cw, rowH, rowH * 0.36, g, W);
+                    const base = top + rowPad + rowSize * CAP;
+                    const at = scheduleAt(r.at);
+                    const atW = textWidth(at, rowSize * 0.9, 500);
+                    out.push(text(x + pad, base, fit(r.text, rowSize, 500, cw - 2 * pad - atW - 3 * u), rowSize, 500, g.head));
+                    out.push(text(x + cw - pad, base, at, rowSize * 0.9, 500, timed(r.at) ? g.body : g.meta, { anchor: 'end' }));
+                    return out;
+                },
+            });
+        });
+        if (!cards.length) return null;
+        const h = cards.reduce((n, c) => n + c.h, 0) + gap * (cards.length - 1);
+        return {
+            h,
+            draw: (top) => {
+                const out: string[] = [];
+                let y = top;
+                cards.forEach((c) => {
+                    out.push(...c.draw(y));
+                    y += c.h + gap;
+                });
+                return out;
+            },
+        };
+    };
+
+    // What fits, most first: three lines and three rows with the full ring, then fewer rows, a smaller ring, fewer lines.
+    const n = today.length;
+    const tries: Array<{ scale: number; lines: number; rows: number }> = [
+        { scale: 1, lines: 3, rows: Math.min(3, n) },
+        { scale: 1, lines: 3, rows: Math.min(2, n) },
+        { scale: 0.82, lines: 3, rows: Math.min(2, n) },
+        { scale: 0.82, lines: 2, rows: Math.min(2, n) },
+        { scale: 0.7, lines: 2, rows: Math.min(1, n) },
+    ];
+    // On his phone (11-22): the clock and date end near 21 % of the height; the phone's own notifications, its owner line
+    // and the shortcuts take the bottom from about 78 %. The group starts under the clock and stays above 74 %.
+    const ringTop = H * 0.275;
+    const bottom = H * 0.74 - band;
+    let chosen: { d: ReturnType<typeof day>; card: Card | null } | null = null;
+    for (const t of tries) {
+        const d = day(t.scale);
+        const card = layout === 'glass' ? panel(t.lines, t.rows) : stack(t.lines, t.rows);
+        if (!card || ringTop + d.h + 7 * u + card.h <= bottom) {
+            chosen = { d, card };
+            break;
+        }
+    }
+    if (!chosen) {
+        const t = tries[tries.length - 1]!;
+        chosen = { d: day(t.scale), card: layout === 'glass' ? panel(t.lines, t.rows) : stack(t.lines, t.rows) };
+    }
+    const { d, card } = chosen;
+
+    const words: string[] = [...look.overlay];
+    // One group under the clock: the day, then the cards a step under it (a little lower when there is room to spare,
+    // so the group sits in the calm band rather than tight under the date).
+    const groupH = d.h + (card ? 7 * u + card.h : 0);
+    const dayTop = Math.min(ringTop + Math.max(0, (bottom - ringTop - groupH) * 0.25), Math.max(ringTop, H * 0.47 - groupH / 2));
+    const cardTop = dayTop + d.h + 7 * u;
+    const cy = dayTop + d.reach;
+    words.push(...dayRing(items, cx, cy, d.R, d.stroke, ring.lit, ring.dim, { ...ring, ticks: false, dotted: false, glow: false }));
+    words.push(...ringCentre(input, cx, cy, W, W * 0.118 * d.scale, 'left today', ink, !main));
+    if (counts.words) words.push(text(cx, dayTop + 2 * d.reach + d.countsH, fit(counts.words, counts.size, 500, W * 0.84), counts.size, 500, ink.body, { anchor: 'middle' }));
+    if (card) words.push(...card.draw(cardTop));
+    return picture(W, H, defs, art, words, input.zoom, input.iconSlot ? iconSlotAt(bottom, W, ink.body) : undefined);
+}
+
+/**
+ * The home picture on frosted glass (the owner, 11-22: a choice beside the classic one), the same words as the classic
+ * picture (Pick up, Coming up, the buddy's thought) in the same place, above the dock:
+ *  - 'glass': one panel holding them all, a hairline between the parts;
+ *  - 'stack': a card for each part, a step apart.
+ */
+function drawHomeV2(input: WallpaperInput, width: number, height: number, theme: Theme, layout: 'glass' | 'stack'): string {
+    const W = width;
+    const H = height;
+    const u = W / 100;
+    const look = lookOf(input, W, H, theme, 'home');
+    const { defs, art } = look;
+    const g = glassOf(theme);
+    const ink = { ...look.ink, head: g.head, body: g.body, meta: g.meta };
+    const x = W * 0.055;
+    const cw = W * 0.89;
+    const pad = 5.2 * u;
+    const radius = W * 0.062;
+    const inner = cw - 2 * pad;
+    const parts: Block[] = [];
+    if (input.pickUp?.text.trim()) parts.push(pickUpRows(input.pickUp, W, x + pad, inner, ink, true));
+    if (input.comingUp?.length) parts.push(comingUpRows(input.comingUp, W, x + pad, inner, ink, true));
+    if ((input.insight ?? '').trim()) parts.push(insightRows(input.insight ?? '', W, x + pad, inner, ink, false, true));
+    const words: string[] = [...look.overlay];
+    if (parts.length) {
+        const sep = 9 * u;
+        const gap = 2 * u;
+        const heights = parts.map((p) => p.h + 2 * pad);
+        const total = layout === 'glass' ? parts.reduce((a, p) => a + p.h, 0) + sep * (parts.length - 1) + 2 * pad : heights.reduce((a, h) => a + h, 0) + gap * (parts.length - 1);
+        // Never up into the clock and the search bar; its bottom where the classic picture's words end.
+        let y = Math.max(H * 0.74 - total, H * 0.3);
+        if (layout === 'glass') {
+            words.push(...frosted(defs, art, x, y, cw, total, radius, g, W));
+            y += pad;
+            parts.forEach((p, i) => {
+                if (i > 0) {
+                    words.push(`<line x1="${r1(x + pad)}" y1="${r1(y + sep / 2)}" x2="${r1(x + cw - pad)}" y2="${r1(y + sep / 2)}" stroke="${g.edge}" stroke-width="2"/>`);
+                    y += sep;
+                }
+                words.push(...p.draw(y));
+                y += p.h;
+            });
+        } else {
+            parts.forEach((p, i) => {
+                words.push(...frosted(defs, art, x, y, cw, heights[i]!, radius, g, W));
+                words.push(...p.draw(y + pad));
+                y += heights[i]! + gap;
+            });
+        }
+    }
+    return picture(W, H, defs, art, words, input.zoom);
 }

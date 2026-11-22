@@ -148,13 +148,15 @@ export const ambientWallpaperHandler = handler(async (req, res) => {
     const style = word(req.query.style);
     const color = word(req.query.color);
     const zoom = pictureZoom(req.query.zoom);
+    // 11-22: the screen's layout, the person's choice in the app ("glass", "stack"; else the classic one).
+    const layout = req.query.layout === 'glass' || req.query.layout === 'stack' ? req.query.layout : undefined;
     // `icons=1` (the live lock screen, app 0.4.0): a band under the words for the phone's notification
     // icons; its place in X-Ambient-Icons ("cy,size,#AARRGGBB", picture pixels).
     const iconSlot = req.query.icons === '1';
     // 0.5.2 (ECOSYSTEM_V2_PLAN stage 1): the same picture is drawn once. Its key is the day's key (everything
     // the pictures draw) and how it is drawn; a phone that already has it gets 304 with no body.
     const userId = requireUser(req).id;
-    const etag = `"${pictureEtag([userId, ambient.key, width, height, theme, screen, style ?? '', color ?? '', zoom, iconSlot ? 1 : 0, plain ? 'plain' : '', webp ? 'webp' : ''].join('|'))}"`;
+    const etag = `"${pictureEtag([userId, ambient.key, width, height, theme, screen, style ?? '', color ?? '', zoom, iconSlot ? 1 : 0, plain ? 'plain' : '', webp ? 'webp' : '', layout ?? ''].join('|'))}"`;
     res.setHeader('ETag', etag);
     if (req.headers['if-none-match'] === etag) {
         res.status(304).end();
@@ -162,7 +164,7 @@ export const ambientWallpaperHandler = handler(async (req, res) => {
     }
     let drawn = PICTURES.get(etag);
     if (!drawn) {
-        drawn = wallpaperPngWithSlot(ambient, width, height, theme, screen, { ...(style ? { style } : {}), ...(color ? { color } : {}), ...(zoom !== 1 ? { zoom } : {}), ...(iconSlot ? { iconSlot } : {}) });
+        drawn = wallpaperPngWithSlot(ambient, width, height, theme, screen, { ...(style ? { style } : {}), ...(color ? { color } : {}), ...(zoom !== 1 ? { zoom } : {}), ...(iconSlot ? { iconSlot } : {}), ...(layout ? { layout } : {}) });
         if (webp) drawn = { png: await sharp(drawn.png).webp({ quality: 90, effort: 2 }).toBuffer(), slot: drawn.slot };
     }
     rememberPicture(etag, drawn);

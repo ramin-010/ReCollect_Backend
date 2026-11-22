@@ -217,7 +217,7 @@ export function dayBreakdown(a: Pick<Ambient, 'counts'>): string {
 }
 
 /** The drawing's version (11-16: the lock picture's full ring; B8: the type system and the home picture's zoom; stage 16: the lock is now, the home is ahead; 11-21: the lock's three groups at the left, Buddy's mark, the blue ring, sentence case). */
-const DRAWING = 'type-4';
+const DRAWING = 'type-7'; // 11-22: the lock and home layouts (glass, stack) and the lock group under the clock
 
 /** A short fingerprint of everything the pictures draw (FNV-1a over the words). */
 function pictureKey(a: Omit<Ambient, 'key' | 'updatedAt'>): string {
@@ -473,6 +473,8 @@ export interface PictureLook {
     zoom?: number;
     /** The live lock screen's band for the phone's notification icons (app 0.4.0). */
     iconSlot?: boolean;
+    /** The picture's layout (the owner, 11-22: his choice per screen in the app): 'glass' or 'stack'; none: the classic one. */
+    layout?: 'glass' | 'stack';
 }
 
 /** The wallpaper as SVG (wallpaperArt.ts): the home picture (the day in numbers) or the lock picture (the ring and the buddy's line, or the dial). */
@@ -482,6 +484,7 @@ export function wallpaperSvg(a: Ambient, width: number, height: number, theme: '
         ...(look.color ? { color: look.color } : {}),
         ...(look.zoom && look.zoom !== 1 ? { zoom: look.zoom } : {}),
         ...(look.iconSlot ? { iconSlot: true } : {}),
+        ...(look.layout ? { layout: look.layout } : {}),
         state: a.state,
         date: a.date,
         headline: a.headline,

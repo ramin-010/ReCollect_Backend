@@ -175,11 +175,12 @@ describe('POST /api/todos', () => {
         expect(done.status).toBe(200);
         const next = await prisma.todo.findMany({ where: { userId: user.id, title: 'Gym', status: 'pending' }, include: { tags: true, reminders: true } });
         expect(next).toHaveLength(1);
-        expect(next[0].dueDate!.getTime()).toBe(due.getTime() + 7 * 86_400_000);
-        expect(next[0].reminderDate!.getTime()).toBe(due.getTime() + 7 * 86_400_000 - 10 * 60_000);
-        expect(next[0].tags).toHaveLength(1);
-        expect(next[0].reminders).toHaveLength(1);
-        expect(next[0].recurrence).toEqual({ pattern: 'weekly', interval: 1 });
+        const spawned = next[0]!;
+        expect(spawned.dueDate!.getTime()).toBe(due.getTime() + 7 * 86_400_000);
+        expect(spawned.reminderDate!.getTime()).toBe(due.getTime() + 7 * 86_400_000 - 10 * 60_000);
+        expect(spawned.tags).toHaveLength(1);
+        expect(spawned.reminders).toHaveLength(1);
+        expect(spawned.recurrence).toEqual({ pattern: 'weekly', interval: 1 });
 
         const back = await request(app).patch(`/api/todos/${id}`).set('Cookie', authCookie(user)).send({ status: 'pending' });
         expect(back.status).toBe(200);
