@@ -1,6 +1,7 @@
 // GET /api/ambient/widget and /api/ambient/wallpaper.png (ALWAYS_ON_SPEC 6.6): the phone's wallpaper
 // and widget, drawn from the brief. A cookie session, a token with `read`, or the phone app's own
 // `ambient` token (ANDROID_APP_SPEC), which fetches the picture a few times a day.
+import sharp from 'sharp';
 import os from 'node:os';
 import { requireUser } from '../middlwares/auth';
 import { dayBreakdown, dayNumbers, getAmbient, markPhoneHeld, upcomingAlarms, wallpaperPngWithSlot, type Ambient } from '../services/ambient/ambient.service';
@@ -138,7 +139,10 @@ export const ambientWallpaperHandler = handler(async (req, res) => {
     // Stage 19: `card=0`: a widget shows the card on the home screen, so the picture leaves that item out.
     const full = await getAmbient(requireUser(req).id, new Date(), { titles: titlesFrom(req.query.titles), app: appFrom(req.query.app), quiet: req.query.quiet === '1', withoutCard: req.query.card === '0' });
     const ambient = plain ? plainTwin(full) : full;
-    res.setHeader('Content-Type', 'image/png');
+    // 0.7.3 (the owner: the pictures took long to come): `format=webp` sends the same picture as WebP, a tenth of the PNG's
+    // size (a full-screen PNG is about 3 MB); Android and the browsers decode it. Older apps ask for nothing and get PNG.
+    const webp = req.query.format === 'webp';
+    res.setHeader('Content-Type', webp ? 'image/webp' : 'image/png');
     res.setHeader('Cache-Control', 'private, max-age=300');
     res.setHeader('X-Ambient-State', ambient.state);
     const style = word(req.query.style);
@@ -150,13 +154,17 @@ export const ambientWallpaperHandler = handler(async (req, res) => {
     // 0.5.2 (ECOSYSTEM_V2_PLAN stage 1): the same picture is drawn once. Its key is the day's key (everything
     // the pictures draw) and how it is drawn; a phone that already has it gets 304 with no body.
     const userId = requireUser(req).id;
-    const etag = `"${pictureEtag([userId, ambient.key, width, height, theme, screen, style ?? '', color ?? '', zoom, iconSlot ? 1 : 0, plain ? 'plain' : ''].join('|'))}"`;
+    const etag = `"${pictureEtag([userId, ambient.key, width, height, theme, screen, style ?? '', color ?? '', zoom, iconSlot ? 1 : 0, plain ? 'plain' : '', webp ? 'webp' : ''].join('|'))}"`;
     res.setHeader('ETag', etag);
     if (req.headers['if-none-match'] === etag) {
         res.status(304).end();
         return;
     }
-    const drawn = PICTURES.get(etag) ?? wallpaperPngWithSlot(ambient, width, height, theme, screen, { ...(style ? { style } : {}), ...(color ? { color } : {}), ...(zoom !== 1 ? { zoom } : {}), ...(iconSlot ? { iconSlot } : {}) });
+    let drawn = PICTURES.get(etag);
+    if (!drawn) {
+        drawn = wallpaperPngWithSlot(ambient, width, height, theme, screen, { ...(style ? { style } : {}), ...(color ? { color } : {}), ...(zoom !== 1 ? { zoom } : {}), ...(iconSlot ? { iconSlot } : {}) });
+        if (webp) drawn = { png: await sharp(drawn.png).webp({ quality: 90, effort: 2 }).toBuffer(), slot: drawn.slot };
+    }
     rememberPicture(etag, drawn);
     const { png, slot } = drawn;
     if (slot) {

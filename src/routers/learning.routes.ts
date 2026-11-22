@@ -59,6 +59,9 @@ router.get('/subjects', auth, items.listSubjectsHandler);
 router.post('/subjects', auth, idempotency, agentLog.logSubjectCreate, items.createSubjectHandler);
 router.patch('/subjects/:id', auth, items.updateSubjectHandler);
 router.delete('/subjects/:id', auth, items.deleteSubjectHandler);
+router.get('/subjects/:id/deletion', auth, items.subjectDeletionPreviewHandler);
+router.get('/subject-deletions', auth, items.listSubjectDeletionsHandler);
+router.post('/subject-deletions/:id/undo', auth, items.undoSubjectDeletionHandler);
 // A subject's path (BUDDY_PLAN B1): its topics in order, and what comes next.
 router.get('/subjects/:id/path', auth, paths.readPathHandler);
 router.post('/subjects/:id/path', auth, idempotency, agentLog.logPathPlan, paths.planTopicsHandler);

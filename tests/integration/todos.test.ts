@@ -138,6 +138,64 @@ describe('POST /api/todos', () => {
         });
     });
 
+    it('a reminder already past moves to the due time while that is ahead, and is dropped when both have passed', async () => {
+        const user = await createTestUser();
+        const soon = new Date(Date.now() + 5 * 60_000);
+        const past = new Date(Date.now() - 5 * 60_000);
+        const a = await request(app).post('/api/todos').set('Cookie', authCookie(user)).send({ title: 'Soon', dueDate: soon.toISOString(), reminderDate: past.toISOString() });
+        expect(a.status).toBe(201);
+        expect(a.body.data.reminderDate).toBe(soon.toISOString());
+        const ra = await prisma.reminder.findMany({ where: { todoId: a.body.data._id } });
+        expect(ra.map((r) => r.reminderDate.toISOString())).toEqual([soon.toISOString()]);
+
+        const b = await request(app)
+            .post('/api/todos')
+            .set('Cookie', authCookie(user))
+            .send({ title: 'Gone by', dueDate: past.toISOString(), reminderDate: new Date(past.getTime() - 10 * 60_000).toISOString() });
+        expect(b.status).toBe(201);
+        expect(b.body.data.reminderDate).toBeNull();
+        expect(await prisma.reminder.count({ where: { todoId: b.body.data._id } })).toBe(0);
+
+        const c = await request(app).patch(`/api/todos/${b.body.data._id}`).set('Cookie', authCookie(user)).send({ dueDate: soon.toISOString(), reminderDate: past.toISOString() });
+        expect(c.status).toBe(200);
+        expect(c.body.data.reminderDate).toBe(soon.toISOString());
+    });
+
+    it('ticking a repeating task brings its next time; un-ticking takes it back', async () => {
+        const user = await createTestUser();
+        const due = new Date(Date.now() + 2 * 3_600_000);
+        const created = await request(app)
+            .post('/api/todos')
+            .set('Cookie', authCookie(user))
+            .send({ title: 'Gym', dueDate: due.toISOString(), reminderDate: new Date(due.getTime() - 10 * 60_000).toISOString(), recurrence: { pattern: 'weekly', interval: 1 }, tags: ['health'] });
+        expect(created.status).toBe(201);
+        const id = created.body.data._id;
+
+        const done = await request(app).patch(`/api/todos/${id}`).set('Cookie', authCookie(user)).send({ status: 'complete' });
+        expect(done.status).toBe(200);
+        const next = await prisma.todo.findMany({ where: { userId: user.id, title: 'Gym', status: 'pending' }, include: { tags: true, reminders: true } });
+        expect(next).toHaveLength(1);
+        expect(next[0].dueDate!.getTime()).toBe(due.getTime() + 7 * 86_400_000);
+        expect(next[0].reminderDate!.getTime()).toBe(due.getTime() + 7 * 86_400_000 - 10 * 60_000);
+        expect(next[0].tags).toHaveLength(1);
+        expect(next[0].reminders).toHaveLength(1);
+        expect(next[0].recurrence).toEqual({ pattern: 'weekly', interval: 1 });
+
+        const back = await request(app).patch(`/api/todos/${id}`).set('Cookie', authCookie(user)).send({ status: 'pending' });
+        expect(back.status).toBe(200);
+        expect(await prisma.todo.count({ where: { userId: user.id, title: 'Gym' } })).toBe(1);
+    });
+
+    it('a repeating task ticked late comes back on its next day still ahead', async () => {
+        const user = await createTestUser();
+        const due = new Date(Date.now() - 3 * 86_400_000);
+        const created = await request(app).post('/api/todos').set('Cookie', authCookie(user)).send({ title: 'Water plants', dueDate: due.toISOString(), recurrence: { pattern: 'daily', interval: 1 } });
+        await request(app).patch(`/api/todos/${created.body.data._id}`).set('Cookie', authCookie(user)).send({ status: 'complete' });
+        const next = await prisma.todo.findFirst({ where: { userId: user.id, title: 'Water plants', status: 'pending' } });
+        expect(next!.dueDate!.getTime()).toBe(due.getTime() + 4 * 86_400_000);
+        expect(next!.dueDate!.getTime()).toBeGreaterThan(Date.now());
+    });
+
     it("a date-only dueDate is that day in the user's time zone (18:00 IST), not UTC midnight", async () => {
         const user = await createTestUser();
         const res = await request(app).post('/api/todos').set('Cookie', authCookie(user)).send({ title: 'AI task', dueDate: '2026-10-22' });

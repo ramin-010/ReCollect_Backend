@@ -13,6 +13,7 @@ import { isDocOwner } from './docPermissions';
 import { pruneThreads } from '../assistant/threads.service';
 import { pruneAgentHistory } from '../agent/prune.service';
 import { pruneOAuth } from '../oauth/oauth.service';
+import { purgeSubjectDeletions, UNDO_DAYS } from '../learningDb/subjectDeletion.service';
 
 export const TRASH_DAYS = 30;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -49,9 +50,10 @@ export async function restoreDoc(userId: string, docId: string): Promise<TrashSt
     return { ...(await stateOf(docId)), changed: changed > 0 };
 }
 
-/** The user's docs in the trash (owned), newest first. */
+/** The user's docs in the trash (owned), newest first; not those a deleted subject holds for its week's undo. */
 export async function trashedDocs(userId: string): Promise<Array<{ id: string; title: string; trashedAt: Date }>> {
-    const rows = await prisma.doc.findMany({ where: { userId, trashedAt: { not: null } }, select: { id: true, title: true, trashedAt: true }, orderBy: { trashedAt: 'desc' } });
+    const held = (await prisma.subjectDeletion.findMany({ where: { userId }, select: { docIds: true } })).flatMap((d) => d.docIds);
+    const rows = await prisma.doc.findMany({ where: { userId, trashedAt: { not: null }, id: { notIn: held } }, select: { id: true, title: true, trashedAt: true }, orderBy: { trashedAt: 'desc' } });
     return rows.map((r) => ({ id: r.id, title: r.title, trashedAt: r.trashedAt! }));
 }
 
@@ -82,6 +84,9 @@ export async function purgeTrash(now: Date = new Date()): Promise<number> {
 export async function trashHousekeeping(): Promise<void> {
     const deleted = await purgeTrash();
     if (deleted > 0) console.log(`[trash] deleted ${deleted} doc(s) after ${TRASH_DAYS} days in the trash`);
+    // Deleted subjects past their week's undo: final, their docs deleted for good.
+    const subjects = await purgeSubjectDeletions();
+    if (subjects > 0) console.log(`[subjects] ${subjects} deleted subject(s) made final after ${UNDO_DAYS} days`);
     // The manager's conversations go after 90 days without a message (the same hourly job).
     const threads = await pruneThreads();
     if (threads > 0) console.log(`[assistant] deleted ${threads} old conversation(s)`);

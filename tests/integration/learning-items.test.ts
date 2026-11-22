@@ -57,19 +57,64 @@ describe('subjects', () => {
         expect((await api(stranger).get('/api/subjects')).body.data).toEqual([]);
     });
 
-    it('delete: topics and revisions go, docs stay, captures move to the Inbox', async () => {
+    it('delete: everything in the subject goes (docs to the trash, tasks on them, notes); sessions only lose the link; undo brings it all back', async () => {
         const user = await createLearner();
         const s = await createSubjectRow(user.id);
         const { topic, doc } = await createTopicRow(user.id, s.id);
         await createChainRows(user.id, { topicId: topic.id }, todayIn(IST));
         const note = await prisma.capture.create({ data: { userId: user.id, content: 'filed', subjectId: s.id } });
+        const tag = await prisma.tag.create({ data: { name: `t-${user.id.slice(-6)}` } });
+        const task = await prisma.todo.create({ data: { userId: user.id, title: 'Revise it', references: [{ type: 'doc', refId: doc.id, title: 'Doc' }], reminderDate: new Date('2030-01-01T09:00:00Z') } });
+        await prisma.todoTag.create({ data: { todoId: task.id, tagId: tag.id } });
+        await prisma.reminder.create({ data: { userId: user.id, todoId: task.id, reminderDate: new Date('2030-01-01T09:00:00Z') } });
+        const other = await prisma.todo.create({ data: { userId: user.id, title: 'Unrelated' } });
+        const session = await prisma.workSession.create({ data: { userId: user.id, kind: 'study', day: new Date('2026-11-20'), startedAt: new Date('2026-11-20T10:00:00Z'), minutes: 30, subjectId: s.id, topicId: topic.id, title: 'Studied' } });
+        const revisions = await prisma.revision.count({ where: { topicId: topic.id } });
 
-        expect((await api(user).delete(`/api/subjects/${s.id}`)).body.data).toEqual({ deleted: true });
+        const preview = await api(user).get(`/api/subjects/${s.id}/deletion`);
+        expect(preview.body.data).toMatchObject({ undoDays: 7, counts: { docs: 1, topics: 1, notes: 1, revisions, tasks: 1, sessions: 1 } });
+
+        const del = await api(user).delete(`/api/subjects/${s.id}`);
+        expect(del.status).toBe(200);
+        const deletionId = del.body.data._id;
+        expect(await prisma.subject.count({ where: { id: s.id } })).toBe(0);
         expect(await prisma.topic.count({ where: { id: topic.id } })).toBe(0);
         expect(await prisma.revision.count({ where: { topicId: topic.id } })).toBe(0);
+        expect(await prisma.capture.count({ where: { id: note.id } })).toBe(0);
+        expect(await prisma.todo.count({ where: { id: task.id } })).toBe(0);
+        expect(await prisma.todo.count({ where: { id: other.id } })).toBe(1);
+        expect((await prisma.doc.findUniqueOrThrow({ where: { id: doc.id } })).trashedAt).not.toBeNull();
+        expect(await prisma.workSession.findUniqueOrThrow({ where: { id: session.id } })).toMatchObject({ subjectId: null, topicId: null, minutes: 30 });
+        expect((await api(user).get('/api/subject-deletions')).body.data).toEqual([expect.objectContaining({ _id: deletionId, subjectId: s.id })]);
+
+        // Emptying the trash leaves a deleted subject's docs for its week (they come back with it).
+        await api(user).post('/api/docs/trash/empty', {});
         expect(await prisma.doc.count({ where: { id: doc.id } })).toBe(1);
-        expect((await prisma.capture.findUniqueOrThrow({ where: { id: note.id } })).subjectId).toBeNull();
-        expect((await api(user).get('/api/today')).body.data.inbox.items.map((c: any) => c._id)).toContain(note.id);
+
+        const undo = await api(user).post(`/api/subject-deletions/${deletionId}/undo`, {});
+        expect(undo.status).toBe(200);
+        expect(await prisma.subject.count({ where: { id: s.id } })).toBe(1);
+        expect(await prisma.topic.findUniqueOrThrow({ where: { id: topic.id } })).toMatchObject({ subjectId: s.id, docId: doc.id });
+        expect(await prisma.revision.count({ where: { topicId: topic.id } })).toBe(revisions);
+        expect(await prisma.capture.findUniqueOrThrow({ where: { id: note.id } })).toMatchObject({ subjectId: s.id });
+        expect(await prisma.todoTag.count({ where: { todoId: task.id, tagId: tag.id } })).toBe(1);
+        expect(await prisma.reminder.count({ where: { todoId: task.id } })).toBe(1);
+        expect((await prisma.doc.findUniqueOrThrow({ where: { id: doc.id } })).trashedAt).toBeNull();
+        expect(await prisma.workSession.findUniqueOrThrow({ where: { id: session.id } })).toMatchObject({ subjectId: s.id, topicId: topic.id });
+        expect((await api(user).get('/api/subject-deletions')).body.data).toEqual([]);
+    });
+
+    it('a deleted subject is final after its week: its docs are deleted for good', async () => {
+        const user = await createLearner();
+        const s = await createSubjectRow(user.id);
+        const { doc } = await createTopicRow(user.id, s.id);
+        const del = await api(user).delete(`/api/subjects/${s.id}`);
+        expect((await api(user).post(`/api/subject-deletions/nope/undo`, {})).status).toBe(404);
+        const { purgeSubjectDeletions } = await import('../../src/services/learningDb/subjectDeletion.service');
+        expect(await purgeSubjectDeletions(new Date(Date.now() + 6 * 86_400_000))).toBe(0);
+        expect(await purgeSubjectDeletions(new Date(Date.now() + 8 * 86_400_000))).toBe(1);
+        expect(await prisma.doc.count({ where: { id: doc.id } })).toBe(0);
+        expect((await api(user).post(`/api/subject-deletions/${del.body.data._id}/undo`, {})).status).toBe(404);
     });
 });
 

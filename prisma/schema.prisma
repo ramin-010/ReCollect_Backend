@@ -178,6 +178,7 @@ model User {
   buddyReminders    BuddyReminder[]
   buddyOutcomes     BuddyOutcome[]
   standTakes        StandTake[]
+  subjectDeletions  SubjectDeletion[]
   buddyImports      BuddyImport[]
   buddyCatchUps     BuddyCatchUp[]
   buddyScreenRules  BuddyScreenRule[]
@@ -2672,4 +2673,23 @@ model StandTake {
   createdAt DateTime @default(now())
 
   @@unique([userId, day, window])
+}
+
+/// A deleted subject, kept for a week so it can be undone (the owner, 11-22: a subject can be deleted with everything
+/// in it, with a week's undo). `payload` holds the rows that went (the subject, its topics, captures, revisions and
+/// the rest, the tasks on its docs) and the rows that only lost their link (sessions, week targets, decisions); its
+/// docs wait in the trash (`docIds`). After `expiresAt` the row and those docs are deleted for good.
+model SubjectDeletion {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subjectId String
+  name      String
+  payload   Json
+  docIds    String[] @default([])
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+
+  @@index([userId, createdAt])
+  @@index([expiresAt])
 }

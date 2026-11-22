@@ -193,6 +193,39 @@ export async function searchTodoReferences(userId: string, q: string, db: DbClie
  * POST /todos. `body` is the JSON or multipart body, `files` what upfly put on req.files.
  * Throws 400 "Task title is required" first, then the Mongoose validation messages.
  */
+const DAY_MS = 86_400_000;
+
+/** One step of a repeat (daily, weekly, monthly; every `interval`), keeping the time of day. */
+function stepRepeat(from: Date, pattern: string, interval: number): Date {
+    const n = Math.max(1, Math.floor(interval) || 1);
+    if (pattern === 'daily') return new Date(from.getTime() + n * DAY_MS);
+    if (pattern === 'weekly') return new Date(from.getTime() + 7 * n * DAY_MS);
+    const d = new Date(from.getTime());
+    d.setUTCMonth(d.getUTCMonth() + n);
+    return d;
+}
+
+/**
+ * The next time of a repeating task, from its due time (or now when it has none), stepped until it is ahead of
+ * now: a habit ticked late comes back on its next day, not on one already gone (the owner, 11-22: the task box's
+ * "Make recurring" was saved but nothing acted on it).
+ */
+export function nextRepeatDue(due: Date | null, pattern: string, interval: number, now: Date): Date {
+    let next = stepRepeat(due ?? now, pattern, interval);
+    for (let i = 0; i < 1000 && next.getTime() <= now.getTime(); i++) next = stepRepeat(next, pattern, interval);
+    return next;
+}
+
+/**
+ * A reminder's moment as saved from the app (the owner, 11-22: the task box's options checked against the
+ * reminder rules): one already past would go out at once, so it moves to the due time when that is still
+ * ahead, and is dropped when both have passed. (An agent's reminder in the past is refused outright.)
+ */
+export function reminderToKeep(reminderDate: Date | null, dueDate: Date | null | undefined, now: Date): Date | null {
+    if (!reminderDate || reminderDate.getTime() > now.getTime()) return reminderDate;
+    return dueDate && dueDate.getTime() > now.getTime() ? dueDate : null;
+}
+
 export async function createPersonalTodo(userId: string, body: Body, files: unknown, now: Date = new Date()): Promise<TodoWriteResult> {
     if (typeof body.title !== 'string' || !body.title.trim()) {
         throw new ErrorResponse(400, 'Task title is required');
@@ -209,7 +242,7 @@ export async function createPersonalTodo(userId: string, body: Body, files: unkn
     const requestedAssignees = parseAssigneeIds(body.assignees) ?? [];
     let dueDate = castCreateDate(body.dueDate, 'dueDate');
     const goalType = parseGoalType(body.goalType);
-    const reminderDate = castCreateDate(body.reminderDate, 'reminderDate');
+    const askedReminder = castCreateDate(body.reminderDate, 'reminderDate');
 
     const rawDescription = body.description ? bodyText(body.description) : '';
     const { description, cloudImages } = resolveUploadedImages(rawDescription, body.imageNodeIds, files);
@@ -219,6 +252,7 @@ export async function createPersonalTodo(userId: string, body: Body, files: unkn
         const assigneeIds = await existingUserIds(requestedAssignees, tx);
         // A new weekly / monthly goal with no date gets the goal's due day.
         if (!dueDate && goalType !== 'NONE') dueDate = await goalDueDate(userId, goalType, now, tx);
+        const reminderDate = reminderToKeep(askedReminder ?? null, dueDate, now);
 
         const created = await tx.todo.create({
             data: {
@@ -294,6 +328,14 @@ export async function updatePersonalTodo(
                 visibility: true,
                 dueDate: true,
                 assignees: { select: { userId: true } },
+                description: true,
+                priority: true,
+                reminderDate: true,
+                recurrence: true,
+                references: true,
+                goalType: true,
+                completedAt: true,
+                workspaceId: true,
             },
         });
         if (!existing) throw new ErrorResponse(404, TASK_NOT_FOUND);
@@ -316,7 +358,8 @@ export async function updatePersonalTodo(
         if (body.status !== undefined) data.status = parseTodoStatus(body.status);
         if (body.priority !== undefined) data.priority = parseTodoPriority(body.priority);
         if (body.dueDate !== undefined) data.dueDate = parseUpdateDate(body.dueDate);
-        const newReminderDate = body.reminderDate !== undefined ? parseUpdateDate(body.reminderDate) : null;
+        const resultingDueForReminder = data.dueDate !== undefined ? (data.dueDate as Date | null) : existing.dueDate;
+        const newReminderDate = body.reminderDate !== undefined ? reminderToKeep(parseUpdateDate(body.reminderDate), resultingDueForReminder, now) : null;
         if (body.reminderDate !== undefined) data.reminderDate = newReminderDate;
         if (body.subtasks !== undefined) data.subtasks = normalizeSubtasks(body.subtasks);
         if (body.recurrence !== undefined) data.recurrence = normalizeRecurrence(body.recurrence) ?? Prisma.DbNull;
@@ -365,6 +408,49 @@ export async function updatePersonalTodo(
                 const reminderTitle = typeof data.title === 'string' ? data.title : existing.title;
                 const row = await createTodoReminder({ userId, todoId, reminderDate: newReminderDate, title: reminderTitle }, tx);
                 reminder = { reminderId: row.id, remindAt: newReminderDate };
+            }
+        }
+
+        // A repeating task: ticking it brings its next time (a copy, due one step on, its reminder the same time
+        // before); un-ticking takes that copy back while it is untouched (made at the tick's own moment).
+        const repeat = existing.recurrence as { pattern?: string; interval?: number } | null;
+        if (repeat?.pattern && !existing.workspaceId) {
+            if (data.status === 'complete' && existing.status !== 'complete') {
+                const nextDue = nextRepeatDue(existing.dueDate, repeat.pattern, repeat.interval ?? 1, now);
+                const lead = existing.reminderDate && existing.dueDate ? existing.dueDate.getTime() - existing.reminderDate.getTime() : null;
+                const nextReminder = lead !== null ? reminderToKeep(new Date(nextDue.getTime() - lead), nextDue, now) : null;
+                const next = await tx.todo.create({
+                    data: {
+                        userId: existing.userId,
+                        title: typeof data.title === 'string' ? data.title : existing.title,
+                        description: existing.description,
+                        status: 'pending',
+                        priority: existing.priority,
+                        dueDate: nextDue,
+                        reminderDate: nextReminder,
+                        recurrence: existing.recurrence ?? Prisma.DbNull,
+                        references: existing.references ?? [],
+                        goalType: existing.goalType,
+                        visibility: existing.visibility,
+                        createdAt: now,
+                    },
+                    select: { id: true, title: true },
+                });
+                // Its tags read on their own (two relations in one read run side by side in a transaction).
+                const tagIds = (await tx.todoTag.findMany({ where: { todoId }, select: { tagId: true } })).map((t) => t.tagId);
+                if (tagIds.length) await tx.todoTag.createMany({ data: todoTagRows(next.id, tagIds, now) });
+                if (nextReminder) await createTodoReminder({ userId: existing.userId, todoId: next.id, reminderDate: nextReminder, title: next.title }, tx);
+            } else if (data.status !== undefined && data.status !== 'complete' && existing.status === 'complete' && existing.completedAt) {
+                const spawned = await tx.todo.findMany({
+                    where: { userId: existing.userId, title: existing.title, status: 'pending', createdAt: existing.completedAt, NOT: { id: todoId } },
+                    select: { id: true, createdAt: true, updatedAt: true },
+                });
+                const untouched = spawned.filter((t) => t.updatedAt.getTime() - t.createdAt.getTime() < 2_000).map((t) => t.id);
+                if (untouched.length) {
+                    await tx.reminder.deleteMany({ where: { todoId: { in: untouched } } });
+                    await tx.todoTag.deleteMany({ where: { todoId: { in: untouched } } });
+                    await tx.todo.deleteMany({ where: { id: { in: untouched } } });
+                }
             }
         }
 

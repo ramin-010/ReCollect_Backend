@@ -2,13 +2,13 @@
 import { z } from 'zod';
 import { requireUser } from '../../middlwares/auth';
 import { badRequest } from '../../services/learning/http';
+import { deleteSubjectWithUndo, deletionPreview, listSubjectDeletions, undoSubjectDeletion } from '../../services/learningDb/subjectDeletion.service';
 import {
     createCapture,
     createSubject,
     createTopic,
     deleteCapture,
     deleteQuickNote,
-    deleteSubject,
     deleteTopic,
     ensureTopicDoc,
     CAPTURES_LIST_MAX,
@@ -50,8 +50,18 @@ export const createSubjectHandler = handler(async (req, res) => {
 export const updateSubjectHandler = handler(async (req, res) => {
     ok(res, await updateSubject(requireUser(req).id, param(req, 'id'), parse(subjectPatchSchema, req.body)));
 });
+/** The subject and everything in it, undoable for a week (services/learningDb/subjectDeletion.service.ts). */
 export const deleteSubjectHandler = handler(async (req, res) => {
-    ok(res, await deleteSubject(requireUser(req).id, param(req, 'id')));
+    ok(res, await deleteSubjectWithUndo(requireUser(req).id, param(req, 'id')));
+});
+export const subjectDeletionPreviewHandler = handler(async (req, res) => {
+    ok(res, await deletionPreview(requireUser(req).id, param(req, 'id')));
+});
+export const listSubjectDeletionsHandler = handler(async (req, res) => {
+    ok(res, await listSubjectDeletions(requireUser(req).id));
+});
+export const undoSubjectDeletionHandler = handler(async (req, res) => {
+    ok(res, await undoSubjectDeletion(requireUser(req).id, param(req, 'id')));
 });
 
 // ─── Topics ────────────────────────────────────────────────────────────

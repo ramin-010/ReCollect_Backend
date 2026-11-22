@@ -60,6 +60,12 @@ describe('the ambient phone (6.6)', () => {
         const bold = await bearer('/api/ambient/wallpaper.png?w=540&h=1170&titles=0&screen=lock&style=peaks&color=dusk');
         expect([bold.status, bold.headers['content-type']]).toEqual([200, 'image/png']);
         expect(Buffer.compare(bold.body as Buffer, lock.body as Buffer)).not.toBe(0);
+        // 0.7.3: the same picture as WebP when the app asks (a fraction of the PNG's size); its own ETag.
+        const small = await bearer('/api/ambient/wallpaper.png?w=540&h=1170&titles=0&screen=lock&style=peaks&color=dusk&format=webp');
+        expect([small.status, small.headers['content-type']]).toEqual([200, 'image/webp']);
+        expect((small.body as Buffer).subarray(0, 4).toString('latin1')).toBe('RIFF');
+        expect((small.body as Buffer).length).toBeLessThan((bold.body as Buffer).length);
+        expect(small.headers.etag).not.toBe(bold.headers.etag);
         const unknown = await bearer('/api/ambient/wallpaper.png?w=540&h=1170&titles=0&screen=lock&style=nope');
         expect(Buffer.compare(unknown.body as Buffer, lock.body as Buffer)).toBe(0);
         // B8: the home picture drawn for the phone's zoom (Android 11: 1.1) differs; a zoom out of range is 1. Stage 16: the

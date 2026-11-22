@@ -111,15 +111,7 @@ export async function updateSubject(userId: string, subjectId: string, input: Su
     return serializeSubject(row);
 }
 
-/**
- * #11: the subject's topics, their revisions, its streak and history go (cascade); docs stay;
- * its captures move to the Inbox (Capture.subjectId SET NULL).
- */
-export async function deleteSubject(userId: string, subjectId: string): Promise<{ deleted: true }> {
-    const { count } = await prisma.subject.deleteMany({ where: { id: subjectId, userId } });
-    if (count === 0) throw notFound();
-    return { deleted: true };
-}
+// #11, deleting a subject: services/learningDb/subjectDeletion.service.ts (everything in it, a week's undo).
 
 // ─── Topics ────────────────────────────────────────────────────────────
 

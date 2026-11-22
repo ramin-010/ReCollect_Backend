@@ -9,6 +9,7 @@ import { assertUnderCap, recordAiUsage } from '../claude/usage.service';
 import { parseJson, responseText } from '../recall/output';
 import type { BetaCreateParams } from '../recall/prompts';
 import { calendarDateIn, DEFAULT_TIME_ZONE } from '../../utils/timezone';
+import { prisma } from '../../db/prisma';
 
 export const TASK_AI_DEFAULT_MODEL = 'claude-haiku-5-5';
 export const taskAiModel = (): string => process.env['TASK_AI_MODEL']?.trim() || TASK_AI_DEFAULT_MODEL;
@@ -98,7 +99,9 @@ export async function generateTaskLine(userId: string, input: TaskLineInput, now
         return plainTaskLine(input.prompt);
     }
     try {
-        const message = await callClaude(userId, taskLineRequest(input, calendarDateIn(now, DEFAULT_TIME_ZONE)), 'task line');
+        // "Tomorrow" is the person's tomorrow (it was always India's: the owner's 11-22 check of the task box).
+        const zone = (await prisma.user.findUnique({ where: { id: userId }, select: { timezone: true } }))?.timezone || DEFAULT_TIME_ZONE;
+        const message = await callClaude(userId, taskLineRequest(input, calendarDateIn(now, zone)), 'task line');
         await recordAiUsage(userId, 'task_parse', message);
         const out = zLine.parse(parseJson(responseText(message)));
         const allowed = new Set([...(input.workspaceMembers ?? []), ...(input.preSelectedAssignees ?? [])].map((m) => m.email.toLowerCase()));
