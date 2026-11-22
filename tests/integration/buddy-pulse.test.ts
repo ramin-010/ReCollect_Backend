@@ -41,7 +41,7 @@ describe('the pulses', () => {
                 createdAt: new Date(Date.UTC(2026, 10, 15, 23, 0)),
             },
         });
-        expect(await pulseIfDue(user.id, new Date(Date.UTC(2026, 10, 16, 5, 0)))).toMatchObject({ ran: false, reason: 'not yet noon' });
+        expect(await pulseIfDue(user.id, new Date(Date.UTC(2026, 10, 16, 2, 30)))).toMatchObject({ ran: false, reason: 'not yet 09:00' });
         expect(await pulseIfDue(user.id, NOON)).toMatchObject({ ran: false, reason: 'nothing new' });
         expect(fake.calls).toHaveLength(0);
 

@@ -315,7 +315,7 @@ const atHour = (day: DayString, tz: string, hour: number) => new Date(startOfDay
 
 /**
  * The buddy's next moment for one user: the night after 04:00 his time (once a day), then a pulse
- * at 12:00 and 18:00 when something new arrived, and with the loop on a pulse on an event when it falls
+ * at 09:00, 12:00, 15:00, 18:00 and 21:00 when something new arrived (their own doings in the app included, 11-22), and with the loop on a pulse on an event when it falls
  * due (§4.13). A buddy that may not spend waits for a change (a poke from his settings) or, at a cap, for
  * the next month; a buddy that is off has none.
  */
@@ -358,7 +358,7 @@ export async function nextBuddyDue(now: Date = new Date()): Promise<Date | null>
     return soonest;
 }
 
-/** Every user whose buddy is on gets the night when it is due, and the pulses at 12:00 and 18:00 when something new arrived. */
+/** Every user whose buddy is on gets the night when it is due, and the fixed pulses (09:00 to 21:00, every 3 hours) when something new arrived. */
 export async function runDueNights(now: Date = new Date()): Promise<{ ran: number; failed: number }> {
     const users = await prisma.buddyState.findMany({ where: { enabled: true, paused: false }, select: { userId: true } });
     let ran = 0;

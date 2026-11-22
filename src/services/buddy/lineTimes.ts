@@ -1,14 +1,14 @@
 // Timed lines (ECOSYSTEM_V2_PLAN V1, stage 7; his point 4: "up to the buddy whether it shows 2, 3 or 4 at
 // most, and if it doesn't want to show anything, that's its choice"). With the loop on, the night and the
-// pulses write 0 to 4 lines for his lock screen, each with its own hours (`from`, `until`: HH:mm, his clock)
+// pulses write 0 to 6 lines (4 before 11-22) for his lock screen, each with its own hours (`from`, `until`: HH:mm, his clock)
 // inside his buddy day, which runs from 04:00 to 04:00. A line without hours (the loop off, and every step
 // before this) holds its part of the day: the morning 04:00-12:00, the afternoon 12:00-18:00, the evening
 // 18:00-04:00. Pure: every reader of the lines goes through these, so both kinds read the same way.
 import { startOfDay, type DayString } from '../learning';
 import type { Slot } from './think';
 
-/** At most this many lines a day. */
-export const LINES_MAX = 4;
+/** At most this many lines a day (11-22, the owner: "more active during the day"; before, 4). */
+export const LINES_MAX = 6;
 /** A line shows for at least half an hour. */
 export const LINE_MIN_MINUTES = 30;
 

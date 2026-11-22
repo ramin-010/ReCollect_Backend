@@ -118,6 +118,14 @@ router.get('/brief', auth, brief.getBriefHandler);
 // may not call those routes at all: tokenRoutes.ts).
 router.get('/week', auth, week.getWeekHandler);
 router.get('/mirror', auth, mirror.getMirrorHandler); // LOOP_COMPLETE_SPEC 1.7
+router.get('/mirror/stand', auth, mirror.getStandHandler); // WHERE_YOU_STAND_PLAN §5.5
+// The buddy's take on the page (§9): the app's only (no token route: an agent has its own words).
+router.get('/mirror/stand/takes', auth, mirror.getStandTakesHandler);
+router.post('/mirror/stand/takes', auth, mirror.askStandTakeHandler);
+// LeetCode (11-22): their accepted problems logged as practice; the app's only (no token route).
+router.get('/leetcode', auth, loop.getLeetcodeHandler);
+router.put('/leetcode', auth, loop.setLeetcodeHandler);
+router.post('/leetcode/sync', auth, loop.syncLeetcodeHandler);
 router.get('/tasks', taskAuth, tasks.listTasksHandler);
 router.post('/tasks', taskAuth, idempotency, agentLog.logTaskCreate, tasks.createTaskHandler);
 router.patch('/tasks/:id', taskAuth, idempotency, agentLog.logTaskUpdate, tasks.updateTaskHandler);

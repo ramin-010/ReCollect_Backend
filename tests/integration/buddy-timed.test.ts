@@ -70,7 +70,7 @@ const pulseSays = (lines: unknown[]) => fakeMessage({ lines, note: '', insight: 
 const lockByNumber = (reveals: boolean[]) => fakeMessage({ lines: reveals.map((r, i) => ({ i, reveals: r })), note: false, insight: false }, { model: 'claude-sonnet-5-5' });
 
 describe('stage 7: timed lines', () => {
-    it('the night with the loop on: 0 to 4 lines in their own hours, held by code, checked by number; each screen shows the line its hours hold; his thumb names it by its start', async () => {
+    it('the night with the loop on: 0 to 6 lines in their own hours (4 before 11-22), held by code, checked by number; each screen shows the line its hours hold; his thumb names it by its start', async () => {
         const user = await person();
         const t = await thread(user.id, 'Guitar most evenings');
         // Said the day before, word for word: with the loop on nothing is refused for that (relevance wins).
@@ -83,18 +83,20 @@ describe('stage 7: timed lines', () => {
                 tl('18:30', '20:00', 'Guitar after dinner', [t.id]),
                 tl('22:30', '00:30', 'Lights out soon, it was a long day'),
                 tl('01:00', '02:00', 'A fifth line'),
+                tl('02:00', '03:00', 'A sixth line'),
+                tl('03:00', '03:45', 'A seventh line'),
             ])
         );
-        // The lunch line names a private thing (by number: the second of the four kept).
-        fake.push(lockByNumber([false, true, false, false]));
+        // The lunch line names a private thing (by number: the second of the six kept).
+        fake.push(lockByNumber([false, true, false, false, false, false]));
         await nightIfDue(user.id, at('05:00'));
 
         const night = fake.calls[0]!;
-        expect(JSON.stringify(night.system)).toContain('0 to 4 lines for their lock screen today, each shown in its own hours');
+        expect(JSON.stringify(night.system)).toContain('0 to 6 lines for their lock screen today, each shown in its own hours');
         const items = (night.output_config!.format!.schema as { properties: { lines: { items: { properties: Record<string, unknown> } } } }).properties.lines.items;
         expect(Object.keys(items.properties)).toEqual(['from', 'until', 'text', 'form', 'lockOk', 'sourceId', 'about']);
         expect(fake.calls[1]!.output_config?.format?.schema).toBe(LOCK_SCHEMA_TIMED);
-        expect(JSON.stringify(fake.calls[1]!.messages)).toContain('<lines>\\n0: One honest hour before work\\n1: A walk after lunch, no screens\\n2: Guitar after dinner\\n3: Lights out soon, it was a long day\\n</lines>');
+        expect(JSON.stringify(fake.calls[1]!.messages)).toContain('<lines>\\n0: One honest hour before work\\n1: A walk after lunch, no screens\\n2: Guitar after dinner\\n3: Lights out soon, it was a long day\\n4: A fifth line\\n5: A sixth line\\n</lines>');
 
         const row = await prisma.buddyDay.findFirstOrThrow({ where: { userId: user.id, day: DAY } });
         const lines = row.lines as unknown as Line[];
@@ -103,10 +105,12 @@ describe('stage 7: timed lines', () => {
             ['13:00', '14:00', 'afternoon', false],
             ['18:30', '20:00', 'evening', true],
             ['22:30', '00:30', 'evening', true],
+            ['01:00', '02:00', 'evening', true],
+            ['02:00', '03:00', 'evening', true],
         ]);
         expect(lines[2]!.about).toEqual([{ threadId: t.id, rev: t.revision }]);
         const why = (row.dropped as unknown as Dropped[]).map((d) => d.why);
-        expect(why).toEqual(expect.arrayContaining(['overlaps another line', 'more than four lines today', 'names a private thing']));
+        expect(why).toEqual(expect.arrayContaining(['overlaps another line', 'more than 6 lines today', 'names a private thing']));
         expect(why).not.toContain('said lately');
 
         // Each in its hours, with its own end time; between lines nothing (the dial); across midnight on his day.
@@ -140,7 +144,7 @@ describe('stage 7: timed lines', () => {
         expect(next).toContain('2026-11-15 evening: Guitar after dinner');
     });
 
-    it('a pulse with the loop on: the lines whose hours are over stay; it answers every line from now on (keep, change, end, add); four at most in the day', async () => {
+    it('a pulse with the loop on: the lines whose hours are over stay; it answers every line from now on (keep, change, end, add); six at most in the day', async () => {
         const user = await person();
         const t = await thread(user.id, 'Guitar most evenings');
         await prisma.buddyDay.create({
@@ -155,8 +159,8 @@ describe('stage 7: timed lines', () => {
         });
         // Something new since the night: the fixed pulse after noon runs.
         await prisma.observation.create({ data: { userId: user.id, text: 'Has a call at four', kind: 'state', source: 'tell', day: DAY, createdAt: at('14:00') } });
-        fake.push(pulseSays([tl('13:00', '13:30', 'Already over'), tl('15:00', '15:45', 'Stretch before the call'), tl('18:30', '20:00', 'Guitar after dinner', [t.id]), tl('21:00', '22:00', 'One too many')]));
-        fake.push(lockByNumber([false, false]));
+        fake.push(pulseSays([tl('13:00', '13:30', 'Already over'), tl('15:00', '15:45', 'Stretch before the call'), tl('18:30', '20:00', 'Guitar after dinner', [t.id]), tl('21:00', '22:00', 'Wind down'), tl('22:00', '22:45', 'Lights out'), tl('23:00', '23:45', 'One too many')]));
+        fake.push(lockByNumber([false, false, false, false]));
         expect(await pulseIfDue(user.id, at('14:30'))).toMatchObject({ ran: true, reason: 'lines from 14:30' });
 
         expect(JSON.stringify(fake.calls[0]!.system)).toContain('lines: every line from now on');
@@ -164,7 +168,7 @@ describe('stage 7: timed lines', () => {
             '<your_lines>\\n06:30-08:00 (over): One honest hour before work\\n13:00-14:00 (over): A walk after lunch, no screens\\n18:30-20:00: Guitar after dinner\\n22:30-00:30: Lights out soon, it was a long day\\n</your_lines>'
         );
         // The lock check reads only the lines it wrote.
-        expect(JSON.stringify(fake.calls[1]!.messages)).toContain('<lines>\\n0: Stretch before the call\\n1: Guitar after dinner\\n</lines>');
+        expect(JSON.stringify(fake.calls[1]!.messages)).toContain('<lines>\\n0: Stretch before the call\\n1: Guitar after dinner\\n2: Wind down\\n3: Lights out\\n</lines>');
 
         const pulse = await prisma.buddyDay.findFirstOrThrow({ where: { userId: user.id, kind: 'pulse' } });
         const lines = pulse.lines as unknown as Line[];
@@ -173,10 +177,12 @@ describe('stage 7: timed lines', () => {
             ['13:00', 'A walk after lunch, no screens', false],
             ['15:00', 'Stretch before the call', true],
             ['18:30', 'Guitar after dinner', true],
+            ['21:00', 'Wind down', true],
+            ['22:00', 'Lights out', true],
         ]);
         expect(lines[3]!.about).toEqual([{ threadId: t.id, rev: t.revision }]);
-        expect((pulse.dropped as unknown as Dropped[]).map((d) => `${d.what}: ${d.why}`)).toEqual(['line 13:00: its hours are over', 'line 21:00: more than four lines today']);
-        // The night's 22:30 line was left out: it ended. The new one shows in its hours.
+        expect((pulse.dropped as unknown as Dropped[]).map((d) => `${d.what}: ${d.why}`)).toEqual(['line 13:00: its hours are over', 'line 23:00: more than 6 lines today']);
+        // The night's 22:30 line was left out: it ended (the new 22:00 one ends at 22:45). The new one shows in its hours.
         expect(await currentLine(user.id, at('23:00'))).toBeNull();
         expect(await currentLine(user.id, at('15:10'))).toMatchObject({ text: 'Stretch before the call', until: at('15:45').toISOString() });
     });

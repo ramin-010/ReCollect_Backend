@@ -15,6 +15,7 @@ import {
 } from '../../services/learningDb/goals.service';
 import { freshStart } from '../../services/learningDb/plan.service';
 import { getLearningSettings, updateLearningSettings } from '../../services/learningDb/settings.service';
+import { getLeetcode, setLeetcode, syncLeetcode } from '../../services/learningDb/leetcode.service';
 import { handler, ok, param, parse, zDay, zId } from './common';
 
 // ─── §1 Settings ───────────────────────────────────────────────────────
@@ -122,4 +123,21 @@ export const freshStartHandler = handler(async (req, res) => {
     const { dryRun } = parse(freshStartSchema, req.body);
     const { moved, spreadDays } = await freshStart(requireUser(req).id, { dryRun });
     ok(res, { moved, spreadDays });
+});
+
+// ─── LeetCode (11-22): their accepted problems logged as practice ──────
+
+const leetcodeSchema = z.object({ username: z.string().trim().max(60).nullable() });
+
+export const getLeetcodeHandler = handler(async (req, res) => {
+    ok(res, await getLeetcode(requireUser(req).id));
+});
+export const setLeetcodeHandler = handler(async (req, res) => {
+    const { username } = parse(leetcodeSchema, req.body);
+    ok(res, await setLeetcode(requireUser(req).id, username ? username : null));
+});
+export const syncLeetcodeHandler = handler(async (req, res) => {
+    const userId = requireUser(req).id;
+    const r = await syncLeetcode(userId);
+    ok(res, { ...(await getLeetcode(userId)), imported: r.logged });
 });

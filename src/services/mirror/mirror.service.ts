@@ -5,11 +5,12 @@
 //   GET /api/mirror   read
 import type { SessionKind } from '@prisma/client';
 import { prisma } from '../../db/prisma';
-import { addDays, dayOf, type DayString } from '../learning';
-import { minutesPerTopic, mondayOf, pathPace, weeklyMinutes, type MinutesByKind, type PathPace } from '../learning/pace';
+import { addDays, type DayString } from '../learning';
+import { minutesPerTopic, mondayOf, weeklyMinutes, type MinutesByKind, type PathPace } from '../learning/pace';
 import { fromDbDay, loadLearningContext, toDbDay } from '../learningDb/common';
 import { goalInclude, forecastOf } from '../learningDb/goals.service';
 import { weekSummary } from '../learningDb/week.service';
+import { paceOfSubject, pathsOfGoal } from './paths';
 
 const WEEKS = 6;
 const QUIZ_POINTS = 12;
@@ -68,16 +69,6 @@ export async function getMirror(userId: string, now: Date = new Date()): Promise
     const subjectOfTopic = new Map(topics.map((t) => [t.id, t.subjectId]));
     const sessionSubject = (s: { subjectId: string | null; topicId: string | null }) => s.subjectId ?? (s.topicId ? subjectOfTopic.get(s.topicId) ?? null : null);
     const day = (d: Date) => fromDbDay(d);
-    const paceOf = (subjectId: string, deadline: DayString | null) => {
-        const own = topics.filter((t) => t.subjectId === subjectId);
-        // A subject with no planned or in-progress topic has no path to pace.
-        if (!own.some((t) => t.status === 'planned' || t.status === 'in_progress') && !own.some((t) => t.status === 'done' && t.doneAt)) return null;
-        return pathPace({ topics: own.map((t) => ({ status: t.status, doneDay: t.doneAt ? dayOf(t.doneAt, ctx.tz) : null })), today, deadline });
-    };
-    const subjectRef = (id: string) => {
-        const s = subjects.find((x) => x.id === id)!;
-        return { _id: s.id, name: s.name, color: s.color };
-    };
     const recentSessions = sessions.filter((s) => day(s.day) >= since).map((s) => ({ day: day(s.day), kind: s.kind as SessionKind, minutes: s.minutes, subjectId: sessionSubject(s) }));
 
     const goalsJson = goals.map((g) => {
@@ -90,7 +81,7 @@ export async function getMirror(userId: string, now: Date = new Date()): Promise
             daysLeft: forecast.daysLeft,
             milestones: forecast.progress,
             forecast: { status: forecast.status, behindDays: forecast.behindDays ?? null },
-            paths: subjectIds.map((id) => ({ subject: subjectRef(id), pace: paceOf(id, fromDbDay(g.deadline)) })).filter((p) => p.pace).map((p) => ({ subject: p.subject, ...p.pace! })),
+            paths: pathsOfGoal(g, topics, ctx),
             hoursPerWeek: weeklyMinutes(recentSessions.filter((s) => s.subjectId && subjectIds.includes(s.subjectId)), today, WEEKS),
         };
     });
@@ -103,7 +94,7 @@ export async function getMirror(userId: string, now: Date = new Date()): Promise
             _id: s.id,
             name: s.name,
             color: s.color,
-            path: paceOf(s.id, null),
+            path: paceOfSubject(topics, s.id, ctx, null),
             quiz: mine.filter((x) => x.scoreTotal).slice(-QUIZ_POINTS).map((x) => ({ day: day(x.day), done: x.scoreDone ?? 0, total: x.scoreTotal! })),
             weakSpots: {
                 open: weak.filter((w) => w.subjectId === s.id || (w.topicId && subjectOfTopic.get(w.topicId) === s.id)).reduce((a, w) => a + w._count, 0),

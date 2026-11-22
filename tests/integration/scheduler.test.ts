@@ -266,10 +266,10 @@ describe('the quiet scheduler: the buddy and the day', () => {
 
         await advance(at('2026-11-18T04:30:00Z')); // 10:00 in India
         expect(await state()).toEqual({ rolled: '2026-11-18', nudged: '2026-11-18', emails: 1, steps: ['night 2026-11-18'] });
-        // Something new at 10:00: the pulse waits for 12:00 his time.
+        // Something new at 10:00 (11-22: within the 09:00 pulse's hours): a pulse takes it before noon, and only one.
         await prisma.observation.create({ data: { userId: user.id, text: 'The mock interview moved to Friday', kind: 'thread', source: 'tell', day: d('2026-11-18'), createdAt: new Date(clock.now()) } });
         await advance(at('2026-11-18T06:29:00Z'));
-        expect((await state()).steps).toEqual(['night 2026-11-18']);
+        expect((await state()).steps).toEqual(['night 2026-11-18', 'pulse 2026-11-18']);
         await advance(at('2026-11-18T07:00:00Z'));
         expect((await state()).steps).toEqual(['night 2026-11-18', 'pulse 2026-11-18']);
 

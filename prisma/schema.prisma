@@ -101,6 +101,10 @@ model User {
   // ── Daily loop v2 settings (LOOP_V2_SPEC §1) ──
   /// The size of Today in minutes (5–120).
   dailyBudgetMin    Int       @default(25)
+  /// 11-22 (the owner): their public LeetCode username; once a day their newly accepted problems are logged as practice.
+  leetcodeUser      String?   @db.VarChar(40)
+  /// When the LeetCode import last ran for them.
+  leetcodeSyncedAt  DateTime?
   /// Time blocks / timeline / Day Manager / triage / debrief / catch-up. Off: GET /api/today
   /// returns schedule/triage/todayDebrief null and the rollover creates no slots.
   routineEnabled    Boolean   @default(false)
@@ -173,6 +177,7 @@ model User {
   lockPins          LockPin[]
   buddyReminders    BuddyReminder[]
   buddyOutcomes     BuddyOutcome[]
+  standTakes        StandTake[]
   buddyImports      BuddyImport[]
   buddyCatchUps     BuddyCatchUp[]
   buddyScreenRules  BuddyScreenRule[]
@@ -981,6 +986,8 @@ model FocusItem {
   /// Trimmed; at most 140 characters.
   text      String    @db.VarChar(140)
   done      Boolean   @default(false)
+  /// When it was ticked (11-22: the buddy reacts to the day; null when not done, or ticked before this column).
+  doneAt    DateTime?
   sortOrder Int       @default(0)
   createdAt DateTime  @default(now())
   /// Provenance: 'agent' when an access token (an agent) created it; agentName = the agent's name.
@@ -2649,4 +2656,20 @@ model BuddyOutcome {
 
   @@unique([userId, sourceKey])
   @@index([userId, day])
+}
+
+/// Where you stand (WHERE_YOU_STAND_PLAN §9, the owner, 11-22): the buddy's take on a window (week, month, year), written
+/// when the person asks for it on the page. One per day and window; it shows only on its day (the person's own date), and
+/// the rows of earlier days are deleted at the next ask, so a take lasts a day and is gone.
+model StandTake {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  day       DateTime @db.Date
+  window    String   @db.VarChar(8)
+  text      String   @db.VarChar(1200)
+  model     String   @db.VarChar(100)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, day, window])
 }

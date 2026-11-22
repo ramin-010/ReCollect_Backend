@@ -43,14 +43,14 @@ async function person(loop = true) {
     return user;
 }
 const say = (userId: string, seq: number, text: string, when: Date) => queueOwnWords(userId, { key: 'ask:live', seq, via: 'ask_ai', messages: [{ at: when.toISOString(), text }] }, when);
-/** The noon pulse already ran (so the fixed one is not what falls due before 18:00). */
-const noonRan = (userId: string) => prisma.buddyDay.create({ data: { userId, day: DAY, kind: 'pulse', lines: [], model: 'claude-sonnet-5-5', createdAt: at('12:05') } });
+/** The 15:00 pulse already ran (so the fixed one is not what falls due before 18:00; before 11-22 it was the noon one). */
+const afternoonRan = (userId: string) => prisma.buddyDay.create({ data: { userId, day: DAY, kind: 'pulse', lines: [], model: 'claude-sonnet-5-5', createdAt: at('15:05') } });
 const todayAt = async (userId: string) => (await prisma.buddyCaptureDay.findUnique({ where: { userId_day: { userId, day: DAY } } }))?.todayAt ?? null;
 
 describe('a live day (stage 18)', () => {
     it('their own words that change today stamp it, and a pulse on it falls due 3 minutes after (no events needed)', async () => {
         const user = await person();
-        await noonRan(user.id);
+        await afternoonRan(user.id);
         await say(user.id, 1, 'Wiped today, zero energy, skipping study tonight.', at('17:30'));
         fake.push(digest({ notes: [{ text: 'Worn out today; skipping study tonight', kind: 'state', private: false, seenMemoryId: '' }], today: true }));
         await drainBuddyQueue(at('17:31'));
@@ -87,19 +87,19 @@ describe('a live day (stage 18)', () => {
         expect(await todayAt(user.id)).toEqual(at('15:10'));
     });
 
-    it('the budget holds: 30 minutes after the step before, and 4 pulses on events a day', async () => {
+    it('the budget holds: 30 minutes after the step before, and 6 pulses on events a day (4 before 11-22)', async () => {
         const user = await person();
         await prisma.buddyDay.create({ data: { userId: user.id, day: DAY, kind: 'pulse', onEvent: true, lines: [], model: 'claude-sonnet-5-5', createdAt: at('16:50') } });
         await prisma.buddyCaptureDay.create({ data: { userId: user.id, day: DAY, todayAt: at('17:00') } });
         expect(await pulseDue(user.id, at('17:05'))).toMatchObject({ due: false, at: at('17:20') });
-        for (const t of ['17:21', '17:52', '18:23']) await prisma.buddyDay.create({ data: { userId: user.id, day: DAY, kind: 'pulse', onEvent: true, lines: [], model: 'claude-sonnet-5-5', createdAt: at(t) } });
-        await prisma.buddyCaptureDay.update({ where: { userId_day: { userId: user.id, day: DAY } }, data: { todayAt: at('18:30') } });
-        expect(await pulseDue(user.id, at('19:00'))).toMatchObject({ due: false, reason: 'the pulses on events are used up today' });
+        for (const t of ['17:21', '17:52', '18:23', '18:54', '19:25']) await prisma.buddyDay.create({ data: { userId: user.id, day: DAY, kind: 'pulse', onEvent: true, lines: [], model: 'claude-sonnet-5-5', createdAt: at(t) } });
+        await prisma.buddyCaptureDay.update({ where: { userId_day: { userId: user.id, day: DAY } }, data: { todayAt: at('19:30') } });
+        expect(await pulseDue(user.id, at('20:00'))).toMatchObject({ due: false, reason: 'the pulses on events are used up today' });
     });
 
     it('the night reads the day each note was said, so yesterday stays yesterday', async () => {
         const user = await person();
-        await prisma.observation.create({ data: { userId: user.id, kind: 'state', text: 'Worn out, skipping study tonight', source: 'tell', day: new Date('2026-11-19T00:00:00Z'), saidAt: at('17:30', '19'), sensitivity: 'open' } });
+        await prisma.observation.create({ data: { userId: user.id, kind: 'state', text: 'Worn out, skipping study tonight', source: 'tell', day: new Date('2026-11-19T00:00:00Z'), saidAt: at('17:30', '19'), sensitivity: 'open', createdAt: at('17:31', '19') } });
         const input = await loadNightInput(user.id, at('05:00', '21'));
         const task = nightTask({ ...input, loop: true });
         expect(task).toMatch(/· said Thu 19 Nov · Worn out, skipping study tonight/);

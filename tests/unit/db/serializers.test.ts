@@ -23,6 +23,8 @@ const userRow = {
     globalStreakBeforeCredit: null,
     learningRolledOverDay: null,
     dailyBudgetMin: 25,
+    leetcodeUser: null,
+    leetcodeSyncedAt: null,
     routineEnabled: false,
     busyUntil: null,
     nudgeEmailEnabled: true,

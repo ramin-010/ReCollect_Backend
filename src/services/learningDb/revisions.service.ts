@@ -47,6 +47,7 @@ import {
     type LearningContext,
 } from './common';
 import { ensureLearningRollover } from './rollover.service';
+import { poke } from '../scheduler/scheduler';
 
 // ─── Shared reads ──────────────────────────────────────────────────────
 
@@ -278,6 +279,7 @@ export async function completeRevisionForUser(userId: string, revisionId: string
         return { streak: streakJson(effects.global), mastered: result.mastered };
     });
 
+    poke('buddy'); // 11-22: the buddy's day reacts to what they do (a pulse may fall due)
     return { ...(await loadItemAndChain(revisionId)), streak, mastered };
 }
 

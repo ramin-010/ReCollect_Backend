@@ -101,6 +101,7 @@ export const TOKEN_ROUTES: readonly TokenRoute[] = [
     // only the user accepts (the accept / dismiss / decide routes are not listed).
     route('GET', '/api/week', 'read'),
     route('GET', '/api/mirror', 'read'), // where the user stands, per goal and subject (1.7)
+    route('GET', '/api/mirror/stand', 'read'), // the record against the span before (WHERE_YOU_STAND_PLAN)
     // Personal tasks (4.1): never workspace tasks, attachments or a delete.
     route('GET', '/api/tasks', 'read'),
     route('POST', '/api/tasks', 'tasks:write'),

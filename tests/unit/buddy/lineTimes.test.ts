@@ -1,6 +1,6 @@
 // Stage 7 of ECOSYSTEM_V2_PLAN (V1; his point 4: "up to the buddy whether it shows 2, 3 or 4 at most"): with the
-// loop on the night writes 0 to 4 lines, each with its own hours inside his buddy day (04:00 to 04:00). Code holds
-// the hours, the overlaps and the four; a line without hours holds its part of the day, read the same way.
+// loop on the night writes 0 to 6 lines (4 before 11-22), each with its own hours inside his buddy day (04:00 to 04:00). Code holds
+// the hours, the overlaps and the six (four before 11-22); a line without hours holds its part of the day, read the same way.
 import { describe, expect, it } from 'vitest';
 import { clockOf, dayMinute, instantOf, lineAt, lineKey, lineLabel, lineWindow, minuteOf, normTime, slotOfMinute } from '../../../src/services/buddy/lineTimes';
 import { LOCK_SCHEMA, LOCK_SCHEMA_TIMED, NIGHT_SCHEMA, guardTimedLines, lockRequest, nightRequest, withLoop, type Line, type NightInput } from '../../../src/services/buddy/think';
@@ -69,7 +69,7 @@ describe('timed lines: his day from 04:00 to 04:00', () => {
 });
 
 describe('the guard of timed lines', () => {
-    it('0 to 4, each in its own hours: no time, backwards, under half an hour, overlapping, a fifth: dropped with the reason', () => {
+    it('0 to 6, each in its own hours: no time, backwards, under half an hour, overlapping, a seventh: dropped with the reason', () => {
         const g = guardTimedLines(
             [
                 line('6:30', '08:00', 'One honest hour before work'),
@@ -81,6 +81,8 @@ describe('the guard of timed lines', () => {
                 line('18:30', '20:00', 'Guitar after dinner'),
                 line('22:30', '00:30', 'Lights out soon, it was a long day'),
                 line('01:00', '02:00', 'A fifth line'),
+                line('02:00', '03:00', 'A sixth line'),
+                line('03:00', '03:45', 'A seventh line'),
                 line('10:00', '11:00', ''),
             ],
             { sources: '' }
@@ -90,22 +92,24 @@ describe('the guard of timed lines', () => {
             ['13:00', '14:00', 'afternoon'],
             ['18:30', '20:00', 'evening'],
             ['22:30', '00:30', 'evening'],
+            ['01:00', '02:00', 'evening'],
+            ['02:00', '03:00', 'evening'],
         ]);
-        expect(g.dropped.map((d) => d.why).sort()).toEqual(['ends before it starts', 'more than four lines today', 'not a time of day', 'overlaps another line', 'shorter than half an hour'].sort());
+        expect(g.dropped.map((d) => d.why).sort()).toEqual(['ends before it starts', 'more than 6 lines today', 'not a time of day', 'overlaps another line', 'shorter than half an hour'].sort());
     });
 
-    it('a pulse: the lines whose hours are over stay and count in the four; a new line must not have ended or overlap them', () => {
+    it('a pulse: the lines whose hours are over stay and count in the six (four before 11-22); a new line must not have ended or overlap them', () => {
         const kept: Line[] = [
             { slot: 'morning', from: '06:30', until: '08:00', text: 'Over', form: 'push', lockOk: true, sourceId: null },
             { slot: 'afternoon', from: '13:00', until: '14:00', text: 'Over too', form: 'push', lockOk: true, sourceId: null },
         ];
-        const g = guardTimedLines([line('13:00', '13:30', 'Already over'), line('13:45', '15:00', 'Overlaps one over'), line('15:00', '16:00', 'Stretch before the call'), line('18:30', '20:00', 'Guitar after dinner'), line('22:00', '23:00', 'One too many')], {
+        const g = guardTimedLines([line('13:00', '13:30', 'Already over'), line('13:45', '15:00', 'Overlaps one over'), line('15:00', '16:00', 'Stretch before the call'), line('18:30', '20:00', 'Guitar after dinner'), line('20:30', '21:30', 'Wind down'), line('22:00', '22:45', 'Lights out'), line('23:00', '23:45', 'One too many')], {
             sources: '',
             kept,
             after: dayMinute('14:30'),
         });
-        expect(g.lines.map((l) => l.from)).toEqual(['15:00', '18:30']);
-        expect(g.dropped.map((d) => `${d.what}: ${d.why}`)).toEqual(['line 13:00: its hours are over', 'line 13:45: overlaps another line', 'line 22:00: more than four lines today']);
+        expect(g.lines.map((l) => l.from)).toEqual(['15:00', '18:30', '20:30', '22:00']);
+        expect(g.dropped.map((d) => `${d.what}: ${d.why}`)).toEqual(['line 13:00: its hours are over', 'line 13:45: overlaps another line', 'line 23:00: more than 6 lines today']);
     });
 
     it('the same checks of words: too long, a number it was not given; nothing refused for having been said another day', () => {
@@ -116,13 +120,13 @@ describe('the guard of timed lines', () => {
 });
 
 describe('the requests with timed lines', () => {
-    it('the night with the loop on asks for 0 to 4 lines with their hours (schema: from and until, no slot); the loop off keeps the slots, word for word', () => {
+    it('the night with the loop on asks for 0 to 6 lines with their hours (schema: from and until, no slot); the loop off keeps the slots, word for word', () => {
         const off = nightRequest(input(false)) as unknown as { system: Array<{ text: string }>; output_config: { format: { schema: unknown } } };
         expect(off.system[0]!.text).toContain('- lines: one per slot (morning, afternoon, evening)');
-        expect(off.system[0]!.text).not.toContain('0 to 4 lines');
+        expect(off.system[0]!.text).not.toContain('0 to 6 lines');
         expect(off.output_config.format.schema).toBe(NIGHT_SCHEMA);
         const on = withLoop(nightRequest(input(true)), 't1 · active · Guitar most evenings', { sunday: false }) as unknown as { system: Array<{ text: string }>; messages: Array<{ content: Array<{ text: string }> }>; output_config: { format: { schema: { properties: { lines: { items: { required: string[]; properties: Record<string, unknown> } } } } } } };
-        expect(on.system[0]!.text).toContain('- lines: 0 to 4 lines for their lock screen today, each shown in its own hours');
+        expect(on.system[0]!.text).toContain('- lines: 0 to 6 lines for their lock screen today, each shown in its own hours');
         expect(on.system[0]!.text).not.toContain('one per slot');
         expect(on.messages[0]!.content[0]!.text).toContain('<threads>\nt1 · active · Guitar most evenings\n</threads>');
         const items = on.output_config.format.schema.properties.lines.items;

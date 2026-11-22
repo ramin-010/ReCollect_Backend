@@ -547,7 +547,7 @@ export function guardTimedLines(lines: NightOutput['lines'], ctx: { sources: str
     for (const { line, at } of fit) {
         let why: string | null = null;
         if (taken.some(([s, e]) => at[0] < e && s < at[1])) why = 'overlaps another line';
-        else if (kept.length + out.length >= LINES_MAX) why = 'more than four lines today';
+        else if (kept.length + out.length >= LINES_MAX) why = `more than ${LINES_MAX} lines today`;
         if (why) {
             dropped.push({ what: `line ${line.from}`, why });
             continue;

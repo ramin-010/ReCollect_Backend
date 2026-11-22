@@ -148,6 +148,10 @@ export async function housekeeping(): Promise<void> {
     // MCP_MEMORY_PLAN §4.7: the code-only fading and promotion, once a day for every account (AI or not).
     const { upkeepMemories } = await import('../buddy/catchup');
     await upkeepMemories();
+    // 11-22: LeetCode imports, each at most once in 20 hours (the sweep runs every 3 hours).
+    const { runLeetcodePass } = await import('../learningDb/leetcode.service');
+    const lc = await runLeetcodePass();
+    if (lc.logged || lc.failed) console.log(`[leetcode] ${lc.logged} logged, ${lc.failed} failed`);
 }
 
 let running: Scheduler | null = null;
@@ -164,6 +168,13 @@ export function startBackgroundJobs(env: NodeJS.ProcessEnv = process.env): Sched
         startRecallCrons(); // the nightly questions at 02:30, the batch poll every 10 minutes
         startTrashCron(); // the trash, old chats, agent history, OAuth leftovers: hourly
         startBuddyWorker(); // the buddy's queue every minute, its nights every 15 minutes
+        // 11-22: LeetCode imports, hourly (each person at most once in 20 hours).
+        cron.schedule('17 * * * *', () => {
+            void import('../learningDb/leetcode.service')
+                .then(({ runLeetcodePass }) => runLeetcodePass())
+                .then((r) => (r.logged || r.failed ? console.log(`[leetcode] ${r.logged} logged, ${r.failed} failed`) : undefined))
+                .catch((err: unknown) => console.error('[leetcode] pass failed:', err));
+        });
         // A paused AI key: probed when due (every 6 hours after a failure), checked every 15 minutes.
         cron.schedule('*/15 * * * *', () => {
             if (isAiConfigured()) probeDueKeys().catch((err: unknown) => console.error('[ai] probe failed:', err));

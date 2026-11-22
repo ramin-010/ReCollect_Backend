@@ -21,6 +21,7 @@ import { fromDbDay, loadLearningContext, toDbDay } from './common';
 import { pathPlaces, readPath, updateTopicOnPath, type PathTopicJson } from './path.service';
 import { quoted, recordAgentEdit, type AgentActor } from '../agent/agentEditLog';
 import { rememberNotes, type NoteInput } from '../buddy/memory.service';
+import { poke } from '../scheduler/scheduler';
 
 export const SESSION_KINDS = ['study', 'practice', 'build', 'review'] as const satisfies readonly SessionKind[];
 export const PRACTICE_OUTCOMES = ['alone', 'hints', 'after_answer'] as const satisfies readonly PracticeOutcome[];
@@ -423,6 +424,7 @@ export async function upsertSessionByKey(writer: SessionWriter, key: string, inp
         }
     }
 
+    if (!existing) poke('buddy'); // 11-22: a new session wakes the buddy's day (a checkpoint written again does not)
     const scope: WeakSpotScope = { topicId: row.topicId, subjectId: row.subjectId };
     if (input.weakSpots?.length) await openWeakSpots(prisma, userId, scope, input.weakSpots, { sessionId: row.id, source: 'session' });
     if (input.cleared?.length) await clearWeakSpots(prisma, userId, scope, input.cleared, now);
@@ -525,6 +527,7 @@ export async function createSession(userId: string, input: SessionInput & { titl
         },
         select: { id: true },
     });
+    poke('buddy'); // 11-22: the buddy's day reacts to what they do
     return serializeSession(await prisma.workSession.findUniqueOrThrow({ where: { id: made.id }, include: SESSION_INCLUDE }));
 }
 

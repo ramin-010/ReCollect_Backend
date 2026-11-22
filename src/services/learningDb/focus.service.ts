@@ -7,6 +7,7 @@ import { addDays, type DayString } from '../learning';
 import { conflict, notFound } from '../learning/http';
 import { serializeFocusItem, type FocusItemJson } from '../../db/serializers/learning';
 import { fromDbDay, lockLearningContext, toDbDay } from './common';
+import { poke } from '../scheduler/scheduler';
 
 export const FOCUS_LIMIT = 3;
 export const FOCUS_TEXT_MAX = 140;
@@ -43,10 +44,12 @@ export async function updateFocusItem(userId: string, id: string, input: { text?
         where: { id, userId },
         data: {
             ...(input.text !== undefined ? { text: input.text.trim() } : {}),
-            ...(input.done !== undefined ? { done: input.done } : {}),
+            // When it was ticked: the buddy's day reacts to it (11-22); unticked, it has no time.
+            ...(input.done !== undefined ? { done: input.done, doneAt: input.done ? new Date() : null } : {}),
         },
     });
     if (count === 0) throw notFound();
+    if (input.done) poke('buddy'); // 11-22: a ticked line wakes the buddy's day
     return serializeFocusItem(await prisma.focusItem.findUniqueOrThrow({ where: { id } }));
 }
 

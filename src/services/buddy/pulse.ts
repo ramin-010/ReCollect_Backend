@@ -1,4 +1,4 @@
-// The pulses (BUDDY_MEMORY_PLAN §3.3): at 12:00 and 18:00 his time, a lighter step (Sonnet 5.5, low
+// The pulses (BUDDY_MEMORY_PLAN §3.3): at 09:00, 12:00, 15:00, 18:00 and 21:00 his time (12:00 and 18:00 before 11-22), a lighter step (Sonnet 5.5, low
 // effort) may rewrite the lines still to come (or leave those hours silent), add a note and a new
 // thought for his home screen, when something new arrived since the last step (notes from his chats,
 // his own words, his thumbs). Nothing new: no model call. The night's lines for the hours gone stay;
@@ -16,7 +16,7 @@ import { recordAiUsage } from '../claude/usage.service';
 import { parseJson, responseText } from '../recall/output';
 import { withRefusalFallbacks, type CreateParams } from '../recall/prompts';
 import { loadLearningContext, toDbDay } from '../learningDb/common';
-import type { DayString } from '../learning';
+import { addDays, dayOf, type DayString } from '../learning';
 import { characterPrompt } from './character';
 import { personName, toneOf } from './state.service';
 import { buddySignals } from './signals';
@@ -62,11 +62,21 @@ const zPulse = z.object({ lines: z.array(z.object({ slot: z.enum(SLOTS).optional
 
 const hourIn = (tz: string, at: Date) => Number(new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour: '2-digit', hour12: false }).format(at)) % 24;
 
-/** The hours a pulse may run, his time: 12:00 (the afternoon and evening lines) and 18:00 (the evening's). */
-export const PULSE_HOURS = [12, 18] as const;
+/**
+ * The hours a fixed pulse may run, his time, each once and only when something new arrived since the last step (11-22,
+ * the owner: "more active during the day"; before, 12:00 and 18:00).
+ */
+export const PULSE_HOURS = [9, 12, 15, 18, 21] as const;
 
-/** Stage 5 (§4.13): at most this many pulses on events a day, besides the two fixed ones. */
-export const EVENT_PULSES_MAX = 4;
+/** Stage 5 (§4.13): at most this many pulses on events a day, besides the fixed ones (11-22: 6, before 4). */
+export const EVENT_PULSES_MAX = 6;
+/** What they do in the app settles this long before a pulse reacts to it (a run of reviews makes one pulse). */
+export const ACTIVITY_SETTLE_MS = 20 * 60_000;
+/** The "nothing yet" nudge: this long before the time they usually start, and up to this long after it. */
+export const NUDGE_BEFORE_MIN = 30;
+export const NUDGE_AFTER_MIN = 90;
+/** The usual start is read from the last 28 days, once at least this many of them had something done. */
+export const NUDGE_MIN_DAYS = 5;
 /** A pulse on an event waits this long after the last such event (a burst makes one pulse)... */
 export const EVENT_SETTLE_MS = 3 * 60_000;
 /** ...and this long after the step before it. */
@@ -102,7 +112,85 @@ export type PulseDue =
           todayWords?: string;
           /** 11-21: a Later tapped since the last step that comes back today (why this pulse runs): what, and when. */
           laterBack?: { text: string; at: Date };
+          /** 11-22: what they did in the app since the last step (reviews, focus lines, sessions, topics, milestones), as words. */
+          activity?: string;
+          /** 11-22: the "nothing yet" nudge: near the time they usually start, nothing done today (HH:mm). */
+          nudge?: { usual: string };
       };
+
+/** What they did in the app since an instant: the record's own events, never their words (those are notes). */
+export interface DayActivity {
+    count: number;
+    /** The newest of them. */
+    last: Date | null;
+    words: string;
+}
+
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+/**
+ * 11-22 (the owner: "make the buddy more active during the day"): reviews done, focus lines ticked, sessions logged,
+ * topics and milestones finished since `since` wake the buddy like a note does, so a day spent in the app is seen.
+ */
+export async function activitySince(userId: string, since: Date, until: Date = new Date()): Promise<DayActivity> {
+    const [reviews, focus, sessions, topics, milestones] = await Promise.all([
+        prisma.revision.findMany({ where: { userId, status: 'done', completedAt: { gt: since, lte: until } }, select: { completedAt: true }, take: 50 }),
+        prisma.focusItem.findMany({ where: { userId, done: true, doneAt: { gt: since, lte: until } }, select: { doneAt: true, text: true }, take: 10 }),
+        prisma.workSession.findMany({ where: { userId, createdAt: { gt: since, lte: until } }, select: { createdAt: true, kind: true, minutes: true, title: true }, orderBy: { createdAt: 'asc' }, take: 10 }),
+        prisma.topic.findMany({ where: { userId, status: 'done', doneAt: { gt: since, lte: until } }, select: { doneAt: true, title: true }, take: 10 }),
+        prisma.goalMilestone.findMany({ where: { goal: { userId }, done: true, doneAt: { gt: since, lte: until } }, select: { doneAt: true, title: true }, take: 5 }),
+    ]);
+    const times = [...reviews.map((r) => r.completedAt), ...focus.map((f) => f.doneAt), ...sessions.map((x) => x.createdAt), ...topics.map((t) => t.doneAt), ...milestones.map((m) => m.doneAt)].filter((t): t is Date => !!t);
+    const words = [
+        reviews.length ? `${plural(reviews.length, 'review')} done` : null,
+        ...focus.map((f) => `focus line ticked: "${f.text}"`),
+        ...sessions.map((x) => `logged ${x.minutes ? `${x.minutes} min of ` : ''}${x.kind}: ${x.title}`),
+        ...topics.map((t) => `finished the topic ${t.title}`),
+        ...milestones.map((m) => `milestone done: ${m.title}`),
+    ].filter(Boolean);
+    return { count: times.length, last: times.length ? new Date(Math.max(...times.map((t) => t.getTime()))) : null, words: words.join('; ') };
+}
+
+/**
+ * When they usually start (a minute of the buddy day), from the last 28 days: the first thing done on each day that
+ * had something, its median; null with fewer than NUDGE_MIN_DAYS such days.
+ */
+export async function usualStart(userId: string, today: DayString, tz: string): Promise<number | null> {
+    const from = instantOf(addDays(today, -28), tz, 0);
+    const to = instantOf(today, tz, 0);
+    const [reviews, sessions, focus] = await Promise.all([
+        prisma.revision.findMany({ where: { userId, status: 'done', completedAt: { gte: from, lt: to } }, select: { completedAt: true } }),
+        prisma.workSession.findMany({ where: { userId, createdAt: { gte: from, lt: to } }, select: { createdAt: true } }),
+        prisma.focusItem.findMany({ where: { userId, done: true, doneAt: { gte: from, lt: to } }, select: { doneAt: true } }),
+    ]);
+    const first = new Map<DayString, number>();
+    for (const at of [...reviews.map((r) => r.completedAt), ...sessions.map((x) => x.createdAt), ...focus.map((f) => f.doneAt)]) {
+        if (!at) continue;
+        // The buddy day: before 04:00 it is still the day before.
+        const local = dayOf(at, tz);
+        const minute = minuteOf(local, tz, at);
+        const [day, m] = minute < 0 ? [addDays(local, -1), minuteOf(addDays(local, -1), tz, at)] : [local, minute];
+        const had = first.get(day);
+        if (had === undefined || m < had) first.set(day, m);
+    }
+    if (first.size < NUDGE_MIN_DAYS) return null;
+    const sorted = [...first.values()].sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)]!;
+    return Math.round(median / 15) * 15;
+}
+
+/** The "nothing yet" nudge (11-22): near the usual start, nothing done today, no step since the nudge's time, not a busy week. */
+async function nudgeDue(userId: string, ctx: { today: DayString; tz: string }, last: { createdAt: Date }, now: Date): Promise<{ usual: string } | null> {
+    const usual = await usualStart(userId, ctx.today, ctx.tz);
+    if (usual === null) return null;
+    const nowMin = minuteOf(ctx.today, ctx.tz, now);
+    if (nowMin < usual - NUDGE_BEFORE_MIN || nowMin > usual + NUDGE_AFTER_MIN) return null;
+    if (last.createdAt >= instantOf(ctx.today, ctx.tz, usual - NUDGE_BEFORE_MIN)) return null;
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { busyUntil: true } });
+    if (user?.busyUntil && toDbDay(ctx.today) <= user.busyUntil) return null;
+    if ((await activitySince(userId, instantOf(ctx.today, ctx.tz, 0), now)).count) return null;
+    return { usual: clockOf(usual) };
+}
 
 /** The slots still to come from this hour, the one now included. */
 const slotsFrom = (hour: number): Slot[] => (hour >= 18 || hour < 4 ? ['evening'] : hour >= 12 ? ['afternoon', 'evening'] : ['morning', 'afternoon', 'evening']);
@@ -146,7 +234,7 @@ export async function pulseDue(userId: string, now: Date = new Date()): Promise<
     const hour = hourIn(ctx.tz, now);
     // Stage 5: with the loop on, a pulse may come on an event at any hour of the day.
     const loop = (await prisma.buddyState.findUnique({ where: { userId }, select: { loop: true } }))?.loop === true;
-    if (hour < PULSE_HOURS[0] && !loop) return { due: false, reason: 'not yet noon' };
+    if (hour < PULSE_HOURS[0] && hour >= 4 && !loop) return { due: false, reason: 'not yet 09:00' };
     const steps = await prisma.buddyDay.findMany({ where: { userId, day: toDbDay(ctx.today) }, orderBy: { createdAt: 'asc' } });
     const night = steps.find((s) => s.kind === 'night');
     if (!night) return { due: false, reason: 'no night today' };
@@ -158,16 +246,20 @@ export async function pulseDue(userId: string, now: Date = new Date()): Promise<
             prisma.buddyFeedback.findMany({ where: { userId, createdAt: { gt: at } } }),
         ]);
 
-    let reason = 'not yet noon';
-    if (hour >= PULSE_HOURS[0]) {
+    let reason = 'not yet 09:00';
+    // The latest fixed hour that has passed today (none before 09:00, nor between midnight and 04:00).
+    const fixedHour = hour >= 4 ? [...PULSE_HOURS].reverse().find((h) => hour >= h) : PULSE_HOURS[PULSE_HOURS.length - 1];
+    if (fixedHour !== undefined) {
         // The fixed pulses, each once in its hours (a pulse on an event does not take its place).
         const fixed = steps.filter((s) => s.kind === 'pulse' && !s.onEvent);
-        const ranAt = (h: number) => fixed.some((p) => hourIn(ctx.tz, p.createdAt) >= h);
-        const slots: Slot[] = hour >= 18 ? (ranAt(18) ? [] : ['evening']) : ranAt(12) ? [] : ['afternoon', 'evening'];
-        if (!slots.length) reason = 'already pulsed';
+        const ran = fixed.some((p) => {
+            const h = hourIn(ctx.tz, p.createdAt);
+            return (h < 4 ? h + 24 : h) >= fixedHour;
+        });
+        if (ran) reason = 'already pulsed';
         else {
-            const [notes, thumbs] = await newSince(last.createdAt);
-            if (notes.length || thumbs.length) return { due: true, onEvent: false, ctx, steps, slots, last, notes, thumbs, events: [] };
+            const [[notes, thumbs], act] = await Promise.all([newSince(last.createdAt), activitySince(userId, last.createdAt, now)]);
+            if (notes.length || thumbs.length || act.count) return { due: true, onEvent: false, ctx, steps, slots: slotsFrom(hour), last, notes, thumbs, events: [], ...(act.count ? { activity: act.words } : {}) };
             reason = 'nothing new';
         }
     }
@@ -184,13 +276,36 @@ export async function pulseDue(userId: string, now: Date = new Date()): Promise<
     const dayEnd = instantOf(ctx.today, ctx.tz, 24 * 60);
     const later = await prisma.buddyReminder.findFirst({ where: { userId, origin: 'later', status: 'pending', createdAt: { gt: since }, at: { gt: now, lt: dayEnd } }, orderBy: { createdAt: 'desc' }, select: { createdAt: true, text: true, at: true } });
     const laterTap = later?.createdAt ?? null;
-    if (!events.length && !todayWords && !laterTap) return { due: false, reason };
+    // 11-22: what they did in the app since is an event too.
+    const act = await activitySince(userId, since, now);
+    if (!events.length && !todayWords && !laterTap && !act.count) {
+        // Nothing new: maybe the "nothing yet" nudge near the time they usually start.
+        const nudge = await nudgeDue(userId, ctx, last, now);
+        if (!nudge) return { due: false, reason };
+        if (steps.filter((s) => s.onEvent).length >= EVENT_PULSES_MAX) return { due: false, reason: 'the pulses on events are used up today' };
+        const [notes, thumbs] = await newSince(last.createdAt);
+        return { due: true, onEvent: true, ctx, steps, slots: slotsFrom(hour), last, notes, thumbs, events: [], nudge };
+    }
     const lastNews = Math.max(events.length ? events[events.length - 1]!.receivedAt.getTime() : 0, todayWords?.getTime() ?? 0, laterTap?.getTime() ?? 0);
-    const at = new Date(Math.max(lastNews + EVENT_SETTLE_MS, last.createdAt.getTime() + EVENT_GAP_MS));
+    const settled = Math.max(lastNews ? lastNews + EVENT_SETTLE_MS : 0, act.last ? act.last.getTime() + ACTIVITY_SETTLE_MS : 0);
+    const at = new Date(Math.max(settled, last.createdAt.getTime() + EVENT_GAP_MS));
     if (at > now) return { due: false, reason: 'a pulse on an event waits', at };
     if (steps.filter((s) => s.onEvent).length >= EVENT_PULSES_MAX) return { due: false, reason: 'the pulses on events are used up today', skip: ctx.today };
     const [notes, thumbs] = await newSince(last.createdAt);
-    return { due: true, onEvent: true, ctx, steps, slots: slotsFrom(hour), last, notes, thumbs, events, ...(todayWords && capture?.todayWords ? { todayWords: capture.todayWords } : {}), ...(later ? { laterBack: { text: later.text, at: later.at } } : {}) };
+    return {
+        due: true,
+        onEvent: true,
+        ctx,
+        steps,
+        slots: slotsFrom(hour),
+        last,
+        notes,
+        thumbs,
+        events,
+        ...(todayWords && capture?.todayWords ? { todayWords: capture.todayWords } : {}),
+        ...(later ? { laterBack: { text: later.text, at: later.at } } : {}),
+        ...(act.count ? { activity: act.words } : {}),
+    };
 }
 
 /** A pulse on an event that could not run (the day's are used up): counted once for the usage view. */
@@ -202,14 +317,14 @@ async function countSkipped(userId: string, day: DayString, now: Date): Promise<
     });
 }
 
-/** A pulse for one user when one is due (12:00 and 18:00 when something new arrived; with the loop on, on an event). */
+/** A pulse for one user when one is due (the fixed hours when something new arrived, their doings in the app included; with the loop on, on an event or the "nothing yet" nudge). */
 export async function pulseIfDue(userId: string, now: Date = new Date()): Promise<{ ran: boolean; reason: string; costUsd?: number }> {
     const due = await pulseDue(userId, now);
     if (!due.due) {
         if (due.skip) await countSkipped(userId, due.skip, now);
         return { ran: false, reason: due.reason };
     }
-    const { ctx, steps, slots, last, notes, thumbs, events, onEvent, todayWords, laterBack } = due;
+    const { ctx, steps, slots, last, notes, thumbs, events, onEvent, todayWords, laterBack, activity, nudge } = due;
 
     const state = await prisma.buddyState.findUnique({ where: { userId } });
     const person = await personName(userId);
@@ -233,13 +348,13 @@ export async function pulseIfDue(userId: string, now: Date = new Date()): Promis
         `<today>${signals.today.weekday} ${signals.today.day}, ${signals.today.time} (${ctx.tz}) · rewrite: ${loopTimed ? 'your lines from now on' : slots.join(', ')}</today>`,
         `<signals>\n${JSON.stringify(signals)}\n</signals>`,
         `<right_now>${state?.now ?? 'not written yet'}</right_now>`,
-        `<new>\n${notes.map((n) => `${n.kind} · ${n.sensitivity} · from ${n.source}${oldNote(n) ? ` · ${oldNote(n)}` : ''} · ${n.text}`).join('\n') || 'no new notes'}${thumbs.length ? `\nhis thumbs: ${thumbs.map((t) => `${t.target} ${t.verdict}`).join(', ')}` : ''}\n</new>`,
+        `<new>\n${notes.map((n) => `${n.kind} · ${n.sensitivity} · from ${n.source}${oldNote(n) ? ` · ${oldNote(n)}` : ''} · ${n.text}`).join('\n') || 'no new notes'}${thumbs.length ? `\nhis thumbs: ${thumbs.map((t) => `${t.target} ${t.verdict}`).join(', ')}` : ''}${activity ? `\nwhat they did in the app since you last thought: ${activity}` : ''}\n</new>`,
         `<said_today>\n${said.join('\n')}\n</said_today>`,
         ...(loopTimed ? [`<your_lines>\n${yourLines.join('\n') || 'none: the dial so far'}\n</your_lines>`] : []),
         // Stage 5: why a pulse on an event runs now (the threads below hold the rest).
         ...(onEvent
             ? [
-                  `<changed>\nYou are thinking now because ${todayWords ? 'their own words today changed the day' : events.length ? 'a thread changed in a way that matters today' : 'they put something off with Later and it comes back today'}. Rewrite only what this calls for; the same words keep a line.${todayWords ? `\ntheir words today: "${todayWords}"` : ''}${events.length ? `\n${events.map((e) => `${e.threadId} · ${e.title}: ${e.kind} · ${e.text} (${whoseWord(e)}, via ${e.via})`).join('\n')}` : ''}${laterBack ? `\nLater: "${laterBack.text}" comes back at ${clockOf(minuteOf(ctx.today, ctx.tz, laterBack.at))} (see <later>)` : ''}\n</changed>`,
+                  `<changed>\nYou are thinking now because ${todayWords ? 'their own words today changed the day' : events.length ? 'a thread changed in a way that matters today' : laterBack ? 'they put something off with Later and it comes back today' : activity ? `they got things done in the app (<new>). React only when it is worth it: a specific word for what they did, or the evening's lines made to fit what is left now; never a line for every tick` : nudge ? `it is close to when they usually start (about ${nudge.usual}) and nothing is done today yet. If a nudge would help, one line from now for the next hour or two: the smallest way to start, from today's list. If the day or their words say they are off, busy or worn out, stay silent` : 'something changed'}. Rewrite only what this calls for; the same words keep a line.${todayWords ? `\ntheir words today: "${todayWords}"` : ''}${events.length ? `\n${events.map((e) => `${e.threadId} · ${e.title}: ${e.kind} · ${e.text} (${whoseWord(e)}, via ${e.via})`).join('\n')}` : ''}${laterBack ? `\nLater: "${laterBack.text}" comes back at ${clockOf(minuteOf(ctx.today, ctx.tz, laterBack.at))} (see <later>)` : ''}\n</changed>`,
               ]
             : []),
     ].join('\n\n');
