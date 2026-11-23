@@ -109,11 +109,16 @@ router.delete('/schedule/blocks/:id', auth, sched.deleteBlockHandler);
 // Daily loop v2: focus lines (LOOP_V2_SPEC §3)
 // The record (SYNC_SPINE_SPEC 1.2): sessions written by agents, hooks or by hand; projects.
 router.put('/sessions/by-key/:key', sessionAuth, sessions.putSessionByKeyHandler);
+// EASY_SETUP_PLAN §7: what a chat is (set_chat), said by the agent or by the user themselves.
+router.patch('/sessions/by-key/:key/kind', sessionAuth, sessions.setChatKindHandler);
 router.post('/sessions', sessionAuth, sessions.createSessionHandler);
 router.get('/sessions', sessionAuth, sessions.listSessionsHandler);
 router.patch('/sessions/:id', sessionAuth, sessions.updateSessionHandler);
 router.delete('/sessions/:id', sessionAuth, sessions.deleteSessionHandler);
 router.get('/projects', sessionAuth, sessions.listProjectsHandler);
+// EASY_SETUP_PLAN: the folders' rules for the hooks, and a folder by its key (set_folder: a new folder's one question).
+router.get('/projects/rules', sessionAuth, sessions.folderRulesHandler);
+router.put('/projects/by-key/:key', sessionAuth, sessions.putFolderByKeyHandler);
 // The brief (SYNC_SPINE_SPEC 1.3): where the user stands, in one call.
 router.get('/brief', auth, brief.getBriefHandler);
 

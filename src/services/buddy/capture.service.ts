@@ -17,7 +17,7 @@ import { poke } from '../scheduler/scheduler';
 import type { DayString } from '../learning';
 import { badRequest } from '../learning/http';
 import { loadLearningContext, toDbDay } from '../learningDb/common';
-import { officeFolder } from '../learningDb/lens';
+import { officeChat, type ChatWord } from '../learningDb/lens';
 import { scrubSecrets } from './scrub';
 import { isBuddyPaused } from './state.service';
 import { AiHttpError } from '../claude/errors';
@@ -134,6 +134,8 @@ export interface WordsInput {
     v?: 2 | undefined;
     /** Stage 4: the hook keeps his words on his PC while his AI is paused (it is told 503 AI_PAUSED). */
     canHold?: boolean | undefined;
+    /** EASY_SETUP_PLAN §7: what the chat is, when someone said so (their own word wins over the folder for its words). */
+    chat?: ChatWord | undefined;
     messages: ReadonlyArray<{ at?: string | undefined; text: string; reply?: string | undefined; n?: number | undefined; context?: boolean | undefined }>;
 }
 
@@ -258,8 +260,9 @@ export async function queueWords(userId: string, input: WordsInput, now: Date = 
         const read = numbered ? await markRead(userId, sessionKey, topN) : undefined;
         return { queued: 0, ...(why === 'office' ? { office: true as const } : { paused: true as const }), ...(read !== undefined ? { read } : {}), capture: CAPTURE_PROTOCOL };
     };
-    // PERSONAL_OFFICE_PLAN: a folder the server knows as work is office work whatever the PC's rule says.
-    const office = await officeFolder(userId, input.project, input.office);
+    // PERSONAL_OFFICE_PLAN: a folder the server knows as work is office work whatever the PC's rule says, unless they
+    // said themselves that this chat is theirs (EASY_SETUP_PLAN §7).
+    const office = await officeChat(userId, input.project, input.office, input.chat);
     if (office && officeCaptureOff()) return skip('office');
     if (await isBuddyPaused(userId)) return skip('paused');
     // His AI is paused or a budget is used up: a hook that can hold keeps the words (§4.15).

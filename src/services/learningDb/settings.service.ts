@@ -1,7 +1,7 @@
 // Learning settings (LEARNING_SPEC §2 #3 + LOOP_V2_SPEC §1): GET / PATCH /api/learning/settings.
 // lastNudgeDay and lastSeenDay are system state (the nudge cron and ensure-today write them): they
 // are returned but never set through PATCH.
-import type { RoutineMode } from '@prisma/client';
+import type { NewFolders, RoutineMode } from '@prisma/client';
 import { prisma } from '../../db/prisma';
 import { poke } from '../scheduler/scheduler';
 import { isValidTimeZone, minutesToTime, resolveTimeZone, timeToMinutes, today as todayIn, type DayString } from '../learning';
@@ -22,6 +22,7 @@ const settingsSelect = {
     lastSeenDay: true,
     agentProfile: true,
     progressIncludesWork: true,
+    newFolders: true,
 } as const;
 
 export async function getLearningSettings(userId: string): Promise<LearningSettingsJson> {
@@ -43,6 +44,8 @@ export interface LearningSettingsInput {
     agentProfile?: string | null | undefined;
     /** PERSONAL_OFFICE_PLAN: work counts as progress too (the app only: agents may not change it). */
     progressIncludesWork?: boolean | undefined;
+    /** EASY_SETUP_PLAN: what a folder the server has never seen is (the app only). */
+    newFolders?: NewFolders | undefined;
 }
 
 /**
@@ -67,6 +70,7 @@ export async function updateLearningSettings(userId: string, input: LearningSett
                 ...(input.nudgeTime !== undefined ? { nudgeTime: minutesToTime(timeToMinutes(input.nudgeTime)) } : {}),
                 ...(input.agentProfile !== undefined ? { agentProfile: input.agentProfile?.trim() ? input.agentProfile.trim().slice(0, 600) : null } : {}),
                 ...(input.progressIncludesWork !== undefined ? { progressIncludesWork: input.progressIncludesWork } : {}),
+                ...(input.newFolders !== undefined ? { newFolders: input.newFolders } : {}),
             },
             select: settingsSelect,
         });

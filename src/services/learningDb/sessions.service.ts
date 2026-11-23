@@ -8,26 +8,35 @@
 //   updateSession        PATCH  /api/sessions/:id           the app
 //   deleteSession        DELETE /api/sessions/:id           the app
 //   listProjects / updateProject   GET /api/projects · PATCH /api/projects/:id
+//   setChatKindByKey     PATCH  /api/sessions/by-key/:key/kind   what a chat is (set_chat)
+//   folderRules / setFolderByKey   GET /api/projects/rules · PUT /api/projects/by-key/:key (set_folder)
 //
 // PERSONAL_OFFICE_PLAN (11-23): a folder (project) is personal, study or work. A new folder takes the PC's hint
 // (`projectKind`, from the hook's rule), a folder the server knows keeps its own kind (the app's choice). A session
 // takes its folder's area (work or personal); a study folder's hook sessions are study, not build; a work folder's
 // sessions carry no commit subjects and are titled by the folder. Changing a folder's kind moves its past with it.
 //
+// EASY_SETUP_PLAN (11-23): the chat decides, the folder is only its default. A chat (one session) is Personal, Study
+// or Work (lens.ts: chatKindOf); the app's session row, their own words in the chat (/study, set_chat by "user"), or
+// the agent (set_chat by "agent", said in one line) can say what it is, and the more trusted choice wins
+// (WorkSession.kindSetBy). A folder's change moves only the chats that follow it. A folder also says what is logged
+// there (Project.tracking: everything, the time only, off), and whether anyone has decided what it is yet
+// (Project.kindSetBy: a new folder asks once).
+//
 // Session writes are not AgentEdit rows: the list is their log (each row says who wrote it, and
 // the user can change or delete any). A topic change a token's session asks for goes through the path
 // update and IS logged (topic_update, undoable), only when it changes something.
 import { randomInt } from 'node:crypto';
-import { Prisma, type PracticeOutcome, type ProjectKind, type SessionArea, type SessionKind, type SessionSource, type TopicStatus, type WeakSpotSource } from '@prisma/client';
+import { Prisma, type FolderTracking, type KindSetBy, type NewFolders, type PracticeOutcome, type ProjectKind, type SessionArea, type SessionKind, type SessionSource, type TopicStatus, type WeakSpotSource } from '@prisma/client';
 import { prisma, type DbClient } from '../../db/prisma';
 import { addDays, dayOf, type DayString } from '../learning';
-import { badRequest, notFound } from '../learning/http';
+import { LearningHttpError, badRequest, notFound } from '../learning/http';
 import { fromDbDay, loadLearningContext, toDbDay } from './common';
 import { pathPlaces, readPath, updateTopicOnPath, type PathTopicJson } from './path.service';
 import { quoted, recordAgentEdit, type AgentActor } from '../agent/agentEditLog';
 import { rememberNotes, type NoteInput } from '../buddy/memory.service';
 import { poke } from '../scheduler/scheduler';
-import { areaOfKind, sessionsOf, type Lens } from './lens';
+import { areaOfKind, chatKindData, chatKindOf, mayReset, sessionsOf, trackingOf, type ChatKind, type Lens } from './lens';
 
 export const SESSION_KINDS = ['study', 'practice', 'build', 'review'] as const satisfies readonly SessionKind[];
 export const PRACTICE_OUTCOMES = ['alone', 'hints', 'after_answer'] as const satisfies readonly PracticeOutcome[];
@@ -96,8 +105,11 @@ export interface SessionJson {
     details: unknown;
     source: SessionSource;
     agentName: string | null;
-    /** PERSONAL_OFFICE_PLAN: personal or work (its folder's). */
+    /** PERSONAL_OFFICE_PLAN: personal or work (its folder's, unless someone said what this chat is). */
     area: SessionArea;
+    /** EASY_SETUP_PLAN §7: what the chat is (Personal, Study, Work), and who said so (`folder`: it follows its folder). */
+    chatKind: ChatKind;
+    kindSetBy: KindSetBy;
     createdAt: string;
     updatedAt: string;
 }
@@ -131,6 +143,8 @@ export function serializeSession(r: SessionRow): SessionJson {
         source: r.source,
         agentName: r.agentName,
         area: r.area,
+        chatKind: chatKindOf(r),
+        kindSetBy: r.kindSetBy,
         createdAt: r.createdAt.toISOString(),
         updatedAt: r.updatedAt.toISOString(),
     };
@@ -216,21 +230,30 @@ export async function openWeakSpotsOf(userId: string, topicIds: readonly string[
 
 const PROJECT_FIELDS = { id: true, key: true, name: true, kind: true } as const;
 type ProjectRef = { id: string; key: string; name: string; kind: ProjectKind };
+const PROJECT_DECIDED = { ...PROJECT_FIELDS, kindSetBy: true } as const;
 
 /**
  * A project by key or name (case-insensitive), made when there is none: a new one takes `kindIfNew` (the PC's hint
- * for a folder the server has never seen), else personal. A known one keeps its kind (the app's choice wins).
+ * for a folder the server has never seen: decided by the PC), else personal, not decided yet (a new folder asks once).
+ * A known one keeps its kind (the app's choice wins).
  */
 async function findOrMakeProject(db: DbClient, userId: string, nameOrKey: string, kindIfNew?: ProjectKind): Promise<ProjectRef> {
     const name = cleanText(nameOrKey, 120);
     if (!name) throw badRequest('project is empty');
     const key = projectKey(name);
     const found =
-        (await db.project.findUnique({ where: { userId_key: { userId, key } }, select: PROJECT_FIELDS })) ??
-        (await db.project.findFirst({ where: { userId, name: { equals: name, mode: 'insensitive' } }, select: PROJECT_FIELDS }));
-    if (found) return found;
+        (await db.project.findUnique({ where: { userId_key: { userId, key } }, select: PROJECT_DECIDED })) ??
+        (await db.project.findFirst({ where: { userId, name: { equals: name, mode: 'insensitive' } }, select: PROJECT_DECIDED }));
+    if (found && found.kindSetBy === null && kindIfNew) {
+        // A folder nobody decided (a chat's checkpoint made it) takes the PC's first guess, as a new one would; its past
+        // moves with it (EASY_SETUP_PLAN).
+        await db.project.update({ where: { id: found.id }, data: { kind: kindIfNew, kindSetBy: 'pc' }, select: { id: true } });
+        if (kindIfNew !== found.kind) await moveFolderPast(db, userId, found, found.kind, kindIfNew);
+        return { id: found.id, key: found.key, name: found.name, kind: kindIfNew };
+    }
+    if (found) return { id: found.id, key: found.key, name: found.name, kind: found.kind };
     try {
-        return await db.project.create({ data: { userId, key, name, kind: kindIfNew ?? 'personal' }, select: PROJECT_FIELDS });
+        return await db.project.create({ data: { userId, key, name, kind: kindIfNew ?? 'personal', kindSetBy: kindIfNew ? 'pc' : null }, select: PROJECT_FIELDS });
     } catch (err) {
         // Made at the same moment by another write.
         if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
@@ -282,6 +305,10 @@ export interface SessionInput {
     source?: 'agent' | 'hook' | undefined;
     /** Notes about the user for the buddy (BUDDY_MEMORY_PLAN §3.1 B), tagged with the session's project and subject. */
     learned?: NoteInput[] | undefined;
+    /** EASY_SETUP_PLAN §7: what this chat is (a part of a chat the hook split, or a chat set_chat marked before its first checkpoint). */
+    chatKind?: ChatKind | undefined;
+    /** Who said what the chat is: the agent, or the user themselves (their words, /study). */
+    kindBy?: 'agent' | 'chat' | undefined;
 }
 
 export interface SessionWriteResult {
@@ -415,12 +442,17 @@ export async function upsertSessionByKey(writer: SessionWriter, key: string, inp
               : better || (project ? `Worked on ${project.name}` : topicTitle ? topicTitle.doc?.title || topicTitle.title : 'Session');
     if (!title) throw badRequest('title cannot be empty');
 
+    // What the chat is: its folder's area while it follows its folder; a chat someone marked keeps its own; a marking
+    // sent now wins when it weighs as much as the one before (EASY_SETUP_PLAN §7).
+    const followsFolder = !existing || existing.kindSetBy === 'folder';
+    const marked = input.chatKind && input.kindBy && mayReset(input.kindBy, existing?.kindSetBy) ? chatKindData(input.chatKind, kind) : null;
     const data = {
-        kind,
+        kind: marked?.kind ?? kind,
         title,
         subjectId,
         topicId,
-        ...(project !== undefined ? { projectId: project?.id ?? null, area: areaOfKind(project?.kind) } : {}),
+        ...(project !== undefined ? { projectId: project?.id ?? null, ...(followsFolder ? { area: areaOfKind(project?.kind) } : {}) } : {}),
+        ...(marked ? { area: marked.area, kindSetBy: input.kindBy! } : {}),
         ...(minutes !== undefined ? { minutes } : {}),
         ...(endedAt !== undefined ? { endedAt } : {}),
         ...(score ?? {}),
@@ -564,10 +596,19 @@ export async function createSession(userId: string, input: SessionInput & { titl
 export async function updateSession(
     userId: string,
     id: string,
-    patch: { title?: string | undefined; minutes?: number | null | undefined; kind?: SessionKind | undefined; day?: string | undefined; nextStep?: string | null | undefined }
+    patch: {
+        title?: string | undefined;
+        minutes?: number | null | undefined;
+        kind?: SessionKind | undefined;
+        day?: string | undefined;
+        nextStep?: string | null | undefined;
+        /** EASY_SETUP_PLAN §7: Personal, Study or Work, from the session row (the most trusted choice). */
+        chatKind?: ChatKind | undefined;
+    }
 ): Promise<SessionJson> {
-    const row = await prisma.workSession.findFirst({ where: { id, userId }, select: { id: true } });
+    const row = await prisma.workSession.findFirst({ where: { id, userId }, select: { id: true, kind: true } });
     if (!row) throw notFound();
+    const marked = patch.chatKind ? chatKindData(patch.chatKind, patch.kind ?? row.kind) : null;
     const title = patch.title !== undefined ? cleanText(patch.title, SESSION_TITLE_MAX) : undefined;
     if (title !== undefined && !title) throw badRequest('title cannot be empty');
     if (patch.minutes !== undefined && patch.minutes !== null && (!Number.isInteger(patch.minutes) || patch.minutes < 0 || patch.minutes > MINUTES_MAX)) {
@@ -581,10 +622,37 @@ export async function updateSession(
             ...(patch.kind !== undefined ? { kind: patch.kind } : {}),
             ...(patch.day !== undefined ? { day: toDbDay(patch.day as DayString) } : {}),
             ...(patch.nextStep !== undefined ? { nextStep: patch.nextStep === null ? null : cleanText(patch.nextStep, 300) || null } : {}),
+            ...(marked ? { area: marked.area, kind: marked.kind, kindSetBy: 'app' as const } : {}),
         },
         select: { id: true },
     });
+    // What counts may have changed: the buddy's day hears it.
+    if (marked) poke('buddy');
     return serializeSession(await prisma.workSession.findUniqueOrThrow({ where: { id }, include: SESSION_INCLUDE }));
+}
+
+export interface ChatKindResult {
+    session: SessionJson;
+    /** False when a more trusted choice stands (their own word or the app's beats the agent's). */
+    changed: boolean;
+}
+
+/**
+ * PATCH /api/sessions/by-key/:key/kind (set_chat): what a chat is, said by the agent or by the user themselves. A
+ * choice that weighs less than the one standing changes nothing (the answer says so). 404 when no session has the key.
+ */
+export async function setChatKindByKey(userId: string, key: string, chatKind: ChatKind, by: 'agent' | 'chat'): Promise<ChatKindResult> {
+    if (!SESSION_KEY_RE.test(key)) throw badRequest('A session key is 1 to 80 letters, digits, _ . : or -', 'BAD_KEY');
+    const row = await prisma.workSession.findUnique({ where: { userId_key: { userId, key } }, select: { id: true, kind: true, area: true, kindSetBy: true } });
+    if (!row) throw new LearningHttpError(404, 'NO_SESSION', 'No session has that key yet');
+    const same = chatKindOf(row) === chatKind;
+    if (!mayReset(by, row.kindSetBy) || (same && row.kindSetBy === by)) {
+        return { session: serializeSession(await prisma.workSession.findUniqueOrThrow({ where: { id: row.id }, include: SESSION_INCLUDE })), changed: false };
+    }
+    const to = chatKindData(chatKind, row.kind);
+    await prisma.workSession.update({ where: { id: row.id }, data: { area: to.area, kind: to.kind, kindSetBy: by }, select: { id: true } });
+    if (!same) poke('buddy');
+    return { session: serializeSession(await prisma.workSession.findUniqueOrThrow({ where: { id: row.id }, include: SESSION_INCLUDE })), changed: !same };
 }
 
 /** DELETE /api/sessions/:id. Weak spots it opened stay (they are about the topic, not the entry). */
@@ -658,6 +726,11 @@ export interface ProjectJson {
     name: string;
     /** PERSONAL_OFFICE_PLAN: personal, study or work (Settings › Tracking). */
     kind: ProjectKind;
+    /** EASY_SETUP_PLAN: what is logged there (its own choice, else its kind's), and whether that is its own choice. */
+    tracking: FolderTracking;
+    trackingSet: boolean;
+    /** Who decided what it is (pc, chat, app), or null: nobody yet (a new folder asks once). */
+    kindSetBy: KindSetBy | null;
     goal: { _id: string; title: string } | null;
     nextStep: string | null;
     isArchived: boolean;
@@ -695,6 +768,9 @@ export async function listProjects(userId: string, now: Date = new Date()): Prom
             key: p.key,
             name: p.name,
             kind: p.kind,
+            tracking: trackingOf(p.kind, p.tracking),
+            trackingSet: p.tracking !== null,
+            kindSetBy: p.kindSetBy,
             goal: p.goal ? { _id: p.goal.id, title: p.goal.title } : null,
             nextStep: p.nextStep,
             isArchived: p.isArchived,
@@ -715,24 +791,36 @@ export async function projectByKey(userId: string, key: string): Promise<Project
 
 /**
  * A folder's new kind moves its past with it (PERSONAL_OFFICE_PLAN §2.1), in the caller's transaction: its sessions'
- * area; its hook sessions between build and study (a chat's own kind stays); its work log lines' office mark.
+ * area; its hook sessions between build and study (a chat's own kind stays); its work log lines' office mark. A chat
+ * someone marked (EASY_SETUP_PLAN §7: the agent, their words, the app) keeps what it is.
  */
 async function moveFolderPast(tx: DbClient, userId: string, project: { id: string; key: string }, from: ProjectKind, to: ProjectKind): Promise<void> {
-    await tx.workSession.updateMany({ where: { userId, projectId: project.id }, data: { area: areaOfKind(to) } });
+    await tx.workSession.updateMany({ where: { userId, projectId: project.id, kindSetBy: 'folder' }, data: { area: areaOfKind(to) } });
     const codingKind = (k: ProjectKind): SessionKind => (k === 'study' ? 'study' : 'build');
     if (codingKind(from) !== codingKind(to)) {
-        await tx.workSession.updateMany({ where: { userId, projectId: project.id, source: 'hook', kind: codingKind(from) }, data: { kind: codingKind(to) } });
+        await tx.workSession.updateMany({ where: { userId, projectId: project.id, source: 'hook', kind: codingKind(from), kindSetBy: 'folder' }, data: { kind: codingKind(to) } });
     }
     if ((from === 'work') !== (to === 'work')) {
         await tx.workLine.updateMany({ where: { userId, project: project.key }, data: { office: to === 'work' } });
     }
 }
 
-/** PATCH /api/projects/:id: rename, link a goal, archive, set the next step, or its kind (personal, study, work). */
+/**
+ * PATCH /api/projects/:id: rename, link a goal, archive, set the next step, its kind (personal, study, work) or what is
+ * logged there (null: its kind's default). `setBy`: the app, or a chat on their word (an agent's update_project).
+ */
 export async function updateProject(
     userId: string,
     id: string,
-    patch: { name?: string | undefined; goalId?: string | null | undefined; isArchived?: boolean | undefined; nextStep?: string | null | undefined; kind?: ProjectKind | undefined }
+    patch: {
+        name?: string | undefined;
+        goalId?: string | null | undefined;
+        isArchived?: boolean | undefined;
+        nextStep?: string | null | undefined;
+        kind?: ProjectKind | undefined;
+        tracking?: FolderTracking | null | undefined;
+    },
+    setBy: 'app' | 'chat' = 'app'
 ): Promise<ProjectJson> {
     const row = await prisma.project.findFirst({ where: { id, userId }, select: { id: true, key: true, kind: true } });
     if (!row) throw notFound();
@@ -752,6 +840,9 @@ export async function updateProject(
                 ...(patch.isArchived !== undefined ? { isArchived: patch.isArchived } : {}),
                 ...(patch.nextStep !== undefined ? { nextStep: patch.nextStep === null ? null : cleanText(patch.nextStep, 300) || null } : {}),
                 ...(kindChange ? { kind: kindChange } : {}),
+                ...(patch.tracking !== undefined ? { tracking: patch.tracking } : {}),
+                // Saying what a folder is (or what is logged there) decides it: it never asks again.
+                ...(patch.kind !== undefined || patch.tracking !== undefined ? { kindSetBy: setBy } : {}),
             },
             select: { id: true },
         });
@@ -760,6 +851,48 @@ export async function updateProject(
     // What counts changed: the buddy's day hears it (as it hears a session logged).
     if (kindChange) poke('buddy');
     return (await listProjects(userId)).find((p) => p._id === id)!;
+}
+
+/** One folder as the hooks need it (GET /api/projects/rules). */
+export interface FolderRuleJson {
+    key: string;
+    name: string;
+    kind: ProjectKind;
+    tracking: FolderTracking;
+    /** Someone decided what it is (false: a new folder that still asks). */
+    decided: boolean;
+}
+
+export interface FolderRulesJson {
+    /** What a folder the server has never seen is (Settings › Tracking). */
+    newFolders: NewFolders;
+    folders: FolderRuleJson[];
+}
+
+/** GET /api/projects/rules: every folder's kind and what is logged there, for the hooks (kept 10 minutes on the PC). */
+export async function folderRules(userId: string): Promise<FolderRulesJson> {
+    const [user, rows] = await Promise.all([
+        prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { newFolders: true } }),
+        prisma.project.findMany({ where: { userId }, select: { key: true, name: true, kind: true, tracking: true, kindSetBy: true }, orderBy: { key: 'asc' }, take: 500 }),
+    ]);
+    return { newFolders: user.newFolders, folders: rows.map((p) => ({ key: p.key, name: p.name, kind: p.kind, tracking: trackingOf(p.kind, p.tracking), decided: p.kindSetBy !== null })) };
+}
+
+/**
+ * PUT /api/projects/by-key/:key (set_folder: their answer to a new folder's question; the app): what a folder is and
+ * what is logged there, made when the server has never seen it. Its past moves with a new kind.
+ */
+export async function setFolderByKey(
+    userId: string,
+    key: string,
+    input: { kind?: ProjectKind | undefined; tracking?: FolderTracking | null | undefined; name?: string | undefined },
+    setBy: 'app' | 'chat'
+): Promise<ProjectJson> {
+    if (input.kind === undefined && input.tracking === undefined) throw badRequest('Send kind, tracking or both');
+    if (!projectKey(key)) throw badRequest('A folder needs a name');
+    // A new folder takes its own spelling ("Second_Brain") when the name sent is the same folder.
+    const project = await findOrMakeProject(prisma, userId, input.name && projectKey(input.name) === projectKey(key) ? input.name : key, input.kind);
+    return updateProject(userId, project.id, { ...(input.kind !== undefined ? { kind: input.kind } : {}), ...(input.tracking !== undefined ? { tracking: input.tracking } : {}) }, setBy);
 }
 
 // ─── Recall ↔ weak spots (no model call of its own) ───────────────────

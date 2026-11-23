@@ -4,6 +4,7 @@
 import { answerAsk, openAsks } from '../services/buddy/asks';
 import { aiAccessFor, aiPaused, aiWaitError } from '../services/claude/access';
 import { z } from 'zod';
+import { CHAT_KINDS } from '../services/learningDb/lens';
 import { isTokenRequest, requireUser } from '../middlwares/auth';
 import { agentActor } from '../services/agent/agentEditLog';
 import {
@@ -333,6 +334,8 @@ export const wordsHandler = handler(async (req, res) => {
                 // Stage 4: message numbers, context, and a hook that can hold its words.
                 v: z.literal(2).optional(),
                 canHold: z.boolean().optional(),
+                // EASY_SETUP_PLAN §7: what the chat is and who said so (their own word decides whose its words are).
+                chat: z.object({ kind: z.enum(CHAT_KINDS), by: z.enum(['folder', 'pc', 'agent', 'chat', 'app']) }).strict().optional(),
                 messages: z
                     .array(
                         z

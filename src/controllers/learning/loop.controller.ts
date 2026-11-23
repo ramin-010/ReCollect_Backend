@@ -16,6 +16,7 @@ import {
 import { freshStart } from '../../services/learningDb/plan.service';
 import { getLearningSettings, updateLearningSettings } from '../../services/learningDb/settings.service';
 import { getLeetcode, setLeetcode, syncLeetcode } from '../../services/learningDb/leetcode.service';
+import { NEW_FOLDERS } from '../../services/learningDb/lens';
 import { handler, ok, param, parse, zDay, zId } from './common';
 
 // ─── §1 Settings ───────────────────────────────────────────────────────
@@ -31,6 +32,8 @@ const settingsSchema = z.object({
     agentProfile: z.string().max(600, 'At most 600 characters').nullable().optional(),
     /** PERSONAL_OFFICE_PLAN: work counts as progress too. */
     progressIncludesWork: z.boolean().optional(),
+    /** EASY_SETUP_PLAN: what a folder the server has never seen is. */
+    newFolders: z.enum(NEW_FOLDERS).optional(),
 });
 
 export const getSettingsHandler = handler(async (req, res) => {

@@ -85,14 +85,18 @@ describe('something to do is a task (5b A)', () => {
     });
 
     it('“booked it”: the task is ticked and its reminder still to come cancelled; Undo puts both back', async () => {
+        // Undo runs on the real clock and brings a reminder back only while its time is ahead: this story is a year on
+        // (the same weekdays), so it never turns into a time bomb on its own Monday (11-23: it went off at 09:00 IST).
+        const fri = new Date('2027-11-19T05:30:00Z');
+        const mon8 = new Date('2027-11-22T02:30:00Z');
         const arjun = await person();
-        await say(arjun.id, 1, 'I need to book the dentist on Monday.', FRI);
-        fake.push(digest({ items: [item({ text: 'Book the dentist', dueDay: '2026-11-23' })] }));
-        await drainBuddyQueue(FRI);
+        await say(arjun.id, 1, 'I need to book the dentist on Monday.', fri);
+        fake.push(digest({ items: [item({ text: 'Book the dentist', dueDay: '2027-11-22' })] }));
+        await drainBuddyQueue(fri);
         const task = await prisma.todo.findFirstOrThrow({ where: { userId: arjun.id } });
-        await say(arjun.id, 2, 'Booked it! Thursday at 4.', MON_8);
+        await say(arjun.id, 2, 'Booked it! Thursday at 4.', mon8);
         fake.push(digest({ tasksDone: [{ taskId: task.id, message: 1 }] }));
-        await drainBuddyQueue(MON_8);
+        await drainBuddyQueue(mon8);
         expect(await prisma.todo.findUniqueOrThrow({ where: { id: task.id } })).toMatchObject({ status: 'complete' });
         expect((await prisma.reminder.findFirstOrThrow({ where: { todoId: task.id } })).status).toBe('cancelled');
         const tick = await prisma.agentEdit.findFirstOrThrow({ where: { userId: arjun.id, kind: 'task_update' } });

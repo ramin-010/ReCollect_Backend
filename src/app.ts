@@ -40,6 +40,7 @@ import buddyRoutes from './routers/buddy.routes';
 import { feedbackRouter, inviteRouter, ownerRouter } from './routers/owner.routes';
 import { consentRouter, publicOAuthRouter } from './routers/oauth.routes';
 import { healthDbRouter, healthzRouter } from './routers/health.routes';
+import { setupRouter } from './routers/setup.routes';
 import { allowedOrigins } from './config/origins';
 import { authOnce } from './middlwares/scopes';
 
@@ -122,6 +123,8 @@ export function createApp(): Application {
     app.use('/api/public', publicRouter);
     // Stage 11: an invite link's code, for the signup page (no login; before userRoutes' login check).
     app.use('/api/invites', inviteRouter);
+    // EASY_SETUP_PLAN: a PC signs in by approval (start and poll have no login yet; before userRoutes' login check).
+    app.use('/api/setup', setupRouter);
     app.use('/api', tagQueryRouter)
     app.use('/api', otpRoutes);
 

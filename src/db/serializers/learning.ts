@@ -10,6 +10,7 @@ import type {
     FocusItem,
     Goal,
     GoalMilestone,
+    NewFolders,
     Prisma,
     QuickNote,
     Revision,
@@ -279,11 +280,14 @@ export function serializeLearningSettings(u: {
     lastSeenDay: Date | null;
     agentProfile?: string | null;
     progressIncludesWork?: boolean;
+    newFolders?: NewFolders;
 }) {
     return {
         agentProfile: u.agentProfile ?? null,
         /** PERSONAL_OFFICE_PLAN: work counts as progress too (off: personal only). */
         progressIncludesWork: u.progressIncludesWork === true,
+        /** EASY_SETUP_PLAN: what a folder the server has never seen is (ask: the agent asks once). */
+        newFolders: u.newFolders ?? 'ask',
         dailyBudgetMin: u.dailyBudgetMin,
         routineEnabled: u.routineEnabled,
         busyUntil: dayOrNull(u.busyUntil),

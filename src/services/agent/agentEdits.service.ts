@@ -204,6 +204,8 @@ const UNDO: Record<AgentEditKind, (ctx: UndoContext) => Promise<void>> = {
             nextStep: stringOrNull(b['nextStep']),
             // PERSONAL_OFFICE_PLAN: a folder's kind back (its past sessions move back with it).
             ...(b['kind'] === 'personal' || b['kind'] === 'study' || b['kind'] === 'work' ? { kind: b['kind'] } : {}),
+            // EASY_SETUP_PLAN: what was logged there (null: its kind's default); an older edit without it leaves it.
+            ...('tracking' in b ? { tracking: b['tracking'] === 'full' || b['tracking'] === 'light' || b['tracking'] === 'off' ? b['tracking'] : null } : {}),
         });
     },
     reminder_set: async ({ userId, id, data }) => {

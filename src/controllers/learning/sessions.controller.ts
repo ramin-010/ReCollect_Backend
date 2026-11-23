@@ -14,13 +14,16 @@ import {
     WEAK_SPOTS_PER_WRITE,
     createSession,
     deleteSession,
+    folderRules,
     listProjects,
     listSessions,
+    setChatKindByKey,
+    setFolderByKey,
     updateProject,
     updateSession,
     upsertSessionByKey,
 } from '../../services/learningDb/sessions.service';
-import { PROJECT_KINDS, progressLens } from '../../services/learningDb/lens';
+import { CHAT_KINDS, FOLDER_TRACKING, PROJECT_KINDS, progressLens } from '../../services/learningDb/lens';
 import { handler, ok, param, parse, zDay, zId } from './common';
 
 const zKind = z.enum(SESSION_KINDS);
@@ -52,6 +55,9 @@ const zWrite = z
         learned: z.array(zLearnedNote).max(LEARNED_PER_WRITE).optional(),
         /** Stage 8 (E3): what he said about himself since the last checkpoint, in his words (passed on: indirect). */
         said: z.array(z.string().trim().min(1).max(300)).max(3).optional(),
+        /** EASY_SETUP_PLAN §7: what this chat is, and who said so (the agent, or the user's own words). */
+        chatKind: z.enum(CHAT_KINDS).optional(),
+        kindBy: z.enum(['agent', 'chat']).optional(),
     })
     .strict();
 
@@ -65,7 +71,7 @@ export const putSessionByKeyHandler = handler(async (req, res) => {
     ok(res, out);
 });
 
-const zCreate = zWrite.omit({ kindIfNew: true, titleIfNew: true, source: true, weakSpots: true, cleared: true, topicStatus: true, learned: true, projectKind: true }).extend({ title: z.string().min(1).max(400), day: zDay.optional() });
+const zCreate = zWrite.omit({ kindIfNew: true, titleIfNew: true, source: true, weakSpots: true, cleared: true, topicStatus: true, learned: true, projectKind: true, chatKind: true, kindBy: true }).extend({ title: z.string().min(1).max(400), day: zDay.optional() });
 
 /** POST /api/sessions (the app: a manual entry) → the session */
 export const createSessionHandler = handler(async (req, res) => {
@@ -96,6 +102,8 @@ const zPatch = z
         kind: zKind.optional(),
         day: zDay.optional(),
         nextStep: z.string().max(600).nullable().optional(),
+        /** EASY_SETUP_PLAN §7: Personal, Study or Work, from the session row. */
+        chatKind: z.enum(CHAT_KINDS).optional(),
     })
     .strict();
 
@@ -103,6 +111,17 @@ const zPatch = z
 export const updateSessionHandler = handler(async (req, res) => {
     const patch = parse(zPatch, req.body);
     ok(res, await updateSession(requireUser(req).id, param(req, 'id'), patch));
+});
+
+const zChatKind = z.object({ kind: z.enum(CHAT_KINDS), by: z.enum(['agent', 'user']) }).strict();
+
+/**
+ * PATCH /api/sessions/by-key/:key/kind {kind, by} (set_chat) → { session, changed }: what a chat is, said by the agent
+ * or by the user themselves ("user": their words, /study). 404 NO_SESSION when no session has the key yet.
+ */
+export const setChatKindHandler = handler(async (req, res) => {
+    const { kind, by } = parse(zChatKind, req.body);
+    ok(res, await setChatKindByKey(requireUser(req).id, param(req, 'key'), kind, by === 'user' ? 'chat' : 'agent'));
 });
 
 /** DELETE /api/sessions/:id (the app) → { deleted: true } */
@@ -123,11 +142,33 @@ const zProjectPatch = z
         nextStep: z.string().max(600).nullable().optional(),
         /** PERSONAL_OFFICE_PLAN: personal, study or work; its past sessions move with it. */
         kind: z.enum(PROJECT_KINDS).optional(),
+        /** EASY_SETUP_PLAN: what is logged there (null: its kind's default). */
+        tracking: z.enum(FOLDER_TRACKING).nullable().optional(),
     })
     .strict();
 
-/** PATCH /api/projects/:id (the app) → the project */
+/** PATCH /api/projects/:id (the app; an agent's update_project on their word) → the project */
 export const updateProjectHandler = handler(async (req, res) => {
     const patch = parse(zProjectPatch, req.body);
-    ok(res, await updateProject(requireUser(req).id, param(req, 'id'), patch));
+    ok(res, await updateProject(requireUser(req).id, param(req, 'id'), patch, isTokenRequest(req) ? 'chat' : 'app'));
+});
+
+/** GET /api/projects/rules → { newFolders, folders: [{ key, name, kind, tracking, decided }] } (the hooks) */
+export const folderRulesHandler = handler(async (req, res) => {
+    ok(res, await folderRules(requireUser(req).id));
+});
+
+const zFolderPut = z
+    .object({
+        kind: z.enum(PROJECT_KINDS).optional(),
+        tracking: z.enum(FOLDER_TRACKING).nullable().optional(),
+        /** The folder's own spelling, for a folder the server has never seen. */
+        name: z.string().trim().min(1).max(120).optional(),
+    })
+    .strict();
+
+/** PUT /api/projects/by-key/:key {kind?, tracking?, name?} (set_folder; the app) → the project, made when new */
+export const putFolderByKeyHandler = handler(async (req, res) => {
+    const input = parse(zFolderPut, req.body);
+    ok(res, await setFolderByKey(requireUser(req).id, param(req, 'key'), input, isTokenRequest(req) ? 'chat' : 'app'));
 });

@@ -31,6 +31,9 @@ export const DOORS = {
     mcp: { windowMinutes: 15, perIp: 30, failuresOnly: true },
     // Stage 11: looking up an invite link's code (no login); unknown codes count.
     invite: { windowMinutes: 15, perIp: 30, failuresOnly: true },
+    // EASY_SETUP_PLAN: a PC's sign-in by approval: starting one, and its polls (one every 3 seconds for 10 minutes).
+    setupStart: { windowMinutes: 60, perIp: 20 },
+    setupPoll: { windowMinutes: 15, perIp: 400 },
 } as const satisfies Record<string, DoorRule>;
 
 export type Door = keyof typeof DOORS;

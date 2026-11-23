@@ -81,6 +81,8 @@ describe('GET / PATCH /api/learning/settings', () => {
             agentProfile: null,
             // PERSONAL_OFFICE_PLAN: work counts as progress only when they say so.
             progressIncludesWork: false,
+            // EASY_SETUP_PLAN: a new folder asks once.
+            newFolders: 'ask',
         });
     });
 

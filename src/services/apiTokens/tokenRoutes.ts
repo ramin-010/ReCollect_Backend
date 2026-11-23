@@ -93,8 +93,14 @@ export const TOKEN_ROUTES: readonly TokenRoute[] = [
 
     // The record (SYNC_SPINE_SPEC 1.2): a session by its key; reading sessions and projects.
     route('PUT', '/api/sessions/by-key/:key', 'sessions:write'),
+    route('PATCH', '/api/sessions/by-key/:key/kind', 'sessions:write'), // EASY_SETUP_PLAN §7: what a chat is (set_chat)
     route('GET', '/api/sessions', 'read'),
     route('GET', '/api/projects', 'read'),
+    // EASY_SETUP_PLAN: the folders' rules (the hooks), a folder by its key (set_folder), the PC's own sign-in.
+    route('GET', '/api/projects/rules', 'read'),
+    route('PUT', '/api/projects/by-key/:key', 'sessions:write'),
+    route('GET', '/api/setup/me', 'read'),
+    route('POST', '/api/setup/disconnect', 'sessions:write'),
     route('GET', '/api/brief', 'read'), // the brief: where the user stands (SYNC_SPINE_SPEC 1.3)
 
     // The week and suggestions (LOOP_COMPLETE_SPEC 1.6): agents read and set targets, and propose;
@@ -223,6 +229,9 @@ export const SELF_LOGGED: Readonly<Record<string, string>> = {
     'POST /api/canvas/layout': 'stateless: lays a board out and stores nothing',
     'POST /api/canvas/render': 'stateless: draws a board as SVG or PNG and stores nothing',
     'PUT /api/sessions/by-key/:key': 'the session list is its own log (each entry names its writer; the user edits or deletes any); a topic change it asks for is logged as topic_update',
+    'PATCH /api/sessions/by-key/:key/kind': "what a chat is (Personal, Study, Work): the session row shows it and who said so (the agent, or the user's own words), and the user switches it there, which outweighs any chat",
+    'PUT /api/projects/by-key/:key': "what a folder is and what is logged there, on the user's answer to the folder's one question: Settings › Tracking shows it and the user changes it there",
+    'POST /api/setup/disconnect': "a PC's own sign-in ends itself (re-collect remove): Settings › Agents shows it as ended; nothing else changes",
     'POST /api/suggestions': 'a pending suggestion is its own visible record (Home → Suggested, naming who proposed it): nothing changes until the user accepts it, and he can dismiss it',
     'POST /api/actions': 'a pending action is its own visible record (Home → Suggested, "Do it", naming who asked): nothing happens until the user taps it, and he can dismiss it',
     'POST /api/ambient/disconnect': "the phone app ends its own token and nothing else: Settings → Agents shows it as ended",
