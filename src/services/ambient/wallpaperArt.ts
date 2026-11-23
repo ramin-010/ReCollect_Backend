@@ -830,22 +830,32 @@ function scheduleRows(input: WallpaperInput, W: number, gapAbove: number, fits: 
     const goal = fits.goal ? goalRow(input.goal) : '';
     const size = W * TYPE.secondary;
     const step = size * 1.78;
-    const listH = list.length ? gapAbove + size * CAP + (list.length - 1) * step : 0;
-    const goalH = goal ? (list.length ? 5 * u : gapAbove) + quiet * CAP : 0;
     const timed = (at: string) => at !== '' && at !== 'late';
     const atW = Math.max(0, ...list.map((r) => textWidth(scheduleAt(r.at), size, timed(r.at) ? 600 : 500)));
     const x = W * LOCK_X;
     const tx = x + atW + 2.6 * u;
+    // A long reminder wraps under itself (the owner, 11-23 night), up to three lines; the rest ends in "…".
+    const rowW = W * (1 - LOCK_RIGHT) - tx;
+    const lh = size * 1.32;
+    const rowLines = list.map((r) => {
+        const all = wrapText(r.text, size, 400, rowW, 99, 0, false);
+        return all.length <= 3 ? all : [...all.slice(0, 2), fit(all.slice(2).join(' '), size, 400, rowW)];
+    });
+    const extra = rowLines.reduce((n, ls) => n + (ls.length - 1) * lh, 0);
+    const listH = list.length ? gapAbove + size * CAP + (list.length - 1) * step + extra : 0;
+    const goalH = goal ? (list.length ? 5 * u : gapAbove) + quiet * CAP : 0;
     return {
         h: listH + goalH,
         draw: (top, _cx, ink) => {
             const out: string[] = [];
             let y = top;
             if (list.length) {
+                let extraAbove = 0;
                 list.forEach((r, i) => {
-                    const base = y + gapAbove + size * CAP + i * step;
+                    const base = y + gapAbove + size * CAP + i * step + extraAbove;
                     out.push(text(x, base, scheduleAt(r.at), size, timed(r.at) ? 600 : 500, timed(r.at) ? ink.head : ink.meta));
-                    out.push(text(tx, base, fit(r.text, size, 400, W * (1 - LOCK_RIGHT) - tx), size, 400, ink.body));
+                    rowLines[i]!.forEach((l, j) => out.push(text(tx, base + j * lh, l, size, 400, ink.body)));
+                    extraAbove += (rowLines[i]!.length - 1) * lh;
                 });
                 y += listH;
             }
@@ -1106,20 +1116,34 @@ function drawLockV2(input: WallpaperInput, width: number, height: number, theme:
             },
         };
     };
+    // A row's words wrap under themselves (the owner, 11-23 night: a long reminder was cut with "…"), up to
+    // three lines; only what still doesn't fit ends in "…".
+    const ROW_LINES = 3;
     const agendaRows = (rows: ReadonlyArray<{ at: string; text: string }>, left: number, right: number) => {
         const atW = Math.max(0, ...rows.map((r) => textWidth(scheduleAt(r.at), rowSize, timed(r.at) ? 600 : 500)));
         const tx = left + atW + 3.2 * u;
-        const step = rowSize * 2.05;
+        const width = right - tx;
+        const lh = rowSize * 1.32;
+        const gap = rowSize * 2.05 - lh;
+        const wrapped = rows.map((r) => {
+            const all = wrapText(r.text, rowSize, 400, width, 99, 0, false);
+            if (all.length <= ROW_LINES) return all;
+            return [...all.slice(0, ROW_LINES - 1), fit(all.slice(ROW_LINES - 1).join(' '), rowSize, 400, width)];
+        });
+        const heights = wrapped.map((ls) => rowSize * CAP + (ls.length - 1) * lh);
         return {
-            h: rows.length ? rowSize * CAP + (rows.length - 1) * step : 0,
-            draw: (top: number) =>
-                rows.flatMap((r, i) => {
-                    const base = top + rowSize * CAP + i * step;
-                    return [
-                        text(left, base, scheduleAt(r.at), rowSize, timed(r.at) ? 600 : 500, timed(r.at) ? g.head : g.meta),
-                        text(tx, base, fit(r.text, rowSize, 400, right - tx), rowSize, 400, g.body),
-                    ];
-                }),
+            h: rows.length ? heights.reduce((n, x) => n + x, 0) + (rows.length - 1) * (gap + lh - rowSize * CAP) : 0,
+            draw: (top: number) => {
+                const out: string[] = [];
+                let y = top;
+                rows.forEach((r, i) => {
+                    const base = y + rowSize * CAP;
+                    out.push(text(left, base, scheduleAt(r.at), rowSize, timed(r.at) ? 600 : 500, timed(r.at) ? g.head : g.meta));
+                    wrapped[i]!.forEach((l, j) => out.push(text(tx, base + j * lh, l, rowSize, 400, g.body)));
+                    y += heights[i]! + gap + lh - rowSize * CAP;
+                });
+                return out;
+            },
         };
     };
 
