@@ -19,12 +19,14 @@
  * PERSONAL_OFFICE_PLAN (11-23): a lens picks the sessions (personal, work or all). The service hands in only the
  * rows its lens sees (the Work lens: work sessions and nothing else, since reviews, focus lines and goals are
  * learning); here the lens only changes the words: "worked" for the Work lens, the split for All.
+ * STUDY_FLOW_PLAN §4.5: Learning (the Personal record without build sessions) says "studied"; Building (build
+ * sessions only, as Work) says "built" and where most of the time went.
  */
 import { addDays, diffDays, type DayString } from './time';
 import type { MinutesByKind, PaceStatus } from './pace';
 
 /** Which sessions the record is read through (PERSONAL_OFFICE_PLAN; services/learningDb/lens.ts). */
-export type StandLens = 'personal' | 'work' | 'all';
+export type StandLens = 'personal' | 'learning' | 'building' | 'work' | 'all' | 'learning_work';
 export type StandArea = 'personal' | 'work';
 /** A day's tooltip names at most this many places its time went. */
 export const DAY_PLACES = 3;
@@ -79,6 +81,8 @@ export interface Measures {
     totalMinutes: number;
     /** The same minutes by area (PERSONAL_OFFICE_PLAN): the All lens's split. */
     minutesByArea: Record<StandArea, number>;
+    /** Where most of the minutes went (a folder, else a subject), when the sessions name one (the Building words). */
+    topPlace: { name: string; minutes: number } | null;
     sessions: number;
     /** Reviews scheduled in the span: done on their day, done later, still open now; and catch-ups (due before the span, done in it). */
     reviews: { due: number; onDay: number; late: number; open: number; catchUps: number };
@@ -185,6 +189,7 @@ export function measures(rows: StandRows, span: Span, recordStart: DayString): M
     const minutes = zeroKinds();
     const minutesByArea = zeroAreas();
     const perDay = new Map<DayString, number>();
+    const perPlace = new Map<string, number>();
     let sessions = 0;
     const practice = { total: 0, alone: 0, hints: 0, afterAnswer: 0 };
     for (const s of rows.sessions) {
@@ -194,6 +199,8 @@ export function measures(rows: StandRows, span: Span, recordStart: DayString): M
         minutes[s.kind] += m;
         minutesByArea[s.area ?? 'personal'] += m;
         perDay.set(s.day, (perDay.get(s.day) ?? 0) + m);
+        const place = s.place?.trim();
+        if (place && m > 0) perPlace.set(place, (perPlace.get(place) ?? 0) + m);
         if (s.kind === 'practice' && s.outcome) {
             practice.total += 1;
             if (s.outcome === 'alone') practice.alone += 1;
@@ -256,6 +263,7 @@ export function measures(rows: StandRows, span: Span, recordStart: DayString): M
         minutes,
         totalMinutes: KINDS.reduce((a, k) => a + minutes[k], 0),
         minutesByArea,
+        topPlace: [...perPlace.entries()].reduce<{ name: string; minutes: number } | null>((best, [name, minutes]) => (!best || minutes > best.minutes || (minutes === best.minutes && name.localeCompare(best.name) < 0) ? { name, minutes } : best), null),
         sessions,
         reviews,
         focus,
@@ -348,6 +356,10 @@ export function goalLineOf(goals: readonly GoalLine[]): GoalLine | null {
  */
 export function verdictLines(p: Omit<StandPeriod, 'verdict'>, goal: GoalLine | null, ctx: { today: DayString; recordStart: DayString; lens?: StandLens }): string[] {
     if (ctx.lens === 'work') return workVerdictLines(p, ctx);
+    if (ctx.lens === 'building') return buildVerdictLines(p, ctx);
+    const learning = ctx.lens === 'learning';
+    // Learning and work (their ticks): the split names the learning part.
+    const mixed = ctx.lens === 'all' || ctx.lens === 'learning_work';
     const words = PHRASES[p.window];
     const c = p.current;
     const prev = p.previous;
@@ -355,14 +367,17 @@ export function verdictLines(p: Omit<StandPeriod, 'verdict'>, goal: GoalLine | n
     const lines: string[] = [];
 
     if (isEmpty(c) && (!prev || isEmpty(prev))) {
-        lines.push(`${p.partial ? 'Nothing in the record yet.' : `Nothing in the record for ${words.now}.`} Reviews, focus lines and logged sessions fill this in.`);
+        lines.push(`${p.partial ? 'Nothing in the record yet.' : `Nothing in the record for ${words.now}.`} Reviews, focus lines and ${learning ? 'study sessions' : 'logged sessions'} fill this in.`);
     } else {
         // 1. Consistency.
         const a = c.activeDays;
         if (p.partial) {
-            lines.push(c.days <= 1 ? (a ? 'Active today, the first day of the record.' : 'Nothing yet today, the first day of the record.') : `Active ${a} of the ${c.days} days since the record started on ${start}.`);
+            const did = learning ? 'Studied' : 'Active';
+            lines.push(c.days <= 1 ? (a ? `${did} today, the first day of the record.` : 'Nothing yet today, the first day of the record.') : `${did} ${learning ? 'on ' : ''}${a} of the ${c.days} days since the record started on ${start}.`);
         } else {
-            const head = p.window === 'week' ? `Active ${a} of the last 7 days` : `Active ${plural(a, 'day')} in ${words.now}`;
+            const head = learning
+                ? p.window === 'week' ? `Studied on ${a} of the last 7 days` : `Studied on ${plural(a, 'day')} in ${words.now}`
+                : p.window === 'week' ? `Active ${a} of the last 7 days` : `Active ${plural(a, 'day')} in ${words.now}`;
             lines.push(prev ? `${head}, ${compareWords(a, prev.activeDays, 'count')} ${words.before}.` : `${head}.`);
         }
         // 2. Effort.
@@ -376,8 +391,8 @@ export function verdictLines(p: Omit<StandPeriod, 'verdict'>, goal: GoalLine | n
             const vs = prev ? `, ${compareWords(total, prev.totalMinutes, 'minutes')} ${words.before}` : '';
             // The All lens says how the time split (PERSONAL_OFFICE_PLAN §5 stage 3), when both areas have some.
             const split =
-                ctx.lens === 'all' && c.minutesByArea.personal > 0 && c.minutesByArea.work > 0
-                    ? `; ${formatMinutes(c.minutesByArea.personal)} personal, ${formatMinutes(c.minutesByArea.work)} work`
+                mixed && c.minutesByArea.personal > 0 && c.minutesByArea.work > 0
+                    ? `; ${formatMinutes(c.minutesByArea.personal)} ${ctx.lens === 'learning_work' ? 'learning' : 'personal'}, ${formatMinutes(c.minutesByArea.work)} work`
                     : most;
             lines.push(`${formatMinutes(total)} logged${p.partial ? ` ${span}` : ''}${vs}${split}.`);
         }
@@ -426,6 +441,36 @@ function workVerdictLines(p: Omit<StandPeriod, 'verdict'>, ctx: { today: DayStri
     const span = p.partial ? `since ${start}` : `in ${words.now}`;
     if (total === 0) lines.push(prev && prev.totalMinutes > 0 ? `No time tracked ${span}; ${formatMinutes(prev.totalMinutes)} ${words.before}.` : `No time tracked ${span}.`);
     else lines.push(`${formatMinutes(total)} at work${p.partial ? ` ${span}` : ''}${prev ? `, ${compareWords(total, prev.totalMinutes, 'minutes')} ${words.before}` : ''}.`);
+    return lines;
+}
+
+/**
+ * The Building lens's verdict (STUDY_FLOW_PLAN §4.5): days spent building their own projects and the hours against the
+ * span before, with where most of it went. No goal: a goal is learning's.
+ */
+function buildVerdictLines(p: Omit<StandPeriod, 'verdict'>, ctx: { today: DayString; recordStart: DayString }): string[] {
+    const words = PHRASES[p.window];
+    const c = p.current;
+    const prev = p.previous;
+    const start = shortDay(ctx.recordStart, ctx.today);
+    if (c.activeDays === 0 && c.totalMinutes === 0 && (!prev || (prev.activeDays === 0 && prev.totalMinutes === 0))) {
+        return [`${p.partial ? 'Nothing built yet.' : `Nothing built in ${words.now}.`} Claude Code in a folder of your own fills this in.`];
+    }
+    const lines: string[] = [];
+    const a = c.activeDays;
+    if (p.partial) lines.push(c.days <= 1 ? (a ? 'Built today, the first day of the record.' : 'Nothing built yet today, the first day of the record.') : `Built on ${a} of the ${c.days} days since the record started on ${start}.`);
+    else {
+        const head = p.window === 'week' ? `Built on ${a} of the last 7 days` : `Built on ${plural(a, 'day')} in ${words.now}`;
+        lines.push(prev ? `${head}, ${compareWords(a, prev.activeDays, 'count')} ${words.before}.` : `${head}.`);
+    }
+    const total = c.totalMinutes;
+    const span = p.partial ? `since ${start}` : `in ${words.now}`;
+    if (total === 0) lines.push(prev && prev.totalMinutes > 0 ? `No time logged ${span}; ${formatMinutes(prev.totalMinutes)} ${words.before}.` : `No time logged ${span}.`);
+    else {
+        const top = c.topPlace;
+        const most = top && top.minutes === total ? `; all of it on ${clipTitle(top.name)}` : top && top.minutes * 2 >= total ? `; most of it on ${clipTitle(top.name)}` : '';
+        lines.push(`${formatMinutes(total)} on your own projects${p.partial ? ` ${span}` : ''}${prev ? `, ${compareWords(total, prev.totalMinutes, 'minutes')} ${words.before}` : ''}${most}.`);
+    }
     return lines;
 }
 

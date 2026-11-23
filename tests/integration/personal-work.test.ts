@@ -106,6 +106,40 @@ describe('a work folder (PERSONAL_OFFICE_PLAN stage 1)', () => {
         expect((await stand()).periods.week.current).toMatchObject({ activeDays: 1, totalMinutes: 75 });
     });
 
+    it('STUDY_FLOW_PLAN §4.5: Learning and Building look at each part of Personal alone', async () => {
+        const { user, close, stand } = await setup();
+        // Only study so far: no Learning and Building to offer.
+        await close('cc_learn2', 'dsa-practice', 'study', 45);
+        expect(await stand()).toMatchObject({ hasLearning: true, hasBuilding: false, buildFolders: [] });
+        await close('cc_build2', 'side-project', 'personal', 120);
+        const personal = await stand();
+        expect(personal).toMatchObject({ lens: 'personal', hasLearning: true, hasBuilding: true, buildFolders: ['side-project'] });
+        expect(personal.periods.week.current).toMatchObject({ totalMinutes: 165 });
+        const learning = await stand('learning');
+        expect(learning).toMatchObject({ lens: 'learning', progressLens: 'personal' });
+        expect(learning.periods.week.current).toMatchObject({ activeDays: 1, totalMinutes: 45 });
+        expect(learning.periods.week.verdict[0]).toBe('Studied today, the first day of the record.');
+        const building = await stand('building');
+        expect(building.periods.week.current).toMatchObject({ activeDays: 1, totalMinutes: 120, reviews: { due: 0 } });
+        expect(building.periods.week.verdict[0]).toBe('Built today, the first day of the record.');
+        expect(building.periods.week.verdict[1]).toMatch(/^2 h on your own projects since \d+ \w+; all of it on side-project\.$/);
+        expect(building.days.at(-1)).toMatchObject({ minutes: 120, places: [{ name: 'side-project', minutes: 120, area: 'personal' }] });
+        expect(building).toMatchObject({ openNow: 0, moments: [] });
+
+        // Their ticks: building no longer counts; learning always does (Home's rhythm, the stand's default).
+        const user2 = user;
+        expect((await api(user2).patch('/api/learning/settings', { progressIncludesBuilding: false })).body.data).toMatchObject({ progressIncludesBuilding: false, progressIncludesWork: false });
+        const counted = await stand();
+        expect(counted).toMatchObject({ lens: 'learning', progressLens: 'learning' });
+        expect(counted.periods.week.current).toMatchObject({ totalMinutes: 45 });
+        await close('cc_work2', 'erp-workspace', 'work', 60);
+        expect((await api(user2).patch('/api/learning/settings', { progressIncludesWork: true })).status).toBe(200);
+        const mixed = await stand();
+        expect(mixed).toMatchObject({ lens: 'learning_work', progressLens: 'learning_work' });
+        expect(mixed.periods.week.current).toMatchObject({ totalMinutes: 105, minutesByArea: { personal: 45, work: 60 } });
+        expect(mixed.periods.week.verdict[1]).toMatch(/45 min learning, 1 h work\.$/);
+    });
+
     it('an agent’s change of a folder’s kind is logged with an Undo that moves the past back', async () => {
         const { user, close } = await setup();
         await close('cc_w1', 'erp-workspace', 'work', 100);
@@ -114,7 +148,7 @@ describe('a work folder (PERSONAL_OFFICE_PLAN stage 1)', () => {
         expect((await agent.patch(`/api/projects/${project.id}`, { kind: 'personal' })).status).toBe(200);
         expect(await prisma.workSession.findFirstOrThrow({ where: { userId: user.id } })).toMatchObject({ area: 'personal' });
         const edit = await prisma.agentEdit.findFirstOrThrow({ where: { userId: user.id, kind: 'project_update' } });
-        expect(edit.summary).toBe('Changed the project "erp-workspace": marked it as personal');
+        expect(edit.summary).toBe('Changed the project "erp-workspace": marked it as building');
         expect((await api(user).post(`/api/agent/edits/${edit.id}/undo`)).status).toBe(200);
         expect(await prisma.project.findUniqueOrThrow({ where: { id: project.id } })).toMatchObject({ kind: 'work' });
         expect(await prisma.workSession.findFirstOrThrow({ where: { userId: user.id } })).toMatchObject({ area: 'work' });

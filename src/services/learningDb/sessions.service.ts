@@ -697,7 +697,7 @@ export async function listSessions(
             ...(options.kind ? { kind: options.kind } : {}),
             ...(project ? { projectId: project.id } : {}),
             ...(options.subjectId ? { subjectId: options.subjectId } : {}),
-            ...sessionsOf(options.lens ?? 'all'),
+            AND: [sessionsOf(options.lens ?? 'all')],
         },
         orderBy: [{ day: 'desc' }, { startedAt: 'desc' }, { id: 'desc' }],
         take: LIST_LIMIT,
@@ -716,7 +716,7 @@ export async function listSessions(
 
 /** Days with a session in [from, to] that the lens sees (the rhythm counts them as active: the progress lens). */
 export async function sessionDays(userId: string, from: DayString, to: DayString, lens: Lens, db: DbClient = prisma): Promise<DayString[]> {
-    const rows = await db.workSession.findMany({ where: { userId, day: { gte: toDbDay(from), lte: toDbDay(to) }, ...sessionsOf(lens) }, select: { day: true }, distinct: ['day'] });
+    const rows = await db.workSession.findMany({ where: { userId, day: { gte: toDbDay(from), lte: toDbDay(to) }, AND: [sessionsOf(lens)] }, select: { day: true }, distinct: ['day'] });
     return rows.map((r) => fromDbDay(r.day));
 }
 

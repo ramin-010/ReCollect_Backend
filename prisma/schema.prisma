@@ -100,35 +100,38 @@ model User {
 
   // ── Daily loop v2 settings (LOOP_V2_SPEC §1) ──
   /// The size of Today in minutes (5–120).
-  dailyBudgetMin       Int        @default(25)
+  dailyBudgetMin           Int        @default(25)
   /// 11-22 (the owner): their public LeetCode username; once a day their newly accepted problems are logged as practice.
-  leetcodeUser         String?    @db.VarChar(40)
+  leetcodeUser             String?    @db.VarChar(40)
   /// When the LeetCode import last ran for them.
-  leetcodeSyncedAt     DateTime?
+  leetcodeSyncedAt         DateTime?
   /// PERSONAL_OFFICE_PLAN (11-23): work counts as progress too (active days, hours, the buddy). Off: personal only.
-  progressIncludesWork Boolean    @default(false)
+  progressIncludesWork     Boolean    @default(false)
+  /// STUDY_FLOW_PLAN §4.5 (11-23): building their own projects counts as progress too (learning always does). On by
+  /// default: it did before the choice existed.
+  progressIncludesBuilding Boolean    @default(true)
   /// EASY_SETUP_PLAN (11-23): what a folder the server has never seen is (Settings › Tracking): ask (the agent asks
   /// them once), a kind, or off (not logged).
-  newFolders           NewFolders @default(ask)
+  newFolders               NewFolders @default(ask)
   /// Time blocks / timeline / Day Manager / triage / debrief / catch-up. Off: GET /api/today
   /// returns schedule/triage/todayDebrief null and the rollover creates no slots.
-  routineEnabled       Boolean    @default(false)
+  routineEnabled           Boolean    @default(false)
   /// Busy mode is on while today <= busyUntil (a local day).
-  busyUntil            DateTime?  @db.Date
-  nudgeEmailEnabled    Boolean    @default(true)
+  busyUntil                DateTime?  @db.Date
+  nudgeEmailEnabled        Boolean    @default(true)
   /// 'HH:mm', the user's local time for the morning email.
-  nudgeTime            String     @default("08:30")
+  nudgeTime                String     @default("08:30")
   /// "About me, for my agents" (SYNC_SPINE_SPEC 1.3): how the user learns and works, read first by every chat's brief.
-  agentProfile         String?    @db.VarChar(600)
+  agentProfile             String?    @db.VarChar(600)
   /// Local day the morning email was last sent (idempotency).
-  lastNudgeDay         DateTime?  @db.Date
+  lastNudgeDay             DateTime?  @db.Date
   /// Local day the morning notification was last sent (idempotency; ALWAYS_ON_SPEC 6.3).
-  lastPushDay          DateTime?  @db.Date
+  lastPushDay              DateTime?  @db.Date
   /// Local day of the last POST /api/learning/ensure-today (the app was opened).
-  lastSeenDay          DateTime?  @db.Date
+  lastSeenDay              DateTime?  @db.Date
   /// lastSeenDay as it was before today's first visit, so "comeback" mode lasts the whole day
   /// after ensure-today moved lastSeenDay to today.
-  prevSeenDay          DateTime?  @db.Date
+  prevSeenDay              DateTime?  @db.Date
 
   subjects       Subject[]
   topics         Topic[]

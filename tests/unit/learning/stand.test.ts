@@ -18,6 +18,7 @@ import {
     type StandPeriod,
     type StandRows,
 } from '../../../src/services/learning/stand';
+import { inLens, progressLensOf, sessionsOf } from '../../../src/services/learningDb/lens';
 
 const d = (s: string) => s as DayString;
 const TODAY = d('2026-11-22'); // a Sunday: this week's Monday is 16 Nov
@@ -325,5 +326,58 @@ describe('lenses (PERSONAL_OFFICE_PLAN)', () => {
         expect(stand('personal').periods.week.verdict).toEqual(['Active 3 of the last 7 days, 3 more than the 7 days before.', '1 h 10 min logged, 1 h 10 min more than the 7 days before; most of it study.']);
         const none = buildStand(empty(), { today: TODAY, recordStart: d('2026-01-01'), goal: null, lens: 'work' });
         expect(none.periods.week.verdict).toEqual(['No work tracked in the last 7 days. Claude Code in a folder marked Work fills this in.']);
+    });
+});
+
+describe('Learning and Building (STUDY_FLOW_PLAN §4.5)', () => {
+    /** Two weeks of learning and of building their own projects (and a day at work no lens here sees). */
+    const all = [
+        { day: d('2026-11-16'), kind: 'study' as const, minutes: 40, outcome: null, area: 'personal' as const, place: 'DSA' },
+        { day: d('2026-11-17'), kind: 'practice' as const, minutes: 30, outcome: 'alone' as const, area: 'personal' as const, place: 'DSA' },
+        { day: d('2026-11-17'), kind: 'build' as const, minutes: 300, outcome: null, area: 'work' as const, place: 'erp-workspace' },
+        { day: d('2026-11-18'), kind: 'build' as const, minutes: 240, outcome: null, area: 'personal' as const, place: 'second_brain' },
+        { day: d('2026-11-20'), kind: 'build' as const, minutes: 120, outcome: null, area: 'personal' as const, place: 'second_brain' },
+        { day: d('2026-11-21'), kind: 'build' as const, minutes: 60, outcome: null, area: 'personal' as const, place: 'upfly' },
+        { day: d('2026-11-11'), kind: 'build' as const, minutes: 90, outcome: null, area: 'personal' as const, place: 'upfly' },
+    ];
+    const review = { scheduledFor: d('2026-11-19'), completedDay: d('2026-11-19'), status: 'done' as const };
+    // As the service hands them in: Learning keeps the record's other rows; Building sees build sessions only.
+    const rows = (lens: 'learning' | 'building'): StandRows => ({
+        ...(lens === 'building' ? empty() : { ...empty(), revisions: [review] }),
+        sessions: all.filter((x) => inLens(lens, x.area, x.kind)),
+    });
+    const stand = (lens: 'learning' | 'building') => buildStand(rows(lens), { today: TODAY, recordStart: d('2026-10-01'), goal: null, lens });
+
+    it('the lens picks the sessions: learning is personal and not a build; building is a personal build', () => {
+        expect(inLens('learning', 'personal', 'review')).toBe(true);
+        expect(inLens('learning', 'personal', 'build')).toBe(false);
+        expect(inLens('learning', 'personal')).toBe(false);
+        expect(inLens('building', 'personal', 'build')).toBe(true);
+        expect(inLens('building', 'work', 'build')).toBe(false);
+        expect(inLens('personal', 'personal')).toBe(true);
+        expect(sessionsOf('learning')).toEqual({ area: 'personal', kind: { in: ['study', 'practice', 'review'] } });
+        expect(sessionsOf('building')).toEqual({ area: 'personal', kind: 'build' });
+        // What counts as progress: learning always; building and work as ticked.
+        expect([progressLensOf(true, false), progressLensOf(false, false), progressLensOf(false, true), progressLensOf(true, true)]).toEqual(['personal', 'learning', 'learning_work', 'all']);
+        expect(inLens('learning_work', 'work', 'build')).toBe(true);
+        expect(inLens('learning_work', 'personal', 'study')).toBe(true);
+        expect(inLens('learning_work', 'personal', 'build')).toBe(false);
+        expect(sessionsOf('learning_work')).toEqual({ OR: [{ area: 'work' }, { area: 'personal', kind: { in: ['study', 'practice', 'review'] } }] });
+        expect(stand('learning').periods.week.current.activeDays).toBe(3); // 16, 17, 19 (the review)
+        expect(stand('building').periods.week.current.activeDays).toBe(3); // 18, 20, 21
+        expect(stand('building').periods.week.current.topPlace).toEqual({ name: 'second_brain', minutes: 360 });
+    });
+
+    it('the words: studied days for Learning; built days, hours and where most of it went for Building', () => {
+        expect(stand('learning').periods.week.verdict).toEqual(['Studied on 3 of the last 7 days, 3 more than the 7 days before.', '1 h 10 min logged, 1 h 10 min more than the 7 days before; most of it study.']);
+        expect(stand('building').periods.week.verdict).toEqual([
+            'Built on 3 of the last 7 days, 2 more than the 7 days before.',
+            '7 h on your own projects, 5 h 30 min more than the 7 days before; most of it on second_brain.',
+        ]);
+        expect(stand('building').periods.month.verdict[0]).toBe('Built on 4 days in the last 4 weeks.');
+        const none = buildStand(empty(), { today: TODAY, recordStart: d('2026-01-01'), goal: null, lens: 'building' });
+        expect(none.periods.week.verdict).toEqual(['Nothing built in the last 7 days. Claude Code in a folder of your own fills this in.']);
+        const nothing = buildStand(empty(), { today: TODAY, recordStart: d('2026-01-01'), goal: null, lens: 'learning' });
+        expect(nothing.periods.week.verdict).toEqual(['Nothing in the record for the last 7 days. Reviews, focus lines and study sessions fill this in.']);
     });
 });

@@ -2,11 +2,13 @@
 // against the same span before it, and the verdict, all worked out by code (services/learning/stand.ts).
 // The mirror (mirror.service.ts) keeps its own shape for the brief and the MCP's get_mirror.
 //
-//   GET /api/mirror/stand?lens=personal|work|all   read (no lens: what counts as progress for them)
+//   GET /api/mirror/stand?lens=personal|learning|building|work|all   read (no lens: what counts as progress for them)
 //
 // PERSONAL_OFFICE_PLAN (11-23): the record through a lens. Personal: their own sessions, reviews, focus lines, goals.
 // Work: work sessions only (time at work; nothing of learning). All: both. Home's year and week ask without a lens,
 // so they show what counts as progress.
+// STUDY_FLOW_PLAN §4.5: Learning = the Personal record without build sessions; Building = build sessions only (no
+// reviews, topics, goals or habits, as the Work lens), with the folders of their own the time went to.
 import { prisma } from '../../db/prisma';
 import { addDays, dayOf, startOfDay, type DayString } from '../learning';
 import { buildStand, goalLineOf, recordStartOf, STAND_GRID_DAYS, STAND_LOOKBACK_DAYS, type Stand, type StandRows } from '../learning/stand';
@@ -32,6 +34,12 @@ export interface StandJson extends Stand {
     hasWork: boolean;
     /** The keys of their folders marked Work (the Work lens lists what was done in them). */
     workFolders: string[];
+    /** The record holds learning (study, practice, review sessions; reviews; topics finished) and building (build
+     * sessions of their own): the page offers Learning and Building only when both are there. */
+    hasLearning: boolean;
+    hasBuilding: boolean;
+    /** The keys of their own folders with build time in the record (the Building lens lists what was built in them). */
+    buildFolders: string[];
     /** Reviews still waiting from before today (pending, scheduled before today). */
     openNow: number;
     /** Weak spots open now. */
@@ -75,7 +83,7 @@ export async function getStand(userId: string, now: Date = new Date(), lensAsked
         prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { createdAt: true } }),
         prisma.workSession.findMany({
             where: { userId, day: { gte: fromDay, lte: toDbDay(today) } },
-            select: { day: true, kind: true, minutes: true, outcome: true, area: true, project: { select: { name: true } }, subject: { select: { name: true } } },
+            select: { day: true, kind: true, minutes: true, outcome: true, area: true, project: { select: { name: true, key: true } }, subject: { select: { name: true } } },
         }),
         // Due in the two years, or completed in them (catch-ups of older reviews).
         prisma.revision.findMany({
@@ -104,12 +112,12 @@ export async function getStand(userId: string, now: Date = new Date(), lensAsked
         prisma.doc.aggregate({ where: { userId, trashedAt: null }, _min: { createdAt: true } }),
         prisma.project.findMany({ where: { userId, kind: 'work' }, select: { key: true }, orderBy: { key: 'asc' } }),
     ]);
-    // The Work lens reads work sessions and nothing else: reviews, focus lines, targets and goals are learning.
-    const work = lens === 'work';
+    // The Work and Building lenses read sessions and nothing else: reviews, focus lines, targets and goals are learning.
+    const work = lens === 'work' || lens === 'building';
 
     const rows: StandRows = {
         sessions: sessions
-            .filter((s) => inLens(lens, s.area))
+            .filter((s) => inLens(lens, s.area, s.kind))
             .map((s) => ({ day: fromDbDay(s.day), kind: s.kind, minutes: s.minutes, outcome: s.outcome, area: s.area, place: s.project?.name ?? s.subject?.name ?? null })),
         revisions: work ? [] : revisions.map((r) => ({ scheduledFor: fromDbDay(r.scheduledFor), completedDay: r.completedAt ? local(r.completedAt) : null, status: r.status })),
         topicsDone: work ? [] : topicsDone.filter((t) => t.doneAt).map((t) => ({ doneDay: local(t.doneAt!), subjectId: t.subjectId })),
@@ -154,12 +162,19 @@ export async function getStand(userId: string, now: Date = new Date(), lensAsked
         .sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0));
 
     const hasWork = workFolders.length > 0 || sessions.some((s) => s.area === 'work');
+    const built = sessions.filter((s) => s.area === 'personal' && s.kind === 'build');
+    const hasBuilding = built.length > 0;
+    const hasLearning = sessions.some((s) => s.area === 'personal' && s.kind !== 'build') || revisions.some((r) => r.status === 'done') || topicsDone.length > 0;
+    const buildFolders = [...new Set(built.flatMap((s) => (s.project ? [s.project.key] : [])))].sort();
     return {
         ...buildStand(rows, { today, recordStart: start, goal, lens }),
         lens,
         progressLens: progress,
         hasWork,
         workFolders: workFolders.map((f) => f.key),
+        hasLearning,
+        hasBuilding,
+        buildFolders,
         openNow: work ? 0 : openNow,
         weakOpenNow: work ? 0 : weakOpenNow,
         moments,

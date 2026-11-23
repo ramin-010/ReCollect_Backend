@@ -32,6 +32,7 @@ const settingsSchema = z.object({
     agentProfile: z.string().max(600, 'At most 600 characters').nullable().optional(),
     /** PERSONAL_OFFICE_PLAN: work counts as progress too. */
     progressIncludesWork: z.boolean().optional(),
+    progressIncludesBuilding: z.boolean().optional(),
     /** EASY_SETUP_PLAN: what a folder the server has never seen is. */
     newFolders: z.enum(NEW_FOLDERS).optional(),
 });

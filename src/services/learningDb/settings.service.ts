@@ -22,6 +22,7 @@ const settingsSelect = {
     lastSeenDay: true,
     agentProfile: true,
     progressIncludesWork: true,
+    progressIncludesBuilding: true,
     newFolders: true,
 } as const;
 
@@ -44,6 +45,7 @@ export interface LearningSettingsInput {
     agentProfile?: string | null | undefined;
     /** PERSONAL_OFFICE_PLAN: work counts as progress too (the app only: agents may not change it). */
     progressIncludesWork?: boolean | undefined;
+    progressIncludesBuilding?: boolean | undefined;
     /** EASY_SETUP_PLAN: what a folder the server has never seen is (the app only). */
     newFolders?: NewFolders | undefined;
 }
@@ -70,6 +72,7 @@ export async function updateLearningSettings(userId: string, input: LearningSett
                 ...(input.nudgeTime !== undefined ? { nudgeTime: minutesToTime(timeToMinutes(input.nudgeTime)) } : {}),
                 ...(input.agentProfile !== undefined ? { agentProfile: input.agentProfile?.trim() ? input.agentProfile.trim().slice(0, 600) : null } : {}),
                 ...(input.progressIncludesWork !== undefined ? { progressIncludesWork: input.progressIncludesWork } : {}),
+                ...(input.progressIncludesBuilding !== undefined ? { progressIncludesBuilding: input.progressIncludesBuilding } : {}),
                 ...(input.newFolders !== undefined ? { newFolders: input.newFolders } : {}),
             },
             select: settingsSelect,
@@ -84,6 +87,6 @@ export async function updateLearningSettings(userId: string, input: LearningSett
     if (input.timezone !== undefined) poke('rollover', 'nudge', 'buddy');
     else if (input.nudgeTime !== undefined || input.nudgeEmailEnabled !== undefined) poke('nudge');
     // What counts as progress changed: the buddy's day hears it.
-    if (input.progressIncludesWork !== undefined) poke('buddy');
+    if (input.progressIncludesWork !== undefined || input.progressIncludesBuilding !== undefined) poke('buddy');
     return serializeLearningSettings(row);
 }

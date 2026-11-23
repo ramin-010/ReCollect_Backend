@@ -241,7 +241,7 @@ export const SELF_LOGGED: Readonly<Record<string, string>> = {
     'POST /api/canvas/layout': 'stateless: lays a board out and stores nothing',
     'POST /api/canvas/render': 'stateless: draws a board as SVG or PNG and stores nothing',
     'PUT /api/sessions/by-key/:key': 'the session list is its own log (each entry names its writer; the user edits or deletes any); a topic change it asks for is logged as topic_update',
-    'PATCH /api/sessions/by-key/:key/kind': "what a chat is (Personal, Study, Work): the session row shows it and who said so (the agent, or the user's own words), and the user switches it there, which outweighs any chat",
+    'PATCH /api/sessions/by-key/:key/kind': "what a chat is (Building, Learning, Work): the session row shows it and who said so (the agent, or the user's own words), and the user switches it there, which outweighs any chat",
     'PUT /api/projects/by-key/:key': "what a folder is and what is logged there, on the user's answer to the folder's one question: Settings › Tracking shows it and the user changes it there",
     'POST /api/setup/disconnect': "a PC's own sign-in ends itself (recollect-setup remove): Settings › Agents shows it as ended; nothing else changes",
     'POST /api/suggestions': 'a pending suggestion is its own visible record (Home → Suggested, naming who proposed it): nothing changes until the user accepts it, and he can dismiss it',

@@ -5,7 +5,7 @@
 // Mounted per route in src/routers/learning.routes.ts, after authentication and idempotency (a
 // replayed response never logs twice), before the handler.
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
-import type { AgentEditKind, GoalStatus, Prisma } from '@prisma/client';
+import type { AgentEditKind, GoalStatus, Prisma, ProjectKind } from '@prisma/client';
 import { prisma } from '../../db/prisma';
 import { isTokenRequest } from '../../middlwares/auth';
 import { conflict, LearningHttpError } from '../learning/http';
@@ -14,6 +14,7 @@ import { pathPlaces } from '../learningDb/path.service';
 import { weekTargetBefore } from '../learningDb/week.service';
 import { taskBefore } from '../tasks/tasks.service';
 import { decisionBefore } from '../learningDb/decisions.service';
+import { KIND_WORD } from '../learningDb/lens';
 import { agentActor, plural, quoted, recordAgentEdit, type AgentActor } from './agentEditLog';
 
 /** The `data` of a `{ success: true, data }` response (route-specific shape). */
@@ -515,7 +516,7 @@ export const logProjectUpdate = agentEdit<{ id: string; name: string; goalId: st
             req.body?.nextStep !== undefined && req.body.nextStep !== before.nextStep ? 'set its next step' : null,
             req.body?.goalId !== undefined && req.body.goalId !== before.goalId ? (req.body.goalId ? 'linked a goal' : 'unlinked its goal') : null,
             req.body?.isArchived !== undefined && req.body.isArchived !== before.isArchived ? (req.body.isArchived ? 'archived it' : 'took it out of the archive') : null,
-            req.body?.kind !== undefined && req.body.kind !== before.kind ? `marked it as ${String(req.body.kind)}` : null,
+            req.body?.kind !== undefined && req.body.kind !== before.kind ? `marked it as ${KIND_WORD[req.body.kind as ProjectKind] ?? String(req.body.kind)}` : null,
             req.body?.tracking !== undefined && req.body.tracking !== before.tracking ? `set what is logged there to ${req.body.tracking === 'light' ? 'the time only' : req.body.tracking === 'off' ? 'nothing' : req.body.tracking === 'full' ? 'everything' : 'its default'}` : null,
         ].filter(Boolean);
         if (parts.length === 0) return null;

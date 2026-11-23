@@ -7,13 +7,25 @@
 // The rule is kept by one guard (tests/unit/learning/lens-guard.test.ts): a file that reads WorkSession rows must
 // filter them with `sessionsOf` / `countedSessions` here, or be on its list of readers that see both areas on purpose
 // (the work log, the export, the session list itself).
-import type { FolderTracking, KindSetBy, NewFolders, ProjectKind, SessionArea, SessionKind } from '@prisma/client';
+import type { FolderTracking, KindSetBy, NewFolders, Prisma, ProjectKind, SessionArea, SessionKind } from '@prisma/client';
 import { prisma, type DbClient } from '../../db/prisma';
 
-export type Lens = 'personal' | 'work' | 'all';
-export const LENSES = ['personal', 'work', 'all'] as const satisfies readonly Lens[];
-/** The lens that judges: personal only, or personal and work (the person's choice). */
-export type ProgressLens = Extract<Lens, 'personal' | 'all'>;
+// STUDY_FLOW_PLAN §4.5 (11-23): Personal is two parts, Learning (study, practice, reviews) and Building (their own
+// projects: build sessions). Two more lenses look at each part alone; what judges stays on the progress lens.
+// What counts as progress is their choice of three ticks (Settings › Tracking): Learning always, Building and Work
+// as they pick (User.progressIncludesBuilding, progressIncludesWork). Each mix is a lens: learning, personal
+// (learning + building), learning_work, all.
+export type Lens = 'personal' | 'learning' | 'building' | 'work' | 'all' | 'learning_work';
+export const LENSES = ['personal', 'learning', 'building', 'work', 'all', 'learning_work'] as const satisfies readonly Lens[];
+/** The session kinds that are learning (a build is building). */
+export const LEARNING_KINDS = ['study', 'practice', 'review'] as const satisfies readonly SessionKind[];
+/** What people and agents read for a folder's or a chat's kind (the stored values stay personal, study, work). */
+export const KIND_WORD: Readonly<Record<ProjectKind, string>> = { personal: 'building', study: 'learning', work: 'work' };
+/** The lens that judges: learning, with building and work as the person ticked them. */
+export type ProgressLens = Extract<Lens, 'learning' | 'personal' | 'learning_work' | 'all'>;
+
+/** The progress lens of their ticks (learning always counts). */
+export const progressLensOf = (building: boolean, work: boolean): ProgressLens => (building ? (work ? 'all' : 'personal') : work ? 'learning_work' : 'learning');
 export const PROJECT_KINDS = ['personal', 'study', 'work'] as const satisfies readonly ProjectKind[];
 /** EASY_SETUP_PLAN: what is logged in a folder (full: everything; light: the time only; off: nothing). */
 export const FOLDER_TRACKING = ['full', 'light', 'off'] as const satisfies readonly FolderTracking[];
@@ -27,8 +39,9 @@ export const areaOfKind = (kind: ProjectKind | null | undefined): SessionArea =>
 export const trackingOf = (kind: ProjectKind, tracking: FolderTracking | null | undefined): FolderTracking => tracking ?? (kind === 'work' ? 'light' : 'full');
 
 // ─── What a chat is (EASY_SETUP_PLAN §7) ───────────────────────────────
-// Every chat (one session) is Personal, Study or Work; its folder only gives the starting value. Personal = area
-// personal, a build; Study = area personal, study (practice and review are study too); Work = area work.
+// Every chat (one session) is Building, Learning or Work; its folder only gives the starting value. Stored as
+// personal (= Building: area personal, a build), study (= Learning: area personal, study; practice and review are
+// learning too) and work (area work).
 
 export type ChatKind = 'personal' | 'study' | 'work';
 export const CHAT_KINDS = ['personal', 'study', 'work'] as const satisfies readonly ChatKind[];
@@ -49,12 +62,23 @@ export const KIND_SET_RANK: Readonly<Record<KindSetBy, number>> = { folder: 0, p
 /** A choice by `by` replaces one by `was` only when it weighs as much or more (a later, more trusted choice wins). */
 export const mayReset = (by: KindSetBy, was: KindSetBy | null | undefined): boolean => KIND_SET_RANK[by] >= KIND_SET_RANK[was ?? 'folder'];
 
-/** Pure: does a session of this area show under this lens? */
-export const inLens = (lens: Lens, area: SessionArea): boolean => lens === 'all' || lens === area;
+/** Pure: does a session of this area (and kind) show under this lens? Learning and Building need the kind. */
+export function inLens(lens: Lens, area: SessionArea, kind?: SessionKind): boolean {
+    if (lens === 'all') return true;
+    const learning = area === 'personal' && kind !== undefined && kind !== 'build';
+    if (lens === 'learning') return learning;
+    if (lens === 'learning_work') return learning || area === 'work';
+    if (lens === 'building') return area === 'personal' && kind === 'build';
+    return lens === area;
+}
 
 /** The sessions a lens sees, as a `where` part to spread into a WorkSession query (`{}` sees both). */
-export function sessionsOf(lens: Lens): { area?: SessionArea } {
-    return lens === 'all' ? {} : { area: lens };
+export function sessionsOf(lens: Lens): Prisma.WorkSessionWhereInput {
+    if (lens === 'all') return {};
+    if (lens === 'learning') return { area: 'personal', kind: { in: [...LEARNING_KINDS] } };
+    if (lens === 'learning_work') return { OR: [{ area: 'work' }, { area: 'personal', kind: { in: [...LEARNING_KINDS] } }] };
+    if (lens === 'building') return { area: 'personal', kind: 'build' };
+    return { area: lens };
 }
 
 /** A folder's key as the server keeps it (Project.key): single spaces, lower case, at most 100 characters. */
@@ -95,11 +119,15 @@ export async function officeChat(userId: string, folder: string | null | undefin
 
 /** What counts as progress for this person. */
 export async function progressLens(userId: string, db: DbClient = prisma): Promise<ProgressLens> {
-    const user = await db.user.findUnique({ where: { id: userId }, select: { progressIncludesWork: true } });
-    return user?.progressIncludesWork ? 'all' : 'personal';
+    const user = await db.user.findUnique({ where: { id: userId }, select: { progressIncludesWork: true, progressIncludesBuilding: true } });
+    return progressLensOf(user?.progressIncludesBuilding ?? true, user?.progressIncludesWork ?? false);
 }
 
-/** The sessions that count as progress for this person, as a `where` part (see `sessionsOf`). */
-export async function countedSessions(userId: string, db: DbClient = prisma): Promise<{ area?: SessionArea }> {
-    return sessionsOf(await progressLens(userId, db));
+/**
+ * The sessions that count as progress for this person, as a `where` part (see `sessionsOf`), inside an AND so it
+ * never replaces the caller's own kind or OR filter.
+ */
+export async function countedSessions(userId: string, db: DbClient = prisma): Promise<Prisma.WorkSessionWhereInput> {
+    const where = sessionsOf(await progressLens(userId, db));
+    return Object.keys(where).length ? { AND: [where] } : {};
 }

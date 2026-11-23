@@ -93,8 +93,8 @@ export function countProgress(
 ): { done: number; total: number } | null {
     if (!target.measure || !target.amount) return null;
     // A target on a folder counts that folder's time; any other counts only what counts as progress (PERSONAL_OFFICE_PLAN).
-    const inScope = (s: { subjectId: string | null; projectId: string | null; area: SessionArea }) =>
-        (!target.subjectId || s.subjectId === target.subjectId) && (target.projectId ? s.projectId === target.projectId : inLens(activity.lens, s.area));
+    const inScope = (s: { subjectId: string | null; projectId: string | null; area: SessionArea; kind: SessionKind }) =>
+        (!target.subjectId || s.subjectId === target.subjectId) && (target.projectId ? s.projectId === target.projectId : inLens(activity.lens, s.area, s.kind));
     let done = 0;
     if (target.measure === 'practice') done = activity.sessions.filter((s) => s.kind === 'practice' && inScope(s)).length;
     else if (target.measure === 'minutes') done = activity.sessions.filter(inScope).reduce((sum, s) => sum + (s.minutes ?? 0), 0);

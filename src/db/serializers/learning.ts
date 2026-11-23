@@ -285,12 +285,14 @@ export function serializeLearningSettings(u: {
     lastSeenDay: Date | null;
     agentProfile?: string | null;
     progressIncludesWork?: boolean;
+    progressIncludesBuilding?: boolean;
     newFolders?: NewFolders;
 }) {
     return {
         agentProfile: u.agentProfile ?? null,
         /** PERSONAL_OFFICE_PLAN: work counts as progress too (off: personal only). */
         progressIncludesWork: u.progressIncludesWork === true,
+        progressIncludesBuilding: u.progressIncludesBuilding !== false,
         /** EASY_SETUP_PLAN: what a folder the server has never seen is (ask: the agent asks once). */
         newFolders: u.newFolders ?? 'ask',
         dailyBudgetMin: u.dailyBudgetMin,
