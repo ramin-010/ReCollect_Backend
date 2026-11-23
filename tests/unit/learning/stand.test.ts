@@ -362,6 +362,8 @@ describe('Learning and Building (STUDY_FLOW_PLAN §4.5)', () => {
         expect(inLens('learning_work', 'work', 'build')).toBe(true);
         expect(inLens('learning_work', 'personal', 'study')).toBe(true);
         expect(inLens('learning_work', 'personal', 'build')).toBe(false);
+        // Home's graph filter: building and work without learning.
+        expect([inLens('building_work', 'work', 'build'), inLens('building_work', 'personal', 'build'), inLens('building_work', 'personal', 'study')]).toEqual([true, true, false]);
         expect(sessionsOf('learning_work')).toEqual({ OR: [{ area: 'work' }, { area: 'personal', kind: { in: ['study', 'practice', 'review'] } }] });
         expect(stand('learning').periods.week.current.activeDays).toBe(3); // 16, 17, 19 (the review)
         expect(stand('building').periods.week.current.activeDays).toBe(3); // 18, 20, 21

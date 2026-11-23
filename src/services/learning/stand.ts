@@ -26,7 +26,7 @@ import { addDays, diffDays, type DayString } from './time';
 import type { MinutesByKind, PaceStatus } from './pace';
 
 /** Which sessions the record is read through (PERSONAL_OFFICE_PLAN; services/learningDb/lens.ts). */
-export type StandLens = 'personal' | 'learning' | 'building' | 'work' | 'all' | 'learning_work';
+export type StandLens = 'personal' | 'learning' | 'building' | 'work' | 'all' | 'learning_work' | 'building_work';
 export type StandArea = 'personal' | 'work';
 /** A day's tooltip names at most this many places its time went. */
 export const DAY_PLACES = 3;

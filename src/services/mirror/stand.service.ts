@@ -14,7 +14,7 @@ import { addDays, dayOf, startOfDay, type DayString } from '../learning';
 import { buildStand, goalLineOf, recordStartOf, STAND_GRID_DAYS, STAND_LOOKBACK_DAYS, type Stand, type StandRows } from '../learning/stand';
 import { fromDbDay, loadLearningContext, toDbDay } from '../learningDb/common';
 import { goalInclude } from '../learningDb/goals.service';
-import { inLens, progressLens, type Lens, type ProgressLens } from '../learningDb/lens';
+import { inLens, progressLens, SESSIONS_ONLY, type Lens, type ProgressLens } from '../learningDb/lens';
 import { pathsOfGoal } from './paths';
 
 /** Something finished on a day of the last 364 (the page's moments, §9): a topic of a path, a goal's milestone. */
@@ -113,7 +113,7 @@ export async function getStand(userId: string, now: Date = new Date(), lensAsked
         prisma.project.findMany({ where: { userId, kind: 'work' }, select: { key: true }, orderBy: { key: 'asc' } }),
     ]);
     // The Work and Building lenses read sessions and nothing else: reviews, focus lines, targets and goals are learning.
-    const work = lens === 'work' || lens === 'building';
+    const work = SESSIONS_ONLY.includes(lens);
 
     const rows: StandRows = {
         sessions: sessions

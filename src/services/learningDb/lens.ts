@@ -14,9 +14,11 @@ import { prisma, type DbClient } from '../../db/prisma';
 // projects: build sessions). Two more lenses look at each part alone; what judges stays on the progress lens.
 // What counts as progress is their choice of three ticks (Settings › Tracking): Learning always, Building and Work
 // as they pick (User.progressIncludesBuilding, progressIncludesWork). Each mix is a lens: learning, personal
-// (learning + building), learning_work, all.
-export type Lens = 'personal' | 'learning' | 'building' | 'work' | 'all' | 'learning_work';
-export const LENSES = ['personal', 'learning', 'building', 'work', 'all', 'learning_work'] as const satisfies readonly Lens[];
+// (learning + building), learning_work, all. Home's graph filter can also look at building_work (no learning).
+export type Lens = 'personal' | 'learning' | 'building' | 'work' | 'all' | 'learning_work' | 'building_work';
+export const LENSES = ['personal', 'learning', 'building', 'work', 'all', 'learning_work', 'building_work'] as const satisfies readonly Lens[];
+/** Lenses that see sessions only: reviews, topics, goals, focus lines and targets are learning. */
+export const SESSIONS_ONLY: readonly Lens[] = ['work', 'building', 'building_work'];
 /** The session kinds that are learning (a build is building). */
 export const LEARNING_KINDS = ['study', 'practice', 'review'] as const satisfies readonly SessionKind[];
 /** What people and agents read for a folder's or a chat's kind (the stored values stay personal, study, work). */
@@ -69,6 +71,7 @@ export function inLens(lens: Lens, area: SessionArea, kind?: SessionKind): boole
     if (lens === 'learning') return learning;
     if (lens === 'learning_work') return learning || area === 'work';
     if (lens === 'building') return area === 'personal' && kind === 'build';
+    if (lens === 'building_work') return area === 'work' || kind === 'build';
     return lens === area;
 }
 
@@ -78,6 +81,7 @@ export function sessionsOf(lens: Lens): Prisma.WorkSessionWhereInput {
     if (lens === 'learning') return { area: 'personal', kind: { in: [...LEARNING_KINDS] } };
     if (lens === 'learning_work') return { OR: [{ area: 'work' }, { area: 'personal', kind: { in: [...LEARNING_KINDS] } }] };
     if (lens === 'building') return { area: 'personal', kind: 'build' };
+    if (lens === 'building_work') return { OR: [{ area: 'work' }, { area: 'personal', kind: 'build' }] };
     return { area: lens };
 }
 

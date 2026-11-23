@@ -16,7 +16,7 @@ export const getMirrorHandler = handler(async (req, res) => {
 // PERSONAL_OFFICE_PLAN: ?lens=personal|learning|building|work|all; without one, what counts as progress for them (Home asks so).
 export const getStandHandler = handler(async (req, res) => {
     const lens: unknown = req.query['lens'];
-    if (lens !== undefined && !(LENSES as readonly unknown[]).includes(lens)) throw new LearningHttpError(400, 'INVALID_INPUT', 'lens must be personal, learning, building, work, all or learning_work');
+    if (lens !== undefined && !(LENSES as readonly unknown[]).includes(lens)) throw new LearningHttpError(400, 'INVALID_INPUT', 'lens must be personal, learning, building, work, all, learning_work or building_work');
     ok(res, await getStand(requireUser(req).id, new Date(), lens as Lens | undefined));
 });
 
