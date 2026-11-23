@@ -3,6 +3,8 @@
 // `ambient` token (ANDROID_APP_SPEC), which fetches the picture a few times a day.
 import sharp from 'sharp';
 import os from 'node:os';
+import fs from 'node:fs';
+import { phoneApkPath } from '../routers/phone.routes';
 import { requireUser } from '../middlwares/auth';
 import { dayBreakdown, dayNumbers, getAmbient, markPhoneHeld, upcomingAlarms, wallpaperPngWithSlot, type Ambient } from '../services/ambient/ambient.service';
 import { setLater } from '../services/ahead/later';
@@ -29,6 +31,20 @@ export const ambientAddressesHandler = handler(async (req, res) => {
     }
     list.push({ url: `http://localhost:${port}`, kind: 'usb' });
     ok(res, list);
+});
+
+/**
+ * Settings → Phone app: whether this server holds the app's file (GET /phone/recollect.apk serves it), its size and
+ * when it was built, so the page can offer a download button (the owner, 11-23 night).
+ */
+export const ambientAppHandler = handler(async (_req, res) => {
+    try {
+        const stat = fs.statSync(phoneApkPath());
+        if (stat.isFile()) return ok(res, { available: true, size: stat.size, builtAt: stat.mtime.toISOString() });
+    } catch {
+        /* no file on this server */
+    }
+    ok(res, { available: false, size: null, builtAt: null });
 });
 
 /** `?titles=0`: the phone app's "Hide titles" (counts and plain words, no topic or focus names). */

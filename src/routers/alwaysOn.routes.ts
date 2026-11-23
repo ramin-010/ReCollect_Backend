@@ -3,7 +3,7 @@
 import express, { RequestHandler } from 'express';
 import authMiddleware from '../middlwares/auth';
 import { cookieOnly, requireScope } from '../middlwares/scopes';
-import { ambientAddressesHandler, ambientDisconnectHandler, ambientLaterHandler, ambientRemindersHeldHandler, ambientStylesHandler, ambientWallpaperHandler, ambientWidgetHandler } from '../controllers/ambient.controller';
+import { ambientAddressesHandler, ambientAppHandler, ambientDisconnectHandler, ambientLaterHandler, ambientRemindersHeldHandler, ambientStylesHandler, ambientWallpaperHandler, ambientWidgetHandler } from '../controllers/ambient.controller';
 import { pushStatusHandler, removePushSubscriptionHandler, savePushSubscriptionHandler, testPushHandler } from '../controllers/push.controller';
 
 const router = express.Router();
@@ -21,6 +21,8 @@ router.post('/ambient/reminders/scheduled', auth, requireScope('ambient'), ambie
 router.post('/ambient/later', auth, requireScope('ambient'), ambientLaterHandler);
 // Settings → Phone app: where the phone can reach this server.
 router.get('/ambient/addresses', auth, cookieOnly, ambientAddressesHandler);
+// Settings → Phone app: is the app's file on this server (a download button when it is).
+router.get('/ambient/app', auth, cookieOnly, ambientAppHandler);
 
 router.get('/push/status', auth, cookieOnly, pushStatusHandler);
 router.post('/push/subscription', auth, cookieOnly, savePushSubscriptionHandler);
