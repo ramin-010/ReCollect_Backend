@@ -8,9 +8,15 @@ import { CONNECT_PAGE_HEADERS, connectPage } from '../services/ambient/connectPa
 
 const router = express.Router();
 
-/** The built app (android/build.mjs writes it); RECOLLECT_APK_PATH points elsewhere on a server. */
+/**
+ * The app's file: RECOLLECT_APK_PATH when set; else the copy committed with the backend (assets/phone, written by
+ * android/build.mjs on every release build, so a backend deploy carries the newest app); else the Android build folder.
+ */
 export function phoneApkPath(): string {
-    return process.env.RECOLLECT_APK_PATH?.trim() || path.resolve(__dirname, '..', '..', '..', 'android', 'build', 'recollect.apk');
+    const env = process.env.RECOLLECT_APK_PATH?.trim();
+    if (env) return env;
+    const shipped = path.resolve(__dirname, '..', '..', 'assets', 'phone', 'recollect.apk');
+    return fs.existsSync(shipped) ? shipped : path.resolve(__dirname, '..', '..', '..', 'android', 'build', 'recollect.apk');
 }
 
 function apkSize(): number | null {
