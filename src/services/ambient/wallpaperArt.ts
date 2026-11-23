@@ -1193,14 +1193,20 @@ function drawLockV2(input: WallpaperInput, width: number, height: number, theme:
         const cards: Card[] = [];
         if (lc) cards.push(lc);
         list.forEach((r) => {
+            // A long reminder wraps on its card (the owner, 11-23 night), up to three lines; the card grows with it.
+            const at = scheduleAt(r.at);
+            const atW = textWidth(at, rowSize * 0.9, 500);
+            const textW = cw - 2 * pad - atW - 3 * u;
+            const all = wrapText(r.text, rowSize, 500, textW, 99, 0, false);
+            const lines = all.length <= 3 ? all : [...all.slice(0, 2), fit(all.slice(2).join(' '), rowSize, 500, textW)];
+            const lh = rowSize * 1.32;
+            const h = rowH + (lines.length - 1) * lh;
             cards.push({
-                h: rowH,
+                h,
                 draw: (top) => {
-                    const out = frosted(defs, art, x, top, cw, rowH, rowH * 0.36, g, W);
+                    const out = frosted(defs, art, x, top, cw, h, rowH * 0.36, g, W);
                     const base = top + rowPad + rowSize * CAP;
-                    const at = scheduleAt(r.at);
-                    const atW = textWidth(at, rowSize * 0.9, 500);
-                    out.push(text(x + pad, base, fit(r.text, rowSize, 500, cw - 2 * pad - atW - 3 * u), rowSize, 500, g.head));
+                    lines.forEach((l, j) => out.push(text(x + pad, base + j * lh, l, rowSize, 500, g.head)));
                     out.push(text(x + cw - pad, base, at, rowSize * 0.9, 500, timed(r.at) ? g.body : g.meta, { anchor: 'end' }));
                     return out;
                 },
