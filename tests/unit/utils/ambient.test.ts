@@ -381,6 +381,8 @@ describe('the two pictures', () => {
         expect(svg.split('>Done for today<').length - 1).toBe(1);
         expect(svg).not.toContain('left today');
         const free = wallpaperSvg({ ...a, ...dayItems(todayLike(), now) }, 1080, 2340, 'light', 'lock');
-        expect(free).toContain('>A free day<');
+        // A free day: the tick alone (no "Free", no "Done for today").
+        expect(free).not.toMatch(/>(A free day|Free)</);
+        expect(free).not.toContain('>Done for today<');
     });
 });

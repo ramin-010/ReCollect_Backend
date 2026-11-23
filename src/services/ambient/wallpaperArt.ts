@@ -766,13 +766,10 @@ function ringCentre(input: WallpaperInput, cx: number, cy: number, W: number, nu
     const items = input.items ?? [];
     const open = items.filter((i) => !i.done).length;
     const quiet = W * TYPE.quiet;
-    if (!items.length) {
-        // A free day: one word in the lock picture's small ring, the words in the dial's.
-        const small = numeralSize < W * 0.12;
-        const size = small ? W * 0.058 : W * 0.056;
-        return [text(cx, cy + (size * CAP) / 2, small ? 'Free' : 'A free day', size, 600, ink.head, { anchor: 'middle', track: -0.02 })];
-    }
-    if (!open) {
+    // A free day shows the tick too (the owner, 11-23 night: no "Free"): nothing is left either way. Only a day with
+    // something done says "Done for today" under it.
+    if (!items.length || !open) {
+        doneWords = doneWords && items.length > 0;
         const h = numeralSize * 0.62;
         const w = h * 1.3;
         const out = [tick(cx - w / 2, cy - h / 2 - (doneWords ? quiet : 0), w, h, numeralSize * 0.085, ink.head)];
