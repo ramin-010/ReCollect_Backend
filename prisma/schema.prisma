@@ -100,30 +100,32 @@ model User {
 
   // ── Daily loop v2 settings (LOOP_V2_SPEC §1) ──
   /// The size of Today in minutes (5–120).
-  dailyBudgetMin    Int       @default(25)
+  dailyBudgetMin       Int       @default(25)
   /// 11-22 (the owner): their public LeetCode username; once a day their newly accepted problems are logged as practice.
-  leetcodeUser      String?   @db.VarChar(40)
+  leetcodeUser         String?   @db.VarChar(40)
   /// When the LeetCode import last ran for them.
-  leetcodeSyncedAt  DateTime?
+  leetcodeSyncedAt     DateTime?
+  /// PERSONAL_OFFICE_PLAN (11-23): work counts as progress too (active days, hours, the buddy). Off: personal only.
+  progressIncludesWork Boolean   @default(false)
   /// Time blocks / timeline / Day Manager / triage / debrief / catch-up. Off: GET /api/today
   /// returns schedule/triage/todayDebrief null and the rollover creates no slots.
-  routineEnabled    Boolean   @default(false)
+  routineEnabled       Boolean   @default(false)
   /// Busy mode is on while today <= busyUntil (a local day).
-  busyUntil         DateTime? @db.Date
-  nudgeEmailEnabled Boolean   @default(true)
+  busyUntil            DateTime? @db.Date
+  nudgeEmailEnabled    Boolean   @default(true)
   /// 'HH:mm', the user's local time for the morning email.
-  nudgeTime         String    @default("08:30")
+  nudgeTime            String    @default("08:30")
   /// "About me, for my agents" (SYNC_SPINE_SPEC 1.3): how the user learns and works, read first by every chat's brief.
-  agentProfile      String?   @db.VarChar(600)
+  agentProfile         String?   @db.VarChar(600)
   /// Local day the morning email was last sent (idempotency).
-  lastNudgeDay      DateTime? @db.Date
+  lastNudgeDay         DateTime? @db.Date
   /// Local day the morning notification was last sent (idempotency; ALWAYS_ON_SPEC 6.3).
-  lastPushDay       DateTime? @db.Date
+  lastPushDay          DateTime? @db.Date
   /// Local day of the last POST /api/learning/ensure-today (the app was opened).
-  lastSeenDay       DateTime? @db.Date
+  lastSeenDay          DateTime? @db.Date
   /// lastSeenDay as it was before today's first visit, so "comeback" mode lasts the whole day
   /// after ensure-today moved lastSeenDay to today.
-  prevSeenDay       DateTime? @db.Date
+  prevSeenDay          DateTime? @db.Date
 
   subjects       Subject[]
   topics         Topic[]
@@ -1602,6 +1604,21 @@ enum PracticeOutcome {
   after_answer
 }
 
+/// PERSONAL_OFFICE_PLAN (11-23): whose time a session is. Work is tracked for time and the work log; it counts as
+/// progress only for a person who says so (User.progressIncludesWork).
+enum SessionArea {
+  personal
+  work
+}
+
+/// PERSONAL_OFFICE_PLAN (11-23): what a folder is, chosen in the app (Settings › Tracking): the server's word for every
+/// PC. Personal: their own project (build). Study: a folder they learn in (study, no work log). Work: their job.
+enum ProjectKind {
+  personal
+  study
+  work
+}
+
 enum SessionSource {
   agent
   hook
@@ -1648,6 +1665,8 @@ model WorkSession {
   details    Json?
   source     SessionSource    @default(user)
   agentName  String?          @db.VarChar(60)
+  /// PERSONAL_OFFICE_PLAN: the folder's area, copied (a work folder's sessions are work); moves with the folder's kind.
+  area       SessionArea      @default(personal)
   createdAt  DateTime         @default(now())
   updatedAt  DateTime         @updatedAt
 
@@ -1655,22 +1674,25 @@ model WorkSession {
 
   @@unique([userId, key])
   @@index([userId, day])
+  @@index([userId, area, day])
 }
 
 /// Where build sessions belong: a repo or a piece of work (the folder name is its key).
 model Project {
-  id         String   @id @default(cuid())
+  id         String      @id @default(cuid())
   userId     String
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   /// The folder name, lower case.
-  key        String   @db.VarChar(100)
-  name       String   @db.VarChar(120)
+  key        String      @db.VarChar(100)
+  name       String      @db.VarChar(120)
   goalId     String?
-  goal       Goal?    @relation(fields: [goalId], references: [id], onDelete: SetNull)
-  nextStep   String?  @db.VarChar(300)
-  isArchived Boolean  @default(false)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  goal       Goal?       @relation(fields: [goalId], references: [id], onDelete: SetNull)
+  nextStep   String?     @db.VarChar(300)
+  isArchived Boolean     @default(false)
+  /// PERSONAL_OFFICE_PLAN: personal, study or work; a new folder takes the PC's hint, the app's choice wins after.
+  kind       ProjectKind @default(personal)
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
 
   sessions    WorkSession[]
   weekTargets WeekTarget[]

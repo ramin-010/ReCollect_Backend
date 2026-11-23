@@ -11,6 +11,7 @@ import { lastSessionsOf, listSessions, newSessionKey, openWeakSpotsOf, projectBy
 import { loadCoachRows } from '../coach/coach.service';
 import { buildCoachEvidence, coachWindow } from '../coach/evidence';
 import { loadLearningContext } from '../learningDb/common';
+import { folderKindOf, progressLens } from '../learningDb/lens';
 import type { NextUpJson } from '../learningDb/path.service';
 import { reviewDue, weekStartOf, weekTargets } from '../learningDb/week.service';
 import { getMirror } from '../mirror/mirror.service';
@@ -119,8 +120,10 @@ function workBrief(b: Brief): Brief {
  * app's own uses of the brief (the phone's pictures, the night's signals) never read them.
  */
 export async function getBrief(userId: string, options: { project?: string | undefined; key?: string | undefined; work?: boolean | undefined; asks?: boolean | undefined } = {}, now: Date = new Date()): Promise<Brief> {
-    const full = await fullBrief(userId, options, now);
-    if (!options.work) return full;
+    // PERSONAL_OFFICE_PLAN: a folder the server knows as work gets the work brief, whatever the PC's rule said.
+    const work = options.work === true || (!!options.project && (await folderKindOf(userId, options.project)) === 'work');
+    const full = await fullBrief(userId, { ...options, work }, now);
+    if (!work) return full;
     // (fullBrief never reads the questions for a work folder: reading marks them shown.)
     // A work folder: its own project's work only (never the other projects', never his life).
     return { ...workBrief(full), work: await workForBrief(userId, { project: options.project, work: true }, now) };
@@ -157,7 +160,7 @@ async function fullBrief(userId: string, options: { project?: string | undefined
     const [today, settings, sessions, project, coachRows, targets, review, mirror, tasks, dueDecisions, projectDecisions, buddy, asks] = await Promise.all([
         getToday(userId, now),
         getLearningSettings(userId),
-        listSessions(userId, { days: 14 }, now),
+        progressLens(userId).then((lens) => listSessions(userId, { days: 14, lens }, now)),
         options.project ? projectByKey(userId, options.project) : Promise.resolve(null),
         loadCoachRows(userId, ctx, window),
         weekTargets(userId, weekStart, ctx.tz),

@@ -9,11 +9,16 @@
 //   deleteSession        DELETE /api/sessions/:id           the app
 //   listProjects / updateProject   GET /api/projects · PATCH /api/projects/:id
 //
+// PERSONAL_OFFICE_PLAN (11-23): a folder (project) is personal, study or work. A new folder takes the PC's hint
+// (`projectKind`, from the hook's rule), a folder the server knows keeps its own kind (the app's choice). A session
+// takes its folder's area (work or personal); a study folder's hook sessions are study, not build; a work folder's
+// sessions carry no commit subjects and are titled by the folder. Changing a folder's kind moves its past with it.
+//
 // Session writes are not AgentEdit rows: the list is their log (each row says who wrote it, and
 // the user can change or delete any). A topic change a token's session asks for goes through the path
 // update and IS logged (topic_update, undoable), only when it changes something.
 import { randomInt } from 'node:crypto';
-import { Prisma, type PracticeOutcome, type SessionKind, type SessionSource, type TopicStatus, type WeakSpotSource } from '@prisma/client';
+import { Prisma, type PracticeOutcome, type ProjectKind, type SessionArea, type SessionKind, type SessionSource, type TopicStatus, type WeakSpotSource } from '@prisma/client';
 import { prisma, type DbClient } from '../../db/prisma';
 import { addDays, dayOf, type DayString } from '../learning';
 import { badRequest, notFound } from '../learning/http';
@@ -22,6 +27,7 @@ import { pathPlaces, readPath, updateTopicOnPath, type PathTopicJson } from './p
 import { quoted, recordAgentEdit, type AgentActor } from '../agent/agentEditLog';
 import { rememberNotes, type NoteInput } from '../buddy/memory.service';
 import { poke } from '../scheduler/scheduler';
+import { areaOfKind, sessionsOf, type Lens } from './lens';
 
 export const SESSION_KINDS = ['study', 'practice', 'build', 'review'] as const satisfies readonly SessionKind[];
 export const PRACTICE_OUTCOMES = ['alone', 'hints', 'after_answer'] as const satisfies readonly PracticeOutcome[];
@@ -90,6 +96,8 @@ export interface SessionJson {
     details: unknown;
     source: SessionSource;
     agentName: string | null;
+    /** PERSONAL_OFFICE_PLAN: personal or work (its folder's). */
+    area: SessionArea;
     createdAt: string;
     updatedAt: string;
 }
@@ -122,6 +130,7 @@ export function serializeSession(r: SessionRow): SessionJson {
         details: r.details ?? null,
         source: r.source,
         agentName: r.agentName,
+        area: r.area,
         createdAt: r.createdAt.toISOString(),
         updatedAt: r.updatedAt.toISOString(),
     };
@@ -205,25 +214,32 @@ export async function openWeakSpotsOf(userId: string, topicIds: readonly string[
 
 // ─── Projects ──────────────────────────────────────────────────────────
 
-/** A project by key or name (case-insensitive), made when there is none. */
-async function findOrMakeProject(db: DbClient, userId: string, nameOrKey: string): Promise<{ id: string; key: string; name: string }> {
+const PROJECT_FIELDS = { id: true, key: true, name: true, kind: true } as const;
+type ProjectRef = { id: string; key: string; name: string; kind: ProjectKind };
+
+/**
+ * A project by key or name (case-insensitive), made when there is none: a new one takes `kindIfNew` (the PC's hint
+ * for a folder the server has never seen), else personal. A known one keeps its kind (the app's choice wins).
+ */
+async function findOrMakeProject(db: DbClient, userId: string, nameOrKey: string, kindIfNew?: ProjectKind): Promise<ProjectRef> {
     const name = cleanText(nameOrKey, 120);
     if (!name) throw badRequest('project is empty');
     const key = projectKey(name);
     const found =
-        (await db.project.findUnique({ where: { userId_key: { userId, key } }, select: { id: true, key: true, name: true } })) ??
-        (await db.project.findFirst({ where: { userId, name: { equals: name, mode: 'insensitive' } }, select: { id: true, key: true, name: true } }));
+        (await db.project.findUnique({ where: { userId_key: { userId, key } }, select: PROJECT_FIELDS })) ??
+        (await db.project.findFirst({ where: { userId, name: { equals: name, mode: 'insensitive' } }, select: PROJECT_FIELDS }));
     if (found) return found;
     try {
-        return await db.project.create({ data: { userId, key, name }, select: { id: true, key: true, name: true } });
+        return await db.project.create({ data: { userId, key, name, kind: kindIfNew ?? 'personal' }, select: PROJECT_FIELDS });
     } catch (err) {
         // Made at the same moment by another write.
         if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-            return db.project.findUniqueOrThrow({ where: { userId_key: { userId, key } }, select: { id: true, key: true, name: true } });
+            return db.project.findUniqueOrThrow({ where: { userId_key: { userId, key } }, select: PROJECT_FIELDS });
         }
         throw err;
     }
 }
+
 
 // ─── Writes ────────────────────────────────────────────────────────────
 
@@ -251,6 +267,8 @@ export interface SessionInput {
     topicId?: string | null | undefined;
     /** A project's key or name: found, or made. null unlinks. */
     project?: string | null | undefined;
+    /** The PC's hint for a folder the server has never seen (the hook's rule): its kind when it is made. */
+    projectKind?: ProjectKind | undefined;
     score?: { done: number; total: number } | null | undefined;
     outcome?: PracticeOutcome | null | undefined;
     problem?: string | null | undefined;
@@ -364,18 +382,28 @@ export async function upsertSessionByKey(writer: SessionWriter, key: string, inp
     if ((input.weakSpots?.length || input.cleared?.length) && !topicId && !subjectId) throw badRequest('weakSpots and cleared need a topicId or a subject');
     if (input.topicStatus && !topicId) throw badRequest('topicStatus needs a topicId');
 
-    const project = input.project === undefined ? undefined : input.project === null ? null : await findOrMakeProject(prisma, userId, input.project);
+    const project = input.project === undefined ? undefined : input.project === null ? null : await findOrMakeProject(prisma, userId, input.project, input.projectKind);
+    // The folder this session is in: the one named now, else the one it was already in.
+    const folder: ProjectRef | null =
+        project !== undefined ? project : existing?.projectId ? await prisma.project.findUnique({ where: { id: existing.projectId }, select: PROJECT_FIELDS }) : null;
+    const work = folder?.kind === 'work';
     const source: SessionSource = writer.actor ? (input.source === 'hook' ? 'hook' : 'agent') : 'user';
     const startedAt = existing?.startedAt ?? validDate(input.startedAt) ?? keyStartedAt(key, now) ?? now;
-    const kind: SessionKind = input.kind ?? existing?.kind ?? input.kindIfNew ?? inferKind(key, { ...input, topicId, subjectId });
+    // A study folder's coding sessions are study, not build (PERSONAL_OFFICE_PLAN §2.1).
+    const kindIfNew: SessionKind | undefined = folder?.kind === 'study' && (input.kindIfNew === undefined || input.kindIfNew === 'build') ? 'study' : input.kindIfNew;
+    const kind: SessionKind = input.kind ?? existing?.kind ?? kindIfNew ?? (folder?.kind === 'study' ? 'study' : inferKind(key, { ...input, topicId, subjectId }));
     // A chat's checkpoint without minutes gets an estimate; the hook sends active minutes.
     const minutes = input.minutes !== undefined ? input.minutes : source === 'agent' ? estimateMinutes(existing, startedAt, now) : undefined;
     const endedAt = input.endedAt !== undefined ? validDate(input.endedAt) : source === 'agent' ? now : undefined;
-    const commits = input.details?.commits?.filter(Boolean) ?? [];
+    // A work folder's sessions keep no branch or commit subjects (company text), whatever the PC sent.
+    const commits = work ? [] : (input.details?.commits?.filter(Boolean) ?? []);
+    const keptDetails: typeof details = work && details !== undefined && input.details !== null ? { commits: [] } : details;
     const topicTitle = topicId ? (await prisma.topic.findUnique({ where: { id: topicId }, select: { title: true, doc: { select: { title: true } } } })) : null;
     // Order for a row without a title of its own: the first commit, the hook's first prompt, then
     // "Worked on <project>" or the topic. A placeholder from an earlier write gives way to a real one.
-    const better = (commits[0] ? cleanText(commits[0], SESSION_TITLE_MAX) : '') || (input.titleIfNew ? cleanText(input.titleIfNew, SESSION_TITLE_MAX) : '');
+    // A work folder's hook session is titled by the folder, never by their words.
+    const titleIfNew = work && source === 'hook' && folder ? folder.name : input.titleIfNew;
+    const better = (commits[0] ? cleanText(commits[0], SESSION_TITLE_MAX) : '') || (titleIfNew ? cleanText(titleIfNew, SESSION_TITLE_MAX) : '');
     const placeholder = (t: string) => t === 'Session' || (!!project && t === `Worked on ${project.name}`);
     const title =
         input.title !== undefined
@@ -392,7 +420,7 @@ export async function upsertSessionByKey(writer: SessionWriter, key: string, inp
         title,
         subjectId,
         topicId,
-        ...(project !== undefined ? { projectId: project?.id ?? null } : {}),
+        ...(project !== undefined ? { projectId: project?.id ?? null, area: areaOfKind(project?.kind) } : {}),
         ...(minutes !== undefined ? { minutes } : {}),
         ...(endedAt !== undefined ? { endedAt } : {}),
         ...(score ?? {}),
@@ -400,7 +428,7 @@ export async function upsertSessionByKey(writer: SessionWriter, key: string, inp
         ...(input.problem !== undefined ? { problem: input.problem === null ? null : cleanText(input.problem, 200) || null } : {}),
         ...(input.url !== undefined ? { url: input.url === null ? null : input.url.trim().slice(0, 500) || null } : {}),
         ...(input.nextStep !== undefined ? { nextStep: input.nextStep === null ? null : cleanText(input.nextStep, 300) || null } : {}),
-        ...(details !== undefined ? { details } : {}),
+        ...(keptDetails !== undefined ? { details: keptDetails } : {}),
         // A hook closing a session a chat wrote keeps the chat as its writer.
         ...(existing && source === 'hook' && existing.source !== 'hook'
             ? {}
@@ -512,6 +540,7 @@ export async function createSession(userId: string, input: SessionInput & { titl
     const made = await prisma.workSession.create({
         data: {
             userId,
+            area: areaOfKind(project?.kind),
             kind: input.kind ?? 'study',
             title,
             day: toDbDay(day),
@@ -583,7 +612,7 @@ export interface SessionList {
 /** GET /api/sessions: the last `days` local days (today included), newest first. */
 export async function listSessions(
     userId: string,
-    options: { days?: number | undefined; kind?: SessionKind | undefined; project?: string | undefined; subjectId?: string | undefined } = {},
+    options: { days?: number | undefined; kind?: SessionKind | undefined; project?: string | undefined; subjectId?: string | undefined; lens?: Lens | undefined } = {},
     now: Date = new Date()
 ): Promise<SessionList> {
     const ctx = await loadLearningContext(userId, now);
@@ -600,6 +629,7 @@ export async function listSessions(
             ...(options.kind ? { kind: options.kind } : {}),
             ...(project ? { projectId: project.id } : {}),
             ...(options.subjectId ? { subjectId: options.subjectId } : {}),
+            ...sessionsOf(options.lens ?? 'all'),
         },
         orderBy: [{ day: 'desc' }, { startedAt: 'desc' }, { id: 'desc' }],
         take: LIST_LIMIT,
@@ -616,9 +646,9 @@ export async function listSessions(
     return { sessions: rows.map(serializeSession), days: [...byDay.values()] };
 }
 
-/** Days with a session in [from, to] (the rhythm counts them as active). */
-export async function sessionDays(userId: string, from: DayString, to: DayString, db: DbClient = prisma): Promise<DayString[]> {
-    const rows = await db.workSession.findMany({ where: { userId, day: { gte: toDbDay(from), lte: toDbDay(to) } }, select: { day: true }, distinct: ['day'] });
+/** Days with a session in [from, to] that the lens sees (the rhythm counts them as active: the progress lens). */
+export async function sessionDays(userId: string, from: DayString, to: DayString, lens: Lens, db: DbClient = prisma): Promise<DayString[]> {
+    const rows = await db.workSession.findMany({ where: { userId, day: { gte: toDbDay(from), lte: toDbDay(to) }, ...sessionsOf(lens) }, select: { day: true }, distinct: ['day'] });
     return rows.map((r) => fromDbDay(r.day));
 }
 
@@ -626,33 +656,51 @@ export interface ProjectJson {
     _id: string;
     key: string;
     name: string;
+    /** PERSONAL_OFFICE_PLAN: personal, study or work (Settings › Tracking). */
+    kind: ProjectKind;
     goal: { _id: string; title: string } | null;
     nextStep: string | null;
     isArchived: boolean;
     lastSession: { day: DayString; minutes: number | null; title: string } | null;
     sessions: number;
+    /** Minutes logged in it over the last 28 days (today included). */
+    minutes28: number;
 }
 
+/** How many days `minutes28` covers. */
+export const PROJECT_RECENT_DAYS = 28;
+
 /** GET /api/projects: newest activity first. */
-export async function listProjects(userId: string): Promise<ProjectJson[]> {
-    const rows = await prisma.project.findMany({
-        where: { userId },
-        include: {
-            goal: { select: { id: true, title: true } },
-            sessions: { orderBy: [{ day: 'desc' }, { startedAt: 'desc' }], take: 1, select: { day: true, minutes: true, title: true } },
-            _count: { select: { sessions: true } },
-        },
-    });
+export async function listProjects(userId: string, now: Date = new Date()): Promise<ProjectJson[]> {
+    const { today } = await loadLearningContext(userId, now);
+    const [rows, recent] = await Promise.all([
+        prisma.project.findMany({
+            where: { userId },
+            include: {
+                goal: { select: { id: true, title: true } },
+                sessions: { orderBy: [{ day: 'desc' }, { startedAt: 'desc' }], take: 1, select: { day: true, minutes: true, title: true } },
+                _count: { select: { sessions: true } },
+            },
+        }),
+        prisma.workSession.groupBy({
+            by: ['projectId'],
+            where: { userId, projectId: { not: null }, day: { gte: toDbDay(addDays(today, -(PROJECT_RECENT_DAYS - 1))), lte: toDbDay(today) } },
+            _sum: { minutes: true },
+        }),
+    ]);
+    const minutes = new Map(recent.map((r) => [r.projectId, r._sum.minutes ?? 0]));
     const json = rows.map(
         (p): ProjectJson => ({
             _id: p.id,
             key: p.key,
             name: p.name,
+            kind: p.kind,
             goal: p.goal ? { _id: p.goal.id, title: p.goal.title } : null,
             nextStep: p.nextStep,
             isArchived: p.isArchived,
             lastSession: p.sessions[0] ? { day: fromDbDay(p.sessions[0].day), minutes: p.sessions[0].minutes, title: p.sessions[0].title } : null,
             sessions: p._count.sessions,
+            minutes28: minutes.get(p.id) ?? 0,
         })
     );
     return json.sort((a, b) => (b.lastSession?.day ?? '').localeCompare(a.lastSession?.day ?? '') || a.name.localeCompare(b.name));
@@ -665,13 +713,28 @@ export async function projectByKey(userId: string, key: string): Promise<Project
     return (await listProjects(userId)).find((p) => p._id === found.id) ?? null;
 }
 
-/** PATCH /api/projects/:id: rename, link a goal, archive, set the next step. */
+/**
+ * A folder's new kind moves its past with it (PERSONAL_OFFICE_PLAN §2.1), in the caller's transaction: its sessions'
+ * area; its hook sessions between build and study (a chat's own kind stays); its work log lines' office mark.
+ */
+async function moveFolderPast(tx: DbClient, userId: string, project: { id: string; key: string }, from: ProjectKind, to: ProjectKind): Promise<void> {
+    await tx.workSession.updateMany({ where: { userId, projectId: project.id }, data: { area: areaOfKind(to) } });
+    const codingKind = (k: ProjectKind): SessionKind => (k === 'study' ? 'study' : 'build');
+    if (codingKind(from) !== codingKind(to)) {
+        await tx.workSession.updateMany({ where: { userId, projectId: project.id, source: 'hook', kind: codingKind(from) }, data: { kind: codingKind(to) } });
+    }
+    if ((from === 'work') !== (to === 'work')) {
+        await tx.workLine.updateMany({ where: { userId, project: project.key }, data: { office: to === 'work' } });
+    }
+}
+
+/** PATCH /api/projects/:id: rename, link a goal, archive, set the next step, or its kind (personal, study, work). */
 export async function updateProject(
     userId: string,
     id: string,
-    patch: { name?: string | undefined; goalId?: string | null | undefined; isArchived?: boolean | undefined; nextStep?: string | null | undefined }
+    patch: { name?: string | undefined; goalId?: string | null | undefined; isArchived?: boolean | undefined; nextStep?: string | null | undefined; kind?: ProjectKind | undefined }
 ): Promise<ProjectJson> {
-    const row = await prisma.project.findFirst({ where: { id, userId }, select: { id: true } });
+    const row = await prisma.project.findFirst({ where: { id, userId }, select: { id: true, key: true, kind: true } });
     if (!row) throw notFound();
     if (patch.goalId) {
         const goal = await prisma.goal.findFirst({ where: { id: patch.goalId, userId }, select: { id: true } });
@@ -679,16 +742,23 @@ export async function updateProject(
     }
     const name = patch.name !== undefined ? cleanText(patch.name, 120) : undefined;
     if (name !== undefined && !name) throw badRequest('name cannot be empty');
-    await prisma.project.update({
-        where: { id },
-        data: {
-            ...(name !== undefined ? { name } : {}),
-            ...(patch.goalId !== undefined ? { goalId: patch.goalId } : {}),
-            ...(patch.isArchived !== undefined ? { isArchived: patch.isArchived } : {}),
-            ...(patch.nextStep !== undefined ? { nextStep: patch.nextStep === null ? null : cleanText(patch.nextStep, 300) || null } : {}),
-        },
-        select: { id: true },
+    const kindChange = patch.kind !== undefined && patch.kind !== row.kind ? patch.kind : undefined;
+    await prisma.$transaction(async (tx) => {
+        await tx.project.update({
+            where: { id },
+            data: {
+                ...(name !== undefined ? { name } : {}),
+                ...(patch.goalId !== undefined ? { goalId: patch.goalId } : {}),
+                ...(patch.isArchived !== undefined ? { isArchived: patch.isArchived } : {}),
+                ...(patch.nextStep !== undefined ? { nextStep: patch.nextStep === null ? null : cleanText(patch.nextStep, 300) || null } : {}),
+                ...(kindChange ? { kind: kindChange } : {}),
+            },
+            select: { id: true },
+        });
+        if (kindChange) await moveFolderPast(tx, userId, row, row.kind, kindChange);
     });
+    // What counts changed: the buddy's day hears it (as it hears a session logged).
+    if (kindChange) poke('buddy');
     return (await listProjects(userId)).find((p) => p._id === id)!;
 }
 

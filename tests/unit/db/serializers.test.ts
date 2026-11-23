@@ -25,6 +25,7 @@ const userRow = {
     dailyBudgetMin: 25,
     leetcodeUser: null,
     leetcodeSyncedAt: null,
+    progressIncludesWork: false,
     routineEnabled: false,
     busyUntil: null,
     nudgeEmailEnabled: true,

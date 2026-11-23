@@ -16,6 +16,7 @@ import { recordAiUsage } from '../claude/usage.service';
 import { parseJson, responseText } from '../recall/output';
 import { withRefusalFallbacks, type CreateParams } from '../recall/prompts';
 import { loadLearningContext, toDbDay } from '../learningDb/common';
+import { countedSessions } from '../learningDb/lens';
 import { addDays, dayOf, type DayString } from '../learning';
 import { characterPrompt } from './character';
 import { personName, toneOf } from './state.service';
@@ -133,10 +134,12 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
  * topics and milestones finished since `since` wake the buddy like a note does, so a day spent in the app is seen.
  */
 export async function activitySince(userId: string, since: Date, until: Date = new Date()): Promise<DayActivity> {
+    // A work session wakes it only when work counts as progress for them (PERSONAL_OFFICE_PLAN).
+    const counted = await countedSessions(userId);
     const [reviews, focus, sessions, topics, milestones] = await Promise.all([
         prisma.revision.findMany({ where: { userId, status: 'done', completedAt: { gt: since, lte: until } }, select: { completedAt: true }, take: 50 }),
         prisma.focusItem.findMany({ where: { userId, done: true, doneAt: { gt: since, lte: until } }, select: { doneAt: true, text: true }, take: 10 }),
-        prisma.workSession.findMany({ where: { userId, createdAt: { gt: since, lte: until } }, select: { createdAt: true, kind: true, minutes: true, title: true }, orderBy: { createdAt: 'asc' }, take: 10 }),
+        prisma.workSession.findMany({ where: { userId, createdAt: { gt: since, lte: until }, ...counted }, select: { createdAt: true, kind: true, minutes: true, title: true }, orderBy: { createdAt: 'asc' }, take: 10 }),
         prisma.topic.findMany({ where: { userId, status: 'done', doneAt: { gt: since, lte: until } }, select: { doneAt: true, title: true }, take: 10 }),
         prisma.goalMilestone.findMany({ where: { goal: { userId }, done: true, doneAt: { gt: since, lte: until } }, select: { doneAt: true, title: true }, take: 5 }),
     ]);
@@ -158,9 +161,10 @@ export async function activitySince(userId: string, since: Date, until: Date = n
 export async function usualStart(userId: string, today: DayString, tz: string): Promise<number | null> {
     const from = instantOf(addDays(today, -28), tz, 0);
     const to = instantOf(today, tz, 0);
+    const counted = await countedSessions(userId);
     const [reviews, sessions, focus] = await Promise.all([
         prisma.revision.findMany({ where: { userId, status: 'done', completedAt: { gte: from, lt: to } }, select: { completedAt: true } }),
-        prisma.workSession.findMany({ where: { userId, createdAt: { gte: from, lt: to } }, select: { createdAt: true } }),
+        prisma.workSession.findMany({ where: { userId, createdAt: { gte: from, lt: to }, ...counted }, select: { createdAt: true } }),
         prisma.focusItem.findMany({ where: { userId, done: true, doneAt: { gte: from, lt: to } }, select: { doneAt: true } }),
     ]);
     const first = new Map<DayString, number>();

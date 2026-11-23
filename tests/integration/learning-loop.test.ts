@@ -79,6 +79,8 @@ describe('GET / PATCH /api/learning/settings', () => {
             timezone: 'Asia/Kolkata',
             routineMode: 'MASTER',
             agentProfile: null,
+            // PERSONAL_OFFICE_PLAN: work counts as progress only when they say so.
+            progressIncludesWork: false,
         });
     });
 

@@ -506,8 +506,8 @@ export const logSettingsUpdate = agentEdit<Partial<Record<AgentSetting, unknown>
 });
 
 /** PATCH /api/projects/:id by an agent: Undo puts the old fields back. */
-export const logProjectUpdate = agentEdit<{ id: string; name: string; goalId: string | null; isArchived: boolean; nextStep: string | null } | null>('project_update', {
-    before: (req, actor) => prisma.project.findFirst({ where: { id: routeId(req), userId: actor.userId }, select: { id: true, name: true, goalId: true, isArchived: true, nextStep: true } }),
+export const logProjectUpdate = agentEdit<{ id: string; name: string; goalId: string | null; isArchived: boolean; nextStep: string | null; kind: string } | null>('project_update', {
+    before: (req, actor) => prisma.project.findFirst({ where: { id: routeId(req), userId: actor.userId }, select: { id: true, name: true, goalId: true, isArchived: true, nextStep: true, kind: true } }),
     after: ({ req, before }) => {
         if (!before) return null;
         const parts = [
@@ -515,9 +515,14 @@ export const logProjectUpdate = agentEdit<{ id: string; name: string; goalId: st
             req.body?.nextStep !== undefined && req.body.nextStep !== before.nextStep ? 'set its next step' : null,
             req.body?.goalId !== undefined && req.body.goalId !== before.goalId ? (req.body.goalId ? 'linked a goal' : 'unlinked its goal') : null,
             req.body?.isArchived !== undefined && req.body.isArchived !== before.isArchived ? (req.body.isArchived ? 'archived it' : 'took it out of the archive') : null,
+            req.body?.kind !== undefined && req.body.kind !== before.kind ? `marked it as ${String(req.body.kind)}` : null,
         ].filter(Boolean);
         if (parts.length === 0) return null;
-        return { summary: `Changed the project ${quoted(before.name)}: ${parts.join(', ')}`, entityId: before.id, undoData: { before: { name: before.name, goalId: before.goalId, isArchived: before.isArchived, nextStep: before.nextStep } } };
+        return {
+            summary: `Changed the project ${quoted(before.name)}: ${parts.join(', ')}`,
+            entityId: before.id,
+            undoData: { before: { name: before.name, goalId: before.goalId, isArchived: before.isArchived, nextStep: before.nextStep, kind: before.kind } },
+        };
     },
 });
 

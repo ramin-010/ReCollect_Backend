@@ -8,6 +8,7 @@ import { prisma } from '../../db/prisma';
 import { addDays, type DayString } from '../learning';
 import { minutesPerTopic, mondayOf, weeklyMinutes, type MinutesByKind, type PathPace } from '../learning/pace';
 import { fromDbDay, loadLearningContext, toDbDay } from '../learningDb/common';
+import { countedSessions } from '../learningDb/lens';
 import { goalInclude, forecastOf } from '../learningDb/goals.service';
 import { weekSummary } from '../learningDb/week.service';
 import { paceOfSubject, pathsOfGoal } from './paths';
@@ -53,12 +54,13 @@ export async function getMirror(userId: string, now: Date = new Date()): Promise
     const ctx = await loadLearningContext(userId, now);
     const today = ctx.today;
     const since = addDays(mondayOf(today), -7 * (WEEKS - 1));
+    const counted = await countedSessions(userId);
     const [goals, subjects, topics, sessions, weak, cleared] = await Promise.all([
         prisma.goal.findMany({ where: { userId, status: 'active' }, include: goalInclude, orderBy: { deadline: 'asc' } }),
         prisma.subject.findMany({ where: { userId }, select: { id: true, name: true, color: true }, orderBy: { name: 'asc' } }),
         prisma.topic.findMany({ where: { userId, isArchived: false }, select: { id: true, subjectId: true, status: true, doneAt: true } }),
         prisma.workSession.findMany({
-            where: { userId, day: { gte: toDbDay(addDays(today, -PRACTICE_DAYS)) } },
+            where: { userId, day: { gte: toDbDay(addDays(today, -PRACTICE_DAYS)) }, ...counted },
             select: { day: true, kind: true, minutes: true, subjectId: true, topicId: true, scoreDone: true, scoreTotal: true, outcome: true },
             orderBy: [{ day: 'asc' }, { startedAt: 'asc' }],
         }),

@@ -202,6 +202,8 @@ const UNDO: Record<AgentEditKind, (ctx: UndoContext) => Promise<void>> = {
             goalId: stringOrNull(b['goalId']),
             ...(typeof b['isArchived'] === 'boolean' ? { isArchived: b['isArchived'] } : {}),
             nextStep: stringOrNull(b['nextStep']),
+            // PERSONAL_OFFICE_PLAN: a folder's kind back (its past sessions move back with it).
+            ...(b['kind'] === 'personal' || b['kind'] === 'study' || b['kind'] === 'work' ? { kind: b['kind'] } : {}),
         });
     },
     reminder_set: async ({ userId, id, data }) => {

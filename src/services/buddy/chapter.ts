@@ -14,6 +14,7 @@ import { parseJson, responseText } from '../recall/output';
 import { withRefusalFallbacks, type CreateParams } from '../recall/prompts';
 import type { DayString } from '../learning';
 import { dayRange, loadLearningContext } from '../learningDb/common';
+import { countedSessions } from '../learningDb/lens';
 import { characterPrompt } from './character';
 import { personName, toneOf } from './state.service';
 import { MEMORY_KINDS } from './memory.service';
@@ -81,8 +82,9 @@ const prevMonth = (month: string) => {
 export async function monthFacts(userId: string, month: string, tz: string): Promise<MonthFacts> {
     const from = dayRange(monthStart(month), tz).gte;
     const to = dayRange(monthStart(nextMonth(month)), tz).gte;
+    const counted = await countedSessions(userId);
     const [sessions, reviews, tasks, added, closed, notes] = await Promise.all([
-        prisma.workSession.findMany({ where: { userId, startedAt: { gte: from, lt: to } }, select: { kind: true, minutes: true, day: true, project: { select: { name: true } } } }),
+        prisma.workSession.findMany({ where: { userId, startedAt: { gte: from, lt: to }, ...counted }, select: { kind: true, minutes: true, day: true, project: { select: { name: true } } } }),
         prisma.revision.count({ where: { userId, status: 'done', completedAt: { gte: from, lt: to } } }),
         prisma.todo.count({ where: { userId, workspaceId: null, completedAt: { gte: from, lt: to } } }),
         prisma.memory.count({ where: { userId, createdAt: { gte: from, lt: to } } }),

@@ -8,6 +8,7 @@ import { prisma } from '../../db/prisma';
 import type { Prisma } from '@prisma/client';
 import { addDays, dayOf, type DayString } from '../learning';
 import { fromDbDay, toDbDay } from '../learningDb/common';
+import { countedSessions } from '../learningDb/lens';
 import { aheadFor } from '../ahead/ahead.service';
 import { leftOff, LEFT_OFF_DAYS } from '../ahead/aheadRules';
 import { laterHidden } from '../ahead/ahead.service';
@@ -85,11 +86,12 @@ export async function refsChecker(userId: string, refs: readonly string[], now: 
     const taskIds = refs.filter((r) => r.startsWith('tk_')).map((r) => r.slice(3));
     const wantsSessions = refs.some((r) => r.startsWith('pu_'));
     const from = addDays(dayOf(now, tz), -(LEFT_OFF_DAYS - 1));
+    const counted = wantsSessions ? await countedSessions(userId) : {};
     const [tasks, sessions, hidden] = await Promise.all([
         taskIds.length ? prisma.todo.findMany({ where: { userId, id: { in: taskIds } }, select: { id: true, status: true } }) : Promise.resolve([]),
         wantsSessions
             ? prisma.workSession.findMany({
-                  where: { userId, kind: { in: ['practice', 'study'] }, day: { gte: toDbDay(from) } },
+                  where: { userId, kind: { in: ['practice', 'study'] }, day: { gte: toDbDay(from) }, ...counted },
                   select: { id: true, kind: true, problem: true, outcome: true, topicId: true, nextStep: true, url: true, day: true, startedAt: true, updatedAt: true, topic: { select: { title: true, status: true, docId: true, nextStep: true } } },
                   orderBy: { startedAt: 'desc' },
                   take: 60,

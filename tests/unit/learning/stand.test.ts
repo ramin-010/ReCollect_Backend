@@ -278,3 +278,52 @@ describe('the whole stand', () => {
         expect(standDays(empty(), TODAY)[0]!.day).toBe('2025-11-24');
     });
 });
+
+describe('lenses (PERSONAL_OFFICE_PLAN)', () => {
+    /** A week with personal study and work time: the service hands in what each lens sees. */
+    const rows = (lens: 'personal' | 'work' | 'all'): StandRows => {
+        const all = [
+            { day: d('2026-11-16'), kind: 'study' as const, minutes: 40, outcome: null, area: 'personal' as const, place: 'DSA' },
+            { day: d('2026-11-17'), kind: 'build' as const, minutes: 300, outcome: null, area: 'work' as const, place: 'erp-workspace' },
+            { day: d('2026-11-18'), kind: 'build' as const, minutes: 240, outcome: null, area: 'work' as const, place: 'erp-workspace' },
+            { day: d('2026-11-18'), kind: 'build' as const, minutes: 30, outcome: null, area: 'personal' as const, place: 'second_brain' },
+            { day: d('2026-11-10'), kind: 'build' as const, minutes: 200, outcome: null, area: 'work' as const, place: 'erp-workspace' },
+        ];
+        const base = lens === 'work' ? empty() : { ...empty(), revisions: [{ scheduledFor: d('2026-11-19'), completedDay: d('2026-11-19'), status: 'done' as const }] };
+        return { ...base, sessions: all.filter((x) => lens === 'all' || x.area === lens) };
+    };
+    const stand = (lens: 'personal' | 'work' | 'all') => buildStand(rows(lens), { today: TODAY, recordStart: d('2026-10-01'), goal: null, lens });
+
+    it('a day is active by the lens: personal ignores work days; work counts work days only; all counts both', () => {
+        expect(stand('personal').periods.week.current.activeDays).toBe(3); // 16 (study), 18 (personal build), 19 (review)
+        expect(stand('work').periods.week.current.activeDays).toBe(2); // 17, 18
+        expect(stand('all').periods.week.current.activeDays).toBe(4);
+        expect(stand('personal').days.find((x) => x.day === '2026-11-17')).toMatchObject({ active: false, minutes: 0 });
+        expect(stand('work').days.find((x) => x.day === '2026-11-19')).toMatchObject({ active: false });
+    });
+
+    it('minutes by area, and where the time went on a day', () => {
+        const all = stand('all');
+        expect(all.periods.week.current.minutesByArea).toEqual({ personal: 70, work: 540 });
+        expect(all.days.find((x) => x.day === '2026-11-18')).toMatchObject({
+            minutes: 270,
+            byArea: { personal: 30, work: 240 },
+            places: [
+                { name: 'erp-workspace', minutes: 240, area: 'work' },
+                { name: 'second_brain', minutes: 30, area: 'personal' },
+            ],
+        });
+        expect(all.days.find((x) => x.day === '2026-11-19')?.places).toBeUndefined();
+    });
+
+    it('the words: worked days and hours at work for Work; the split for All; Personal as before', () => {
+        expect(stand('work').periods.week.verdict).toEqual(['Worked 2 of the last 7 days, 1 more than the 7 days before.', '9 h at work, 5 h 40 min more than the 7 days before.']);
+        expect(stand('all').periods.week.verdict).toEqual([
+            'Active 4 of the last 7 days, 3 more than the 7 days before.',
+            '10 h 10 min logged, 6 h 50 min more than the 7 days before; 1 h 10 min personal, 9 h work.',
+        ]);
+        expect(stand('personal').periods.week.verdict).toEqual(['Active 3 of the last 7 days, 3 more than the 7 days before.', '1 h 10 min logged, 1 h 10 min more than the 7 days before; most of it study.']);
+        const none = buildStand(empty(), { today: TODAY, recordStart: d('2026-01-01'), goal: null, lens: 'work' });
+        expect(none.periods.week.verdict).toEqual(['No work tracked in the last 7 days. Claude Code in a folder marked Work fills this in.']);
+    });
+});

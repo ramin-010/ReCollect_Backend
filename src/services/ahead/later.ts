@@ -6,6 +6,7 @@ import { prisma } from '../../db/prisma';
 import ErrorResponse from '../../utils/errorResponse';
 import { addDays, dayOf, startOfDay, type DayString } from '../learning';
 import { loadLearningContext } from '../learningDb/common';
+import { countedSessions } from '../learningDb/lens';
 import { usualStart } from '../buddy/signals';
 import { aheadFor, type AheadRow } from './ahead.service';
 import { clockWords } from './aheadRules';
@@ -58,7 +59,7 @@ export function laterLabel(when: Date, now: Date, tz: string): string {
 /** Their usual evening start (signals.usual), read cheaply for the button: weekdays and weekends apart. */
 export async function usualEvening(userId: string, now: Date, tz: string): Promise<string | null> {
     const from = new Date(now.getTime() - 14 * 86_400_000);
-    const rows = await prisma.workSession.findMany({ where: { userId, kind: { in: ['study', 'practice'] }, startedAt: { gte: from } }, select: { startedAt: true } });
+    const rows = await prisma.workSession.findMany({ where: { userId, kind: { in: ['study', 'practice'] }, startedAt: { gte: from }, ...(await countedSessions(userId)) }, select: { startedAt: true } });
     const weekend = (d: Date) => {
         const w = new Intl.DateTimeFormat('en-GB', { timeZone: tz, weekday: 'short' }).format(d);
         return w === 'Sat' || w === 'Sun';

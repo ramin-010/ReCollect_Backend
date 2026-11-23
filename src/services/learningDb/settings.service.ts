@@ -21,6 +21,7 @@ const settingsSelect = {
     lastNudgeDay: true,
     lastSeenDay: true,
     agentProfile: true,
+    progressIncludesWork: true,
 } as const;
 
 export async function getLearningSettings(userId: string): Promise<LearningSettingsJson> {
@@ -40,6 +41,8 @@ export interface LearningSettingsInput {
     nudgeTime?: string | undefined;
     /** "About me, for my agents"; null or empty clears it. */
     agentProfile?: string | null | undefined;
+    /** PERSONAL_OFFICE_PLAN: work counts as progress too (the app only: agents may not change it). */
+    progressIncludesWork?: boolean | undefined;
 }
 
 /**
@@ -63,6 +66,7 @@ export async function updateLearningSettings(userId: string, input: LearningSett
                 ...(input.nudgeEmailEnabled !== undefined ? { nudgeEmailEnabled: input.nudgeEmailEnabled } : {}),
                 ...(input.nudgeTime !== undefined ? { nudgeTime: minutesToTime(timeToMinutes(input.nudgeTime)) } : {}),
                 ...(input.agentProfile !== undefined ? { agentProfile: input.agentProfile?.trim() ? input.agentProfile.trim().slice(0, 600) : null } : {}),
+                ...(input.progressIncludesWork !== undefined ? { progressIncludesWork: input.progressIncludesWork } : {}),
             },
             select: settingsSelect,
         });
@@ -75,5 +79,7 @@ export async function updateLearningSettings(userId: string, input: LearningSett
     // The quiet scheduler's per-user times (hosting P1-11): local midnight, the nudge, the buddy's hours.
     if (input.timezone !== undefined) poke('rollover', 'nudge', 'buddy');
     else if (input.nudgeTime !== undefined || input.nudgeEmailEnabled !== undefined) poke('nudge');
+    // What counts as progress changed: the buddy's day hears it.
+    if (input.progressIncludesWork !== undefined) poke('buddy');
     return serializeLearningSettings(row);
 }

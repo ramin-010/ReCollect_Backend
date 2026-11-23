@@ -17,6 +17,7 @@ import { poke } from '../scheduler/scheduler';
 import type { DayString } from '../learning';
 import { badRequest } from '../learning/http';
 import { loadLearningContext, toDbDay } from '../learningDb/common';
+import { officeFolder } from '../learningDb/lens';
 import { scrubSecrets } from './scrub';
 import { isBuddyPaused } from './state.service';
 import { AiHttpError } from '../claude/errors';
@@ -257,7 +258,9 @@ export async function queueWords(userId: string, input: WordsInput, now: Date = 
         const read = numbered ? await markRead(userId, sessionKey, topN) : undefined;
         return { queued: 0, ...(why === 'office' ? { office: true as const } : { paused: true as const }), ...(read !== undefined ? { read } : {}), capture: CAPTURE_PROTOCOL };
     };
-    if (input.office === true && officeCaptureOff()) return skip('office');
+    // PERSONAL_OFFICE_PLAN: a folder the server knows as work is office work whatever the PC's rule says.
+    const office = await officeFolder(userId, input.project, input.office);
+    if (office && officeCaptureOff()) return skip('office');
     if (await isBuddyPaused(userId)) return skip('paused');
     // His AI is paused or a budget is used up: a hook that can hold keeps the words (§4.15).
     if (input.canHold === true) {
@@ -285,7 +288,7 @@ export async function queueWords(userId: string, input: WordsInput, now: Date = 
                     sessionKey,
                     seq: input.seq,
                     project: input.project ? input.project.toLowerCase().slice(0, 100) : null,
-                    office: input.office === true,
+                    office,
                     messages: messages as unknown as Prisma.InputJsonValue,
                 },
                 select: { id: true },
@@ -325,7 +328,7 @@ export async function queueWords(userId: string, input: WordsInput, now: Date = 
                 // The first new message's number: a piece sent again carries the same, never two pieces of the same words.
                 seq: newOnes[0]!.n!,
                 project: input.project ? input.project.toLowerCase().slice(0, 100) : null,
-                office: input.office === true,
+                office,
                 saidFrom: new Date(Math.min(...reading.map((m) => Date.parse(m.at)))),
                 messages: messages as unknown as Prisma.InputJsonValue,
                 createdAt: now,

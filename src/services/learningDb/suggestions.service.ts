@@ -15,6 +15,7 @@ import { prisma } from '../../db/prisma';
 import { addDays, diffDays, type DayString } from '../learning';
 import { badRequest, conflict, notFound } from '../learning/http';
 import { fromDbDay, loadLearningContext, toDbDay } from './common';
+import { countedSessions } from './lens';
 import { createFocusItem } from './focus.service';
 import { readPath } from './path.service';
 import { updateLearningSettings } from './settings.service';
@@ -341,7 +342,7 @@ async function gatherWeekProposals(userId: string, weekStart: DayString, tz: str
             orderBy: { deadline: 'asc' },
         }),
         prisma.subject.findMany({ where: { userId, topics: { some: { status: { in: ['planned', 'in_progress'] }, isArchived: false } } }, select: { id: true } }),
-        prisma.workSession.findMany({ where: { userId, day: { gte: toDbDay(addDays(today, -13)) }, subjectId: { not: null } }, select: { subjectId: true }, distinct: ['subjectId'] }),
+        countedSessions(userId).then((counted) => prisma.workSession.findMany({ where: { userId, day: { gte: toDbDay(addDays(today, -13)) }, subjectId: { not: null }, ...counted }, select: { subjectId: true }, distinct: ['subjectId'] })),
         weekTargets(userId, addDays(weekStart, -7), tz),
         prisma.coachNote.findFirst({ where: { userId, createdAt: { gte: new Date(Date.now() - 8 * 24 * 3600_000) }, model: { not: 'none' } }, orderBy: { createdAt: 'desc' }, select: { focus: true } }),
     ]);

@@ -4,6 +4,8 @@ import { getMirror } from '../../services/mirror/mirror.service';
 import { getStand } from '../../services/mirror/stand.service';
 import { askStandTake, isStandWindow, standTakes } from '../../services/mirror/standTake.service';
 import { aiBadRequest } from '../../services/claude/errors';
+import { LearningHttpError } from '../../services/learning/http';
+import { LENSES, type Lens } from '../../services/learningDb/lens';
 import { handler, ok } from './common';
 
 export const getMirrorHandler = handler(async (req, res) => {
@@ -11,8 +13,11 @@ export const getMirrorHandler = handler(async (req, res) => {
 });
 
 // GET /api/mirror/stand (WHERE_YOU_STAND_PLAN §5.5): the record of the last week, month and year against the span before.
+// PERSONAL_OFFICE_PLAN: ?lens=personal|work|all; without one, what counts as progress for them (Home asks so).
 export const getStandHandler = handler(async (req, res) => {
-    ok(res, await getStand(requireUser(req).id));
+    const lens: unknown = req.query['lens'];
+    if (lens !== undefined && !(LENSES as readonly unknown[]).includes(lens)) throw new LearningHttpError(400, 'INVALID_INPUT', 'lens must be personal, work or all');
+    ok(res, await getStand(requireUser(req).id, new Date(), lens as Lens | undefined));
 });
 
 // GET /api/mirror/stand/takes (§9): today's takes by the buddy, and whether it can be asked now.

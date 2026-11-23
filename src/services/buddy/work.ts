@@ -31,6 +31,7 @@ import { addDays, isValidDay, type DayString } from '../learning';
 import { dayOf } from '../learning/time';
 import { notFound } from '../learning/http';
 import { fromDbDay, loadLearningContext, toDbDay } from '../learningDb/common';
+import { folderKindOf, officeFolder } from '../learningDb/lens';
 import { searchTerms } from '../docs/docSearch.service';
 import ErrorResponse from '../../utils/errorResponse';
 import { zonedWallTimeToDate } from '../../utils/timezone';
@@ -311,6 +312,8 @@ export async function summariseWork(
     now: Date = new Date()
 ): Promise<{ lines: number; costUsd: number }> {
     if (!messages.length) return { lines: 0, costUsd: 0 };
+    // PERSONAL_OFFICE_PLAN: a study folder is learning, not work: its chats write no work lines (and spend nothing here).
+    if ((await folderKindOf(chunk.userId, chunk.project)) === 'study') return { lines: 0, costUsd: 0 };
     const ctx = await loadLearningContext(chunk.userId, now);
     const lastAt = new Date(messages[messages.length - 1]!.at);
     const happenedAt = Number.isNaN(lastAt.getTime()) ? now : lastAt;
@@ -506,6 +509,8 @@ export async function logWork(userId: string, input: LogWorkInput, now: Date = n
     const day = logDay(input.day, ctx.today);
     const project = input.project.trim().toLowerCase().slice(0, 100) || 'other';
     const app = (input.app ?? '').trim().slice(0, 60) || 'an agent';
+    // A folder the server knows as work is office work, whatever the chat said (PERSONAL_OFFICE_PLAN).
+    const office = await officeFolder(userId, project, input.office);
     const result = await withPersonLock(userId, async (tx) => {
         const [removed, others, current] = await Promise.all([
             tx.workLine.findMany({ where: { userId, hidden: true, day: { gte: toDbDay(addDays(day, -REMOVED_DAYS)) } }, select: { text: true }, take: 200 }),
@@ -530,7 +535,7 @@ export async function logWork(userId: string, input: LogWorkInput, now: Date = n
             const target = l.on ? ons.get(l.on.trim()) : undefined;
             wanted.push({ kind: l.kind, text, at, on: target?.id ?? null, happenedAt: happenedOf(day, at, ctx, now) });
         }
-        await applyList(tx, { userId, sessionKey: input.key, day, project, office: !!input.office, source: 'agent', app, current, wanted });
+        await applyList(tx, { userId, sessionKey: input.key, day, project, office, source: 'agent', app, current, wanted });
         return { saved: wanted.length, skipped };
     });
     if (result.saved) await bumpDay(userId, ctx.today, { work: result.saved });

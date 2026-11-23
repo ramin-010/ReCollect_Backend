@@ -5,6 +5,7 @@
 import { prisma } from '../../db/prisma';
 import { getBrief, type Brief } from '../brief/brief.service';
 import { listSessions } from '../learningDb/sessions.service';
+import { progressLens } from '../learningDb/lens';
 import { addDays, type DayString } from '../learning';
 import { dayRange, loadLearningContext, toDbDay } from '../learningDb/common';
 
@@ -55,7 +56,7 @@ export async function buddySignals(userId: string, now: Date = new Date(), brief
     const fromInstant = dayRange(from, ctx.tz).gte;
     const [b, sessions, revisions, tasks, capture, decided] = await Promise.all([
         brief ? Promise.resolve(brief) : getBrief(userId, {}, now),
-        listSessions(userId, { days: SIGNAL_DAYS }, now),
+        progressLens(userId).then((lens) => listSessions(userId, { days: SIGNAL_DAYS, lens }, now)),
         prisma.revision.findMany({ where: { userId, status: 'done', completedAt: { gte: fromInstant } }, select: { completedAt: true } }),
         prisma.todo.findMany({ where: { userId, workspaceId: null, completedAt: { gte: fromInstant } }, select: { completedAt: true } }),
         prisma.buddyCaptureDay.findMany({ where: { userId, day: { gte: toDbDay(addDays(ctx.today, -6)) } } }),

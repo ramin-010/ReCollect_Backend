@@ -16,6 +16,7 @@ import { captureTitle } from '../../db/serializers/learning';
 import { serializeCoachNote, type CoachNoteJson } from '../../db/serializers/coach';
 import { addDays, dayOf, startOfDay, type DayString } from '../learning';
 import { dayRange, fromDbDay, fromDbDayOrNull, loadLearningContext, toDbDay } from '../learningDb/common';
+import { countedSessions } from '../learningDb/lens';
 import { aiModel, callClaude, isAiConfigured } from '../claude/client';
 import { aiFailed, aiNotConfigured } from '../claude/errors';
 import { assertUnderCap, recordAiUsage } from '../claude/usage.service';
@@ -63,6 +64,8 @@ export async function loadCoachRows(userId: string, ctx: { today: DayString; tz:
     const to = startOfDay(ctx.today, ctx.tz);
     const weekDays = { gte: toDbDay(w.weekStart), lte: toDbDay(w.weekEnd) };
     const instants = { gte: from, lt: to };
+    // The sessions that count as progress (PERSONAL_OFFICE_PLAN): the coach judges those only.
+    const counted = await countedSessions(userId);
     const [revisions, backlog, recallSets, focus, docs, goals, sessions, weakSpotsOpen, weakSpotsCleared, week] = await Promise.all([
         prisma.revision.findMany({
             where: { userId, OR: [{ scheduledFor: weekDays }, { status: 'done', completedAt: instants }] },
@@ -101,7 +104,7 @@ export async function loadCoachRows(userId: string, ctx: { today: DayString; tz:
             select: { title: true, deadline: true, createdAt: true, milestones: { orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }] } },
         }),
         // The record (LOOP_COMPLETE_SPEC 1.7): sessions, weak spots, the week's targets.
-        prisma.workSession.findMany({ where: { userId, day: weekDays }, select: { day: true, kind: true, minutes: true, outcome: true } }),
+        prisma.workSession.findMany({ where: { userId, day: weekDays, ...counted }, select: { day: true, kind: true, minutes: true, outcome: true } }),
         prisma.weakSpot.count({ where: { userId, status: 'open' } }),
         prisma.weakSpot.count({ where: { userId, status: 'cleared', clearedAt: instants } }),
         weekSummary(userId, weekStartOf(w.weekEnd), ctx.tz),

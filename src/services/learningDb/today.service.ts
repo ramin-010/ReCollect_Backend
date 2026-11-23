@@ -56,6 +56,7 @@ import { itemSource, revisionItemInclude, type RevisionWithItem } from './revisi
 import { needsEnsure } from './rollover.service';
 import { loadNextUpRows, nextUpOf } from './path.service';
 import { sessionDays } from './sessions.service';
+import { progressLens } from './lens';
 
 export const INBOX_LIMIT = 10;
 
@@ -163,8 +164,9 @@ export async function getToday(userId: string, now: Date = new Date()) {
         needsHistoryCheck(user, today) ? hasRevisionHistory(userId, today, tz) : Promise.resolve(false),
         // Next up: the paths with something planned or in progress (SYNC_SPINE_SPEC 1.1).
         loadNextUpRows(userId),
-        // Rhythm: a day with a logged session is an active day (SYNC_SPINE_SPEC 1.2).
-        sessionDays(userId, rhythmFrom, today),
+        // Rhythm: a day with a logged session is an active day (SYNC_SPINE_SPEC 1.2), of the sessions that count as
+        // progress (PERSONAL_OFFICE_PLAN: work only when they said it counts).
+        progressLens(userId).then((lens) => sessionDays(userId, rhythmFrom, today, lens)),
     ]);
 
     // ── Revisions (back-compat buckets) ──

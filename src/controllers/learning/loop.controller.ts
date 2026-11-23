@@ -29,6 +29,8 @@ const settingsSchema = z.object({
     nudgeEmailEnabled: z.boolean().optional(),
     nudgeTime: z.string().refine((v) => isValidTime(v), { message: "must be a time 'HH:mm'" }).optional(),
     agentProfile: z.string().max(600, 'At most 600 characters').nullable().optional(),
+    /** PERSONAL_OFFICE_PLAN: work counts as progress too. */
+    progressIncludesWork: z.boolean().optional(),
 });
 
 export const getSettingsHandler = handler(async (req, res) => {

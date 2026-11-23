@@ -20,6 +20,7 @@ import {
     updateSession,
     upsertSessionByKey,
 } from '../../services/learningDb/sessions.service';
+import { PROJECT_KINDS, progressLens } from '../../services/learningDb/lens';
 import { handler, ok, param, parse, zDay, zId } from './common';
 
 const zKind = z.enum(SESSION_KINDS);
@@ -35,6 +36,8 @@ const zWrite = z
         subjectId: zId.nullable().optional(),
         topicId: zId.nullable().optional(),
         project: z.string().max(200).nullable().optional(),
+        /** PERSONAL_OFFICE_PLAN: the PC's hint for a folder the server has never seen (the hook's rule). */
+        projectKind: z.enum(PROJECT_KINDS).optional(),
         score: z.object({ done: z.number().int(), total: z.number().int() }).nullable().optional(),
         outcome: z.enum(PRACTICE_OUTCOMES).nullable().optional(),
         problem: z.string().max(400).nullable().optional(),
@@ -62,7 +65,7 @@ export const putSessionByKeyHandler = handler(async (req, res) => {
     ok(res, out);
 });
 
-const zCreate = zWrite.omit({ kindIfNew: true, titleIfNew: true, source: true, weakSpots: true, cleared: true, topicStatus: true, learned: true }).extend({ title: z.string().min(1).max(400), day: zDay.optional() });
+const zCreate = zWrite.omit({ kindIfNew: true, titleIfNew: true, source: true, weakSpots: true, cleared: true, topicStatus: true, learned: true, projectKind: true }).extend({ title: z.string().min(1).max(400), day: zDay.optional() });
 
 /** POST /api/sessions (the app: a manual entry) → the session */
 export const createSessionHandler = handler(async (req, res) => {
@@ -80,7 +83,10 @@ const zList = z.object({
 /** GET /api/sessions?days=&kind=&project=&subject= → { sessions, days } */
 export const listSessionsHandler = handler(async (req, res) => {
     const q = parse(zList, req.query);
-    ok(res, await listSessions(requireUser(req).id, { days: q.days, kind: q.kind, project: q.project, subjectId: q.subject }));
+    const userId = requireUser(req).id;
+    // Every session (the record to fix), with what counts as progress so Home's line counts only that (PERSONAL_OFFICE_PLAN).
+    const [list, lens] = await Promise.all([listSessions(userId, { days: q.days, kind: q.kind, project: q.project, subjectId: q.subject }), progressLens(userId)]);
+    ok(res, { ...list, progressLens: lens });
 });
 
 const zPatch = z
@@ -115,6 +121,8 @@ const zProjectPatch = z
         goalId: zId.nullable().optional(),
         isArchived: z.boolean().optional(),
         nextStep: z.string().max(600).nullable().optional(),
+        /** PERSONAL_OFFICE_PLAN: personal, study or work; its past sessions move with it. */
+        kind: z.enum(PROJECT_KINDS).optional(),
     })
     .strict();
 

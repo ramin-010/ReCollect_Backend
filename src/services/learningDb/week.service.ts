@@ -7,11 +7,12 @@
 //   addWeekTarget    POST  /api/week/targets          learning:write (agent: week_target_create)
 //   updateWeekTarget PATCH /api/week/targets/:id      learning:write (agent: week_target_update)
 // The Sunday review's proposals are Suggestion rows (suggestions.service.ts, proposeWeek).
-import type { CreatedBy, Prisma, SessionKind, TopicStatus, TodoStatus, WeekMeasure, WeekTargetStatus } from '@prisma/client';
+import type { CreatedBy, Prisma, SessionArea, SessionKind, TopicStatus, TodoStatus, WeekMeasure, WeekTargetStatus } from '@prisma/client';
 import { prisma } from '../../db/prisma';
 import { addDays, startOfDay, type DayString } from '../learning';
 import { badRequest, conflict, notFound } from '../learning/http';
 import { fromDbDay, loadLearningContext, toDbDay, type LearningContext } from './common';
+import { inLens, progressLens, type ProgressLens } from './lens';
 
 export const WEEK_TARGETS_MAX = 5;
 export const WEEK_TARGET_TEXT_MAX = 140;
@@ -59,25 +60,30 @@ const TARGET_INCLUDE = {
 } as const;
 type TargetRow = Prisma.WeekTargetGetPayload<{ include: typeof TARGET_INCLUDE }>;
 
-/** What a week's counts need: its sessions and the topics finished in it. */
+/**
+ * What a week's counts need: its sessions (both areas: a target on a work folder counts that folder's time), the
+ * topics finished in it, and the person's progress lens (a target on no folder counts what counts as progress).
+ */
 export interface WeekActivity {
-    sessions: Array<{ kind: SessionKind; minutes: number | null; subjectId: string | null; projectId: string | null }>;
+    sessions: Array<{ kind: SessionKind; minutes: number | null; subjectId: string | null; projectId: string | null; area: SessionArea }>;
     topicsDone: Array<{ subjectId: string }>;
+    lens: ProgressLens;
 }
 
 export async function loadWeekActivity(userId: string, weekStart: DayString, tz: string): Promise<WeekActivity> {
     const weekEnd = addDays(weekStart, 6);
-    const [sessions, topicsDone] = await Promise.all([
+    const [sessions, topicsDone, lens] = await Promise.all([
         prisma.workSession.findMany({
             where: { userId, day: { gte: toDbDay(weekStart), lte: toDbDay(weekEnd) } },
-            select: { kind: true, minutes: true, subjectId: true, projectId: true },
+            select: { kind: true, minutes: true, subjectId: true, projectId: true, area: true },
         }),
         prisma.topic.findMany({
             where: { userId, status: 'done', doneAt: { gte: startOfDay(weekStart, tz), lt: startOfDay(addDays(weekEnd, 1), tz) } },
             select: { subjectId: true },
         }),
+        progressLens(userId),
     ]);
-    return { sessions, topicsDone };
+    return { sessions, topicsDone, lens };
 }
 
 /** A count's progress in its week (pure). */
@@ -86,8 +92,9 @@ export function countProgress(
     activity: WeekActivity
 ): { done: number; total: number } | null {
     if (!target.measure || !target.amount) return null;
-    const inScope = (s: { subjectId: string | null; projectId: string | null }) =>
-        (!target.subjectId || s.subjectId === target.subjectId) && (!target.projectId || s.projectId === target.projectId);
+    // A target on a folder counts that folder's time; any other counts only what counts as progress (PERSONAL_OFFICE_PLAN).
+    const inScope = (s: { subjectId: string | null; projectId: string | null; area: SessionArea }) =>
+        (!target.subjectId || s.subjectId === target.subjectId) && (target.projectId ? s.projectId === target.projectId : inLens(activity.lens, s.area));
     let done = 0;
     if (target.measure === 'practice') done = activity.sessions.filter((s) => s.kind === 'practice' && inScope(s)).length;
     else if (target.measure === 'minutes') done = activity.sessions.filter(inScope).reduce((sum, s) => sum + (s.minutes ?? 0), 0);

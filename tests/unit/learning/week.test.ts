@@ -19,11 +19,12 @@ describe('weeks', () => {
     it('counts: practice sessions, minutes, topics finished, in a subject or project; capped at the amount', () => {
         const activity = {
             sessions: [
-                { kind: 'practice' as const, minutes: 20, subjectId: 'dsa', projectId: null },
-                { kind: 'practice' as const, minutes: 30, subjectId: 'sd', projectId: null },
-                { kind: 'build' as const, minutes: 90, subjectId: null, projectId: 'p1' },
+                { kind: 'practice' as const, minutes: 20, subjectId: 'dsa', projectId: null, area: 'personal' as const },
+                { kind: 'practice' as const, minutes: 30, subjectId: 'sd', projectId: null, area: 'personal' as const },
+                { kind: 'build' as const, minutes: 90, subjectId: null, projectId: 'p1', area: 'personal' as const },
             ],
             topicsDone: [{ subjectId: 'dsa' }, { subjectId: 'dsa' }, { subjectId: 'sd' }],
+            lens: 'personal' as const,
         };
         const t = (measure: 'practice' | 'minutes' | 'topics', amount: number, subjectId: string | null = null, projectId: string | null = null) => countProgress({ measure, amount, subjectId, projectId }, activity);
         expect(t('practice', 10)).toEqual({ done: 2, total: 10 });
@@ -31,6 +32,18 @@ describe('weeks', () => {
         expect(t('minutes', 600, null, 'p1')).toEqual({ done: 90, total: 600 });
         expect(t('topics', 1, 'dsa')).toEqual({ done: 1, total: 1 });
         expect(countProgress({ measure: null, amount: null, subjectId: null, projectId: null }, activity)).toBeNull();
+    });
+
+    it('PERSONAL_OFFICE_PLAN: a target on no folder counts what counts as progress; one on a work folder counts that folder', () => {
+        const sessions = [
+            { kind: 'build' as const, minutes: 60, subjectId: null, projectId: 'mine', area: 'personal' as const },
+            { kind: 'build' as const, minutes: 300, subjectId: null, projectId: 'erp', area: 'work' as const },
+        ];
+        const minutes = (lens: 'personal' | 'all', projectId: string | null = null) =>
+            countProgress({ measure: 'minutes', amount: 1000, subjectId: null, projectId }, { sessions, topicsDone: [], lens })?.done;
+        expect(minutes('personal')).toBe(60);
+        expect(minutes('all')).toBe(360);
+        expect(minutes('personal', 'erp')).toBe(300);
     });
 });
 

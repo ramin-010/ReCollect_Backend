@@ -278,9 +278,12 @@ export function serializeLearningSettings(u: {
     lastNudgeDay: Date | null;
     lastSeenDay: Date | null;
     agentProfile?: string | null;
+    progressIncludesWork?: boolean;
 }) {
     return {
         agentProfile: u.agentProfile ?? null,
+        /** PERSONAL_OFFICE_PLAN: work counts as progress too (off: personal only). */
+        progressIncludesWork: u.progressIncludesWork === true,
         dailyBudgetMin: u.dailyBudgetMin,
         routineEnabled: u.routineEnabled,
         busyUntil: dayOrNull(u.busyUntil),

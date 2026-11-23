@@ -15,9 +15,19 @@
  *
  * A comparison is only ever made against a span the record covers in full: when the record starts
  * inside the span before, `before` is null and the page says where the record starts.
+ *
+ * PERSONAL_OFFICE_PLAN (11-23): a lens picks the sessions (personal, work or all). The service hands in only the
+ * rows its lens sees (the Work lens: work sessions and nothing else, since reviews, focus lines and goals are
+ * learning); here the lens only changes the words: "worked" for the Work lens, the split for All.
  */
 import { addDays, diffDays, type DayString } from './time';
 import type { MinutesByKind, PaceStatus } from './pace';
+
+/** Which sessions the record is read through (PERSONAL_OFFICE_PLAN; services/learningDb/lens.ts). */
+export type StandLens = 'personal' | 'work' | 'all';
+export type StandArea = 'personal' | 'work';
+/** A day's tooltip names at most this many places its time went. */
+export const DAY_PLACES = 3;
 
 export type StandWindow = 'week' | 'month' | 'year';
 export const STAND_WINDOWS: readonly StandWindow[] = ['week', 'month', 'year'];
@@ -45,7 +55,8 @@ export interface Span {
 
 /** What the service loads, every instant already turned into the user's local day. */
 export interface StandRows {
-    sessions: ReadonlyArray<{ day: DayString; kind: StandKind; minutes: number | null; outcome: 'alone' | 'hints' | 'after_answer' | null }>;
+    /** `area`: personal or work; `place`: where the time went (its folder, else its subject), for a day's words. */
+    sessions: ReadonlyArray<{ day: DayString; kind: StandKind; minutes: number | null; outcome: 'alone' | 'hints' | 'after_answer' | null; area?: StandArea; place?: string | null }>;
     revisions: ReadonlyArray<{ scheduledFor: DayString; completedDay: DayString | null; status: 'pending' | 'done' | 'missed' }>;
     topicsDone: ReadonlyArray<{ doneDay: DayString; subjectId: string }>;
     focus: ReadonlyArray<{ day: DayString; done: boolean }>;
@@ -66,6 +77,8 @@ export interface Measures {
     daysWithSitting: number;
     minutes: MinutesByKind;
     totalMinutes: number;
+    /** The same minutes by area (PERSONAL_OFFICE_PLAN): the All lens's split. */
+    minutesByArea: Record<StandArea, number>;
     sessions: number;
     /** Reviews scheduled in the span: done on their day, done later, still open now; and catch-ups (due before the span, done in it). */
     reviews: { due: number; onDay: number; late: number; open: number; catchUps: number };
@@ -101,6 +114,10 @@ export interface StandDay {
     /** Minutes logged that day, all kinds. */
     minutes: number;
     byKind: MinutesByKind;
+    /** The same minutes by area (PERSONAL_OFFICE_PLAN). */
+    byArea: Record<StandArea, number>;
+    /** Where the time went, most first (at most DAY_PLACES): a folder, a subject. Absent on a day without minutes. */
+    places?: Array<{ name: string; minutes: number; area: StandArea }>;
     /** Reviews done, focus lines done and sessions logged that day (what made it active). */
     reviews: number;
     focus: number;
@@ -138,6 +155,7 @@ export function spanBefore(span: Span): Span {
 const within = (day: DayString, s: Span): boolean => day >= s.from && day <= s.to;
 const inSpan = (day: DayString | null | undefined, s: Span): day is DayString => !!day && within(day, s);
 const zeroKinds = (): MinutesByKind => ({ study: 0, practice: 0, build: 0, review: 0 });
+const zeroAreas = (): Record<StandArea, number> => ({ personal: 0, work: 0 });
 
 /** The first day the record holds anything: the earliest of the given days (null ones skipped). */
 export function recordStartOf(days: ReadonlyArray<DayString | null | undefined>, fallback: DayString): DayString {
@@ -165,6 +183,7 @@ export function measures(rows: StandRows, span: Span, recordStart: DayString): M
     const days = coveredFrom > span.to ? 0 : diffDays(span.to, coveredFrom) + 1;
 
     const minutes = zeroKinds();
+    const minutesByArea = zeroAreas();
     const perDay = new Map<DayString, number>();
     let sessions = 0;
     const practice = { total: 0, alone: 0, hints: 0, afterAnswer: 0 };
@@ -173,6 +192,7 @@ export function measures(rows: StandRows, span: Span, recordStart: DayString): M
         sessions += 1;
         const m = s.minutes ?? 0;
         minutes[s.kind] += m;
+        minutesByArea[s.area ?? 'personal'] += m;
         perDay.set(s.day, (perDay.get(s.day) ?? 0) + m);
         if (s.kind === 'practice' && s.outcome) {
             practice.total += 1;
@@ -235,6 +255,7 @@ export function measures(rows: StandRows, span: Span, recordStart: DayString): M
         daysWithSitting: [...perDay.values()].filter((m) => m >= SITTING_MINUTES).length,
         minutes,
         totalMinutes: KINDS.reduce((a, k) => a + minutes[k], 0),
+        minutesByArea,
         sessions,
         reviews,
         focus,
@@ -325,7 +346,8 @@ export function goalLineOf(goals: readonly GoalLine[]): GoalLine | null {
  * The verdict (§5.4): at most three sentences, each only when its facts exist. It states the gap;
  * it never says "work harder": the reader judges.
  */
-export function verdictLines(p: Omit<StandPeriod, 'verdict'>, goal: GoalLine | null, ctx: { today: DayString; recordStart: DayString }): string[] {
+export function verdictLines(p: Omit<StandPeriod, 'verdict'>, goal: GoalLine | null, ctx: { today: DayString; recordStart: DayString; lens?: StandLens }): string[] {
+    if (ctx.lens === 'work') return workVerdictLines(p, ctx);
     const words = PHRASES[p.window];
     const c = p.current;
     const prev = p.previous;
@@ -352,7 +374,12 @@ export function verdictLines(p: Omit<StandPeriod, 'verdict'>, goal: GoalLine | n
             const top = KINDS.reduce((best, k) => (c.minutes[k] > c.minutes[best] ? k : best), KINDS[0]!);
             const most = c.minutes[top] === total ? `; all of it ${KIND_WORDS[top]}` : c.minutes[top] * 2 >= total ? `; most of it ${KIND_WORDS[top]}` : '';
             const vs = prev ? `, ${compareWords(total, prev.totalMinutes, 'minutes')} ${words.before}` : '';
-            lines.push(`${formatMinutes(total)} logged${p.partial ? ` ${span}` : ''}${vs}${most}.`);
+            // The All lens says how the time split (PERSONAL_OFFICE_PLAN §5 stage 3), when both areas have some.
+            const split =
+                ctx.lens === 'all' && c.minutesByArea.personal > 0 && c.minutesByArea.work > 0
+                    ? `; ${formatMinutes(c.minutesByArea.personal)} personal, ${formatMinutes(c.minutesByArea.work)} work`
+                    : most;
+            lines.push(`${formatMinutes(total)} logged${p.partial ? ` ${span}` : ''}${vs}${split}.`);
         }
     }
 
@@ -379,9 +406,32 @@ export function verdictLines(p: Omit<StandPeriod, 'verdict'>, goal: GoalLine | n
     return lines;
 }
 
+/** The Work lens's verdict: days at work and hours against the span before. No goal: work is not judged here. */
+function workVerdictLines(p: Omit<StandPeriod, 'verdict'>, ctx: { today: DayString; recordStart: DayString }): string[] {
+    const words = PHRASES[p.window];
+    const c = p.current;
+    const prev = p.previous;
+    const start = shortDay(ctx.recordStart, ctx.today);
+    if (c.activeDays === 0 && c.totalMinutes === 0 && (!prev || (prev.activeDays === 0 && prev.totalMinutes === 0))) {
+        return [`${p.partial ? 'No work tracked yet.' : `No work tracked in ${words.now}.`} Claude Code in a folder marked Work fills this in.`];
+    }
+    const lines: string[] = [];
+    const a = c.activeDays;
+    if (p.partial) lines.push(c.days <= 1 ? (a ? 'Worked today, the first day of the record.' : 'No work yet today, the first day of the record.') : `Worked ${a} of the ${c.days} days since the record started on ${start}.`);
+    else {
+        const head = p.window === 'week' ? `Worked ${a} of the last 7 days` : `Worked on ${plural(a, 'day')} in ${words.now}`;
+        lines.push(prev ? `${head}, ${compareWords(a, prev.activeDays, 'count')} ${words.before}.` : `${head}.`);
+    }
+    const total = c.totalMinutes;
+    const span = p.partial ? `since ${start}` : `in ${words.now}`;
+    if (total === 0) lines.push(prev && prev.totalMinutes > 0 ? `No time tracked ${span}; ${formatMinutes(prev.totalMinutes)} ${words.before}.` : `No time tracked ${span}.`);
+    else lines.push(`${formatMinutes(total)} at work${p.partial ? ` ${span}` : ''}${prev ? `, ${compareWords(total, prev.totalMinutes, 'minutes')} ${words.before}` : ''}.`);
+    return lines;
+}
+
 // ─── The whole stand ───────────────────────────────────────────────────
 
-function periodOf(rows: StandRows, window: StandWindow, ctx: { today: DayString; recordStart: DayString; goal: GoalLine | null }): StandPeriod {
+function periodOf(rows: StandRows, window: StandWindow, ctx: { today: DayString; recordStart: DayString; goal: GoalLine | null; lens?: StandLens }): StandPeriod {
     const span = spanEnding(ctx.today, window);
     const partial = span.from < ctx.recordStart;
     const prior = spanBefore(span);
@@ -396,14 +446,28 @@ function periodOf(rows: StandRows, window: StandWindow, ctx: { today: DayString;
 export function standDays(rows: StandRows, today: DayString): StandDay[] {
     const from = addDays(today, -(STAND_GRID_DAYS - 1));
     const out = new Map<DayString, StandDay>();
-    for (let d = from; d <= today; d = addDays(d, 1)) out.set(d, { day: d, active: false, minutes: 0, byKind: zeroKinds(), reviews: 0, focus: 0, sessions: 0 });
+    for (let d = from; d <= today; d = addDays(d, 1)) out.set(d, { day: d, active: false, minutes: 0, byKind: zeroKinds(), byArea: zeroAreas(), reviews: 0, focus: 0, sessions: 0 });
+    const places = new Map<DayString, Map<string, { minutes: number; area: StandArea }>>();
     for (const s of rows.sessions) {
         const e = out.get(s.day);
         if (!e) continue;
+        const m = s.minutes ?? 0;
         e.sessions += 1;
-        e.minutes += s.minutes ?? 0;
-        e.byKind[s.kind] += s.minutes ?? 0;
+        e.minutes += m;
+        e.byKind[s.kind] += m;
+        e.byArea[s.area ?? 'personal'] += m;
         e.active = true;
+        if (m > 0) {
+            const name = s.place?.trim() || KIND_PLACE[s.kind];
+            const day = places.get(s.day) ?? new Map<string, { minutes: number; area: StandArea }>();
+            const had = day.get(name);
+            day.set(name, { minutes: (had?.minutes ?? 0) + m, area: had?.area ?? s.area ?? 'personal' });
+            places.set(s.day, day);
+        }
+    }
+    for (const [day, byName] of places) {
+        const e = out.get(day);
+        if (e) e.places = [...byName.entries()].map(([name, v]) => ({ name, minutes: v.minutes, area: v.area })).sort((a, b) => b.minutes - a.minutes || a.name.localeCompare(b.name)).slice(0, DAY_PLACES);
     }
     for (const r of rows.revisions) {
         const e = r.status === 'done' && r.completedDay ? out.get(r.completedDay) : undefined;
@@ -420,7 +484,10 @@ export function standDays(rows: StandRows, today: DayString): StandDay[] {
     return [...out.values()];
 }
 
-export function buildStand(rows: StandRows, ctx: { today: DayString; recordStart: DayString; goal: GoalLine | null }): Stand {
+/** A session with no folder or subject, by its kind, in a day's words. */
+const KIND_PLACE: Record<StandKind, string> = { study: 'Study', practice: 'Practice', build: 'Building', review: 'Review' };
+
+export function buildStand(rows: StandRows, ctx: { today: DayString; recordStart: DayString; goal: GoalLine | null; lens?: StandLens }): Stand {
     const periods = {} as Record<StandWindow, StandPeriod>;
     for (const w of STAND_WINDOWS) periods[w] = periodOf(rows, w, ctx);
     return { today: ctx.today, recordStart: ctx.recordStart, periods, days: standDays(rows, ctx.today) };
