@@ -11,7 +11,7 @@
 // reviews, topics, goals or habits, as the Work lens), with the folders of their own the time went to.
 import { prisma } from '../../db/prisma';
 import { addDays, dayOf, startOfDay, type DayString } from '../learning';
-import { buildStand, goalLineOf, recordStartOf, STAND_GRID_DAYS, STAND_LOOKBACK_DAYS, type Stand, type StandRows } from '../learning/stand';
+import { buildStand, coverageOf, goalLineOf, recordStartOf, STAND_GRID_DAYS, STAND_LOOKBACK_DAYS, STAND_WINDOWS, type CoverageInput, type Stand, type StandRows } from '../learning/stand';
 import { fromDbDay, loadLearningContext, toDbDay } from '../learningDb/common';
 import { goalInclude } from '../learningDb/goals.service';
 import { inLens, progressLens, SESSIONS_ONLY, type Lens, type ProgressLens } from '../learningDb/lens';
@@ -79,6 +79,10 @@ export async function getStand(userId: string, now: Date = new Date(), lensAsked
         firstTopic,
         firstDoc,
         workFolders,
+        tasksDue,
+        milestonesDue,
+        captures,
+        workLines,
     ] = await Promise.all([
         prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { createdAt: true } }),
         prisma.workSession.findMany({
@@ -93,7 +97,7 @@ export async function getStand(userId: string, now: Date = new Date(), lensAsked
         prisma.revision.count({ where: { userId, status: 'pending', scheduledFor: { lt: toDbDay(today) } } }),
         prisma.topic.findMany({ where: { userId, isArchived: false, status: 'done', doneAt: { gte: fromAt } }, select: { subjectId: true, doneAt: true, title: true, doc: { select: { title: true } } } }),
         prisma.focusItem.findMany({ where: { userId, day: { gte: fromDay, lte: toDbDay(today) } }, select: { day: true, done: true } }),
-        prisma.weekTarget.findMany({ where: { userId, weekStart: { gte: fromDay, lte: toDbDay(today) } }, select: { weekStart: true, status: true } }),
+        prisma.weekTarget.findMany({ where: { userId, weekStart: { gte: fromDay, lte: toDbDay(today) } }, select: { weekStart: true, status: true, doneAt: true } }),
         prisma.goalMilestone.findMany({ where: { goal: { userId }, done: true, doneAt: { gte: fromAt } }, select: { doneAt: true, title: true, goal: { select: { title: true } } } }),
         prisma.weakSpot.findMany({ where: { userId, OR: [{ createdAt: { gte: fromAt } }, { clearedAt: { gte: fromAt } }] }, select: { createdAt: true, clearedAt: true } }),
         prisma.weakSpot.count({ where: { userId, status: 'open' } }),
@@ -111,6 +115,12 @@ export async function getStand(userId: string, now: Date = new Date(), lensAsked
         prisma.topic.aggregate({ where: { userId, doneAt: { not: null } }, _min: { doneAt: true } }),
         prisma.doc.aggregate({ where: { userId, trashedAt: null }, _min: { createdAt: true } }),
         prisma.project.findMany({ where: { userId, kind: 'work' }, select: { key: true }, orderBy: { key: 'asc' } }),
+        // COVERAGE_PLAN: what came due (their own dated tasks, milestones with a date), notes on a subject or lesson,
+        // and the work log's lines (a day of building or of work).
+        prisma.todo.findMany({ where: { userId, workspaceId: null, dueDate: { gte: fromAt } }, select: { dueDate: true, completedAt: true, status: true } }),
+        prisma.goalMilestone.findMany({ where: { goal: { userId }, dueDay: { gte: fromDay, lte: toDbDay(today) } }, select: { dueDay: true, done: true, doneAt: true } }),
+        prisma.capture.findMany({ where: { userId, createdAt: { gte: fromAt }, OR: [{ subjectId: { not: null } }, { topicId: { not: null } }] }, select: { createdAt: true } }),
+        prisma.workLine.findMany({ where: { userId, hidden: false, day: { gte: fromDay, lte: toDbDay(today) } }, select: { day: true, office: true }, distinct: ['day', 'office'] }),
     ]);
     // The Work and Building lenses read sessions and nothing else: reviews, focus lines, targets and goals are learning.
     const work = SESSIONS_ONLY.includes(lens);
@@ -161,13 +171,32 @@ export async function getStand(userId: string, now: Date = new Date(), lensAsked
         .filter((m) => m.day >= gridFrom && m.day <= today)
         .sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0));
 
-    const hasWork = workFolders.length > 0 || sessions.some((s) => s.area === 'work');
+    const hasWork = workFolders.length > 0 || sessions.some((s) => s.area === 'work') || workLines.some((l) => l.office);
     const built = sessions.filter((s) => s.area === 'personal' && s.kind === 'build');
     const hasBuilding = built.length > 0;
     const hasLearning = sessions.some((s) => s.area === 'personal' && s.kind !== 'build') || revisions.some((r) => r.status === 'done') || topicsDone.length > 0;
     const buildFolders = [...new Set(built.flatMap((s) => (s.project ? [s.project.key] : [])))].sort();
+    // COVERAGE_PLAN: the four rates, from the whole record whatever the lens.
+    const coverageInput: CoverageInput = {
+        sessions: sessions.map((s) => ({ day: fromDbDay(s.day), kind: s.kind, area: s.area })),
+        reviewsDone: revisions.filter((r) => r.status === 'done' && r.completedAt).map((r) => local(r.completedAt!)),
+        topicsDone: topicsDone.filter((t) => t.doneAt).map((t) => local(t.doneAt!)),
+        recallSets: recallSets.filter((r) => r.finishedAt).map((r) => local(r.finishedAt!)),
+        captures: captures.map((c) => local(c.createdAt)),
+        docs: docs.map((d) => ({ createdDay: local(d.createdAt), updatedDay: local(d.updatedAt) })),
+        workLines: workLines.map((l) => ({ day: fromDbDay(l.day), office: l.office })),
+        reviews: revisions.map((r) => ({ due: fromDbDay(r.scheduledFor), done: r.status === 'done' && r.completedAt ? local(r.completedAt) : null, missed: r.status === 'missed' })),
+        tasks: tasksDue.filter((t) => t.dueDate).map((t) => ({ due: local(t.dueDate!), done: t.status === 'complete' && t.completedAt ? local(t.completedAt) : null })),
+        milestones: milestonesDue.filter((m) => m.dueDay).map((m) => ({ due: fromDbDay(m.dueDay!), done: m.done && m.doneAt ? local(m.doneAt) : null })),
+        targets: targets.map((t) => ({ weekStart: fromDbDay(t.weekStart), status: t.status, doneDay: t.doneAt ? local(t.doneAt) : null })),
+        focus: focus.map((f) => ({ day: fromDbDay(f.day), done: f.done })),
+        hasBuilding: hasBuilding || workLines.some((l) => !l.office),
+        hasWork,
+    };
+    const stand = buildStand(rows, { today, recordStart: start, goal, lens });
+    for (const w of STAND_WINDOWS) stand.periods[w].coverage = coverageOf(coverageInput, stand.periods[w].span, start, today);
     return {
-        ...buildStand(rows, { today, recordStart: start, goal, lens }),
+        ...stand,
         lens,
         progressLens: progress,
         hasWork,

@@ -125,6 +125,11 @@ describe('a work folder (PERSONAL_OFFICE_PLAN stage 1)', () => {
         expect(building.periods.week.verdict[1]).toMatch(/^2 h on your own projects since \d+ \w+; all of it on side-project\.$/);
         expect(building.days.at(-1)).toMatchObject({ minutes: 120, places: [{ name: 'side-project', minutes: 120, area: 'personal' }] });
         expect(building).toMatchObject({ openNow: 0, moments: [] });
+        // COVERAGE_PLAN: the same four rates through every lens (one day of each; no work, nothing due yet).
+        const coverage = { learning: { days: 1 }, building: { days: 1 }, work: null, onTime: { done: 0, due: 0 } };
+        expect(personal.periods.week.coverage).toMatchObject(coverage);
+        expect(building.periods.week.coverage).toEqual(personal.periods.week.coverage);
+        expect(learning.periods.year.coverage).toMatchObject(coverage);
 
         // Their ticks: building no longer counts; learning always does (Home's rhythm, the stand's default).
         const user2 = user;
@@ -137,6 +142,7 @@ describe('a work folder (PERSONAL_OFFICE_PLAN stage 1)', () => {
         const mixed = await stand();
         expect(mixed).toMatchObject({ lens: 'learning_work', progressLens: 'learning_work' });
         expect(mixed.periods.week.current).toMatchObject({ totalMinutes: 105, minutesByArea: { personal: 45, work: 60 } });
+        expect(mixed.periods.week.coverage).toMatchObject({ work: { days: expect.any(Number) } });
         expect(mixed.periods.week.verdict[1]).toMatch(/45 min learning, 1 h work\.$/);
     });
 

@@ -110,6 +110,8 @@ export interface StandPeriod {
     previous: Measures | null;
     /** 0-3 sentences (§5.4). */
     verdict: string[];
+    /** COVERAGE_PLAN: the four rates of this window (the service adds them; every lens answers the same). */
+    coverage?: Coverage;
 }
 
 export interface StandDay {
@@ -536,4 +538,109 @@ export function buildStand(rows: StandRows, ctx: { today: DayString; recordStart
     const periods = {} as Record<StandWindow, StandPeriod>;
     for (const w of STAND_WINDOWS) periods[w] = periodOf(rows, w, ctx);
     return { today: ctx.today, recordStart: ctx.recordStart, periods, days: standDays(rows, ctx.today) };
+}
+
+// ─── Coverage (COVERAGE_PLAN, 11-23) ───────────────────────────────────
+// Four rates, none of them minutes: on how many days they learned, built, worked (of weekdays), and how much of
+// what came due was done by its day. A day counts once however much happened on it: showing up, not volume.
+// Lens-free: the chart always shows every part the record holds.
+
+/** Something with a day it was due and the day it was done (null: not done). */
+export interface DueItem {
+    due: DayString;
+    done: DayString | null;
+}
+
+export interface CoverageInput {
+    /** Every session, whatever the page's lens. */
+    sessions: ReadonlyArray<{ day: DayString; kind: StandKind; area?: StandArea }>;
+    reviewsDone: readonly DayString[];
+    topicsDone: readonly DayString[];
+    recallSets: readonly DayString[];
+    /** Notes and links on a subject or a lesson (not the Inbox). */
+    captures: readonly DayString[];
+    docs: ReadonlyArray<{ createdDay: DayString; updatedDay: DayString }>;
+    workLines: ReadonlyArray<{ day: DayString; office: boolean }>;
+    reviews: ReadonlyArray<DueItem & { missed?: boolean }>;
+    tasks: readonly DueItem[];
+    milestones: readonly DueItem[];
+    /** A week target is due at its week's Sunday; a dropped one is left out by the caller. */
+    targets: ReadonlyArray<{ weekStart: DayString; status: 'open' | 'done' | 'dropped'; doneDay: DayString | null }>;
+    focus: ReadonlyArray<{ day: DayString; done: boolean }>;
+    hasBuilding: boolean;
+    hasWork: boolean;
+}
+
+export interface Tally {
+    done: number;
+    due: number;
+}
+
+export interface Coverage {
+    learning: { days: number; of: number };
+    building: { days: number; of: number } | null;
+    /** `of`: the weekdays the record covers. */
+    work: { days: number; of: number } | null;
+    onTime: Tally & { by: { reviews: Tally; tasks: Tally; milestones: Tally; targets: Tally; focus: Tally } };
+}
+
+const isWeekday = (day: DayString): boolean => {
+    const w = new Date(`${day}T00:00:00Z`).getUTCDay();
+    return w >= 1 && w <= 5;
+};
+
+/** Things due in the span: one due before today counts; one due today only once done (today isn't over). */
+function tally(items: readonly DueItem[], span: Span, today: DayString): Tally {
+    const t = { done: 0, due: 0 };
+    for (const i of items) {
+        if (!within(i.due, span)) continue;
+        if (i.due >= today && !i.done) continue;
+        t.due += 1;
+        if (i.done && i.done <= i.due) t.done += 1;
+    }
+    return t;
+}
+
+export function coverageOf(input: CoverageInput, span: Span, recordStart: DayString, today: DayString): Coverage {
+    const covered: Span = { from: recordStart > span.from ? recordStart : span.from, to: span.to };
+    const days: DayString[] = [];
+    for (let d = covered.from; d <= covered.to; d = addDays(d, 1)) days.push(d);
+    const learned = new Set<DayString>();
+    const built = new Set<DayString>();
+    const worked = new Set<DayString>();
+    for (const s of input.sessions) {
+        if (!inSpan(s.day, covered)) continue;
+        const area = s.area ?? 'personal';
+        if (area === 'work') worked.add(s.day);
+        else if (s.kind === 'build') built.add(s.day);
+        else learned.add(s.day);
+    }
+    for (const list of [input.reviewsDone, input.topicsDone, input.recallSets, input.captures]) for (const d of list) if (inSpan(d, covered)) learned.add(d);
+    for (const d of input.docs) {
+        if (inSpan(d.createdDay, covered)) learned.add(d.createdDay);
+        if (inSpan(d.updatedDay, covered)) learned.add(d.updatedDay);
+    }
+    for (const l of input.workLines) if (inSpan(l.day, covered)) (l.office ? worked : built).add(l.day);
+
+    const weekdays = days.filter(isWeekday).length;
+    const by = {
+        reviews: tally(input.reviews.map((r) => (r.missed ? { due: r.due, done: null } : r)), covered, today),
+        tasks: tally(input.tasks, covered, today),
+        milestones: tally(input.milestones, covered, today),
+        targets: { done: 0, due: 0 },
+        focus: tally(input.focus.map((f) => ({ due: f.day, done: f.done ? f.day : null })), covered, today),
+    };
+    // A week target counts in the span its Monday is in (its due day, the Sunday, may fall after the span).
+    by.targets = tally(
+        input.targets.filter((t) => t.status !== 'dropped' && within(t.weekStart, covered)).map((t) => ({ due: addDays(t.weekStart, 6), done: t.status === 'done' ? (t.doneDay ?? t.weekStart) : null })),
+        { from: covered.from, to: addDays(covered.to, 6) },
+        today
+    );
+    const parts = Object.values(by);
+    return {
+        learning: { days: learned.size, of: days.length },
+        building: input.hasBuilding ? { days: built.size, of: days.length } : null,
+        work: input.hasWork ? { days: Math.min(worked.size, weekdays), of: weekdays } : null,
+        onTime: { done: parts.reduce((n, t) => n + t.done, 0), due: parts.reduce((n, t) => n + t.due, 0), by },
+    };
 }

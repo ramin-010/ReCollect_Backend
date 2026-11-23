@@ -6,6 +6,7 @@ import {
     activeDaySet,
     buildStand,
     compareWords,
+    coverageOf,
     goalLineOf,
     isEmpty,
     measures,
@@ -14,6 +15,7 @@ import {
     spanEnding,
     standDays,
     verdictLines,
+    type CoverageInput,
     type GoalLine,
     type StandPeriod,
     type StandRows,
@@ -381,5 +383,71 @@ describe('Learning and Building (STUDY_FLOW_PLAN §4.5)', () => {
         expect(none.periods.week.verdict).toEqual(['Nothing built in the last 7 days. Claude Code in a folder of your own fills this in.']);
         const nothing = buildStand(empty(), { today: TODAY, recordStart: d('2026-01-01'), goal: null, lens: 'learning' });
         expect(nothing.periods.week.verdict).toEqual(['Nothing in the record for the last 7 days. Reviews, focus lines and study sessions fill this in.']);
+    });
+});
+
+describe('coverage (COVERAGE_PLAN)', () => {
+    // The week of Mon 16 to Sun 22 Nov (TODAY); the record starts long before.
+    const week = spanEnding(TODAY, 'week');
+    const base = (): CoverageInput => ({
+        sessions: [
+            // Three learning events on Monday count once.
+            { day: d('2026-11-16'), kind: 'study', area: 'personal' },
+            { day: d('2026-11-16'), kind: 'practice', area: 'personal' },
+            { day: d('2026-11-17'), kind: 'build', area: 'personal' },
+            // Work on four weekdays and on Saturday: capped at the 5 weekdays.
+            ...['2026-11-16', '2026-11-17', '2026-11-18', '2026-11-19', '2026-11-20', '2026-11-21'].map((x) => ({ day: d(x), kind: 'build' as const, area: 'work' as const })),
+        ],
+        reviewsDone: [d('2026-11-16')],
+        topicsDone: [],
+        recallSets: [d('2026-11-18')],
+        captures: [d('2026-11-19')],
+        docs: [{ createdDay: d('2026-10-01'), updatedDay: d('2026-11-20') }],
+        workLines: [{ day: d('2026-11-19'), office: false }],
+        reviews: [
+            { due: d('2026-11-16'), done: d('2026-11-16') }, // on its day
+            { due: d('2026-11-17'), done: d('2026-11-19') }, // late
+            { due: d('2026-11-18'), done: null }, // still pending past its day
+            { due: TODAY, done: null }, // due today, not done: left out
+            { due: TODAY, done: TODAY }, // due today, done: on time
+        ],
+        tasks: [
+            { due: d('2026-11-20'), done: d('2026-11-19') }, // early
+            { due: d('2026-11-21'), done: null }, // open past its day
+        ],
+        milestones: [{ due: d('2026-11-18'), done: d('2026-11-18') }],
+        targets: [
+            { weekStart: d('2026-11-16'), status: 'done', doneDay: d('2026-11-20') },
+            { weekStart: d('2026-11-16'), status: 'dropped', doneDay: null }, // left out
+        ],
+        focus: [
+            { day: d('2026-11-17'), done: true },
+            { day: d('2026-11-18'), done: false },
+        ],
+        hasBuilding: true,
+        hasWork: true,
+    });
+
+    it('counts days, not volume; work against weekdays, capped; what came due by its day', () => {
+        const c = coverageOf(base(), week, d('2026-01-01'), TODAY);
+        expect(c.learning).toEqual({ days: 4, of: 7 }); // 16 (sessions, review), 18 (recall), 19 (note), 20 (doc edit)
+        expect(c.building).toEqual({ days: 2, of: 7 }); // 17 (session), 19 (work-log line)
+        expect(c.work).toEqual({ days: 5, of: 5 });
+        expect(c.onTime.by).toEqual({
+            reviews: { done: 2, due: 4 },
+            tasks: { done: 1, due: 2 },
+            milestones: { done: 1, due: 1 },
+            targets: { done: 1, due: 1 },
+            focus: { done: 1, due: 2 },
+        });
+        expect(c.onTime).toMatchObject({ done: 6, due: 10 });
+    });
+
+    it('a record starting inside the span clips both counts; parts the record lacks are null', () => {
+        const c = coverageOf({ ...base(), hasBuilding: false, hasWork: false }, week, d('2026-11-19'), TODAY);
+        expect(c.learning).toEqual({ days: 2, of: 4 }); // 19, 20 of 19-22
+        expect(c.building).toBeNull();
+        expect(c.work).toBeNull();
+        expect(c.onTime.by.reviews).toEqual({ done: 1, due: 1 }); // only today's, done
     });
 });
