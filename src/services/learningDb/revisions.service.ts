@@ -55,7 +55,7 @@ const subjectRefSelect = { id: true, name: true, color: true } as const;
 
 /** What serializeRevisionItem needs; read on the root client only (2 relations). */
 export const revisionItemInclude = {
-    topic: { select: { id: true, title: true, tags: true, docId: true, doc: { select: { title: true } }, subject: { select: subjectRefSelect } } },
+    topic: { select: { id: true, title: true, tags: true, docId: true, doc: { select: { title: true, cardBlockId: true } }, subject: { select: subjectRefSelect } } },
     capture: { select: { id: true, title: true, content: true, url: true, attachments: true, category: true, subject: { select: subjectRefSelect } } },
 } satisfies Prisma.RevisionInclude;
 

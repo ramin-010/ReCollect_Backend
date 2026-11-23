@@ -263,6 +263,9 @@ model Doc {
   /// never edit. Stable until unpublished (both cleared); publishing again makes a new slug.
   publicSlug   String?                  @unique
   publishedAt  DateTime?
+  /// STUDY_FLOW_PLAN §4.4 (11-23): the heading block that starts the doc's revision card (its last section, written
+  /// by set_revision_card); a review shows the card first. Null = no card; a deleted heading = no card either.
+  cardBlockId  String?
   /// The doc's words for search (each block on its line, canvas boards' words too). NULL = not
   /// written yet: a content change that doesn't bring them sets NULL (trigger, migration
   /// 20261114250000_doc_search) and src/services/docs/docSearch.service.ts writes them. Omitted
@@ -814,6 +817,9 @@ model Capture {
   topic         Topic?      @relation(fields: [topicId], references: [id], onDelete: SetNull)
   /// [{ url, publicId, fileName, fileType }]
   attachments   Json        @default("[]")
+  /// STUDY_FLOW_PLAN §4.3 (11-23): who wrote it; a chat's note says "from <app>" in the doc's sidebar.
+  createdBy     CreatedBy   @default(user)
+  agentName     String?     @db.VarChar(60)
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
 
@@ -1215,7 +1221,7 @@ model OAuthCode {
   @@index([expiresAt])
 }
 
-/// EASY_SETUP_PLAN §3.2 (11-23): a PC signing in by approval (`npx re-collect setup`, RFC 8628's device flow). The
+/// EASY_SETUP_PLAN §3.2 (11-23): a PC signing in by approval (`npx recollect-setup`, RFC 8628's device flow). The
 /// command holds the device code and shows the user code; the person approves that code on the web app while signed
 /// in; the command's next poll gets a token of its own (made then, shown once). 10 minutes, one use.
 model DeviceSignIn {

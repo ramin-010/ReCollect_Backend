@@ -132,6 +132,9 @@ describe('GET /api/agent/docs and /:id', () => {
             topicId: topic.id,
             updatedAt: expect.any(String),
             canEdit: true,
+            // STUDY_FLOW_PLAN: no revision card, no notes on its lesson yet.
+            card: false,
+            notes: 0,
         });
 
         const viewerAgent = await agentFor(viewer);

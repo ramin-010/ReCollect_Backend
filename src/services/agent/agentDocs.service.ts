@@ -13,6 +13,7 @@
 // absorb each board into the doc's canvas maps in the same transaction as the blocks, so Undo
 // takes both back. A write that makes canvases answers with a report per canvas (`canvases`).
 import type { AgentEdit, Prisma } from '@prisma/client';
+import { hasRevisionCard } from './docCard';
 import type { JSONContent } from '@tiptap/core';
 import { yXmlFragmentToProsemirrorJSON } from 'y-prosemirror';
 import { prisma } from '../../db/prisma';
@@ -35,7 +36,7 @@ import { hasBlocks, readBlocks } from '../docs/blocks/serverEditor';
 import { blocksToOldJson } from '../docs/blocks/toOldJson';
 import { appendBlocksForAgent, appendNoteInBlocks, canvasIdsOf, docUsesBlocks, renameCanvases, replaceSectionInBlocks } from './agentBlocks.service';
 import { loadLearningContext } from '../learningDb/common';
-import { NOTES_PER_DOC_DAY, NOTE_MAX, afterIndex, footerDay, noteFooter, noteRepeats, notesOnDay } from './docNotes';
+import { NOTE_MAX, afterIndex, footerDay, noteFooter, noteRepeats, noteTooLong } from './docNotes';
 import { markdownToBlocks as markdownToEditorBlocks } from '../docs/blocks/markdown';
 import { blocksDocState } from '../docs/blocks/newDocState';
 import { liveDocument, undoChange, withLiveDoc, type LiveChange, type LiveDoc } from './liveDoc';
@@ -107,6 +108,8 @@ export async function readDocForAgent(userId: string, docId: string) {
     const { json, title } = currentContent(doc);
     const subject = (await subjectsOf(userId, [doc.id])).get(doc.id) ?? null;
     const topic = await prisma.topic.findUnique({ where: { userId_docId: { userId, docId: doc.id } }, select: { id: true } });
+    // STUDY_FLOW_PLAN: whether it has a revision card, and how many notes and links its lesson holds.
+    const notes = topic ? await prisma.capture.count({ where: { userId, topicId: topic.id } }) : 0;
     return {
         id: doc.id,
         title,
@@ -115,6 +118,8 @@ export async function readDocForAgent(userId: string, docId: string) {
         topicId: topic?.id ?? null,
         updatedAt: doc.updatedAt,
         canEdit: role === 'owner' || role === 'editor',
+        card: hasRevisionCard(doc),
+        notes,
     };
 }
 
@@ -405,7 +410,8 @@ export async function logDocChange(
     docId: string,
     change: LiveChange,
     kind: 'doc_append' | 'doc_replace_section' | 'doc_canvas_update' | 'doc_blocks',
-    summary: string
+    summary: string,
+    undoData?: Prisma.InputJsonValue
 ): Promise<string> {
     try {
         return await prisma.$transaction(async (tx) => {
@@ -413,7 +419,7 @@ export async function logDocChange(
                 data: { docId, yjsState: stateBytes(change.before), agentUpdate: change.update ? stateBytes(change.update) : null },
                 select: { id: true },
             });
-            return recordAgentEdit(actor, { kind, summary, docId, entityId: docId, snapshotId: snapshot.id }, tx);
+            return recordAgentEdit(actor, { kind, summary, docId, entityId: docId, snapshotId: snapshot.id, ...(undoData !== undefined ? { undoData } : {}) }, tx);
         });
     } catch (err) {
         await withLiveDoc(docId, actor.agentName, (live) => undoChange(live, change.before, change.update)).catch((revertErr) =>
@@ -469,12 +475,12 @@ export async function appendToDocForAgent(actor: AgentActor, docId: string, mark
  * Stage 14 (ECOSYSTEM_V2_PLAN): POST /api/agent/docs/:id/append with a heading: a note inside that section, on the
  * person's yes (agentBlocks.service.ts appendNoteInBlocks for a doc on the new editor; the same rules here for one on
  * the old editor): after the block holding `after`, else at the section's end, with its quiet last line; a note the
- * section already holds is not added; a fourth note into the doc on one day is refused.
+ * section already holds is not added (no cap on how many: STUDY_FLOW_PLAN §4.1).
  */
 export async function appendNoteForAgent(actor: AgentActor, docId: string, input: { heading: string; after?: string | undefined; markdown: string }, now: Date = new Date()) {
     if (await docUsesBlocks(docId)) return appendNoteInBlocks(actor, docId, input, now);
     const doc = await requireEditableDoc(docId, actor.userId);
-    if (input.markdown.trim().length > NOTE_MAX) throw new ErrorResponse(400, `A note is at most ${NOTE_MAX.toLocaleString('en')} characters: keep the point, the example that worked and one line on what confused them.`);
+    if (input.markdown.trim().length > NOTE_MAX) throw new ErrorResponse(400, noteTooLong());
     const { tz } = await loadLearningContext(actor.userId, now);
     const day = footerDay(now, tz);
     const blocks = blocksOrThrow(`${input.markdown.trim()}\n\n*${noteFooter(day, actor.agentName)}*`);
@@ -486,8 +492,6 @@ export async function appendNoteForAgent(actor: AgentActor, docId: string, input
         const current = (yXmlFragmentToProsemirrorJSON(live.fragment) as JSONContent).content ?? [];
         const section = findSection(current, input.heading);
         if (!section) throw headingNotFound(input.heading, current);
-        if (notesOnDay(current.map(nodePlainText), day) >= NOTES_PER_DOC_DAY)
-            throw new ErrorResponse(409, `${NOTES_PER_DOC_DAY} notes were added to this doc from chats today, the most for a day: it can wait until tomorrow, or they can add it themselves in Recollect.`);
         const body = current.slice(section.heading + 1, section.end);
         const texts = body.map(nodePlainText);
         if (noteRepeats(input.markdown, texts)) return { already: true as const, heading: section.text };

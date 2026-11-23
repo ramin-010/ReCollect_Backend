@@ -31,11 +31,18 @@ export function publicBlocks(ydoc: Y.Doc): NewBlock[] {
 
 /** The page's state: a new Y.Doc with the blocks (fragment "blocks") and their boards, encoded. */
 export function publicDocState(ydoc: Y.Doc): Uint8Array {
-    const blocks = publicBlocks(ydoc);
+    return stateOfBlocks(ydoc, publicBlocks(ydoc));
+}
+
+/**
+ * A fresh Y.Doc's state holding only these blocks (fragment "blocks") and the boards of their canvases, copied from
+ * `ydoc`: what the new editor draws read-only (a published page; a doc's revision card, STUDY_FLOW_PLAN §4.4).
+ */
+export function stateOfBlocks(ydoc: Y.Doc, blocks: readonly NewBlock[]): Uint8Array {
     const out = new Y.Doc();
     try {
         if (blocks.length > 0) {
-            const elements = blocksToYElements(blocks);
+            const elements = blocksToYElements([...blocks]);
             out.transact(() => {
                 const group = new Y.XmlElement('blockGroup');
                 out.getXmlFragment(BLOCKS_FRAGMENT).insert(0, [group]);

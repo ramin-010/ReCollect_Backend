@@ -7,6 +7,9 @@
 //                                     a planned topic it was attached to is put back as it was)
 //   doc_update                        the topic change goes back, then the title (if not renamed since)
 //   goal_create / milestone_add / focus_add / pocket_add / week_target_create   the row is deleted
+//   pocket_add with undoData.note    a chat's note edit (STUDY_FLOW_PLAN §4.3): an added note goes, a change goes
+//                                     back, a removed (or merged) note comes back with its id and reviews
+//   doc_blocks with undoData.card    the revision card's blocks go back, and its pointer with them
 //   goal_update / milestone_update / focus_update   the fields go back to their values before the edit
 //   milestone_remove / focus_remove   the row comes back with its id (a milestone only if its goal is still there)
 //   revision_schedule                 the scheduled revisions go (409 once one was done)
@@ -26,6 +29,8 @@ import { isValidDay, type DayString } from '../learning/time';
 import { serializeAgentEdit, type AgentEditJson } from './agentEditLog';
 import { undoDocChange, undoDocCreate, undoDocUpdate } from './agentDocs.service';
 import { undoMemoryClose } from '../buddy/memory.service';
+import { undoNoteEdit } from './agentNotes.service';
+import { undoCardPointer } from './docCard';
 
 export const EDITS_LIMIT_DEFAULT = 20;
 export const EDITS_LIMIT_MAX = 100;
@@ -115,7 +120,10 @@ const UNDO: Record<AgentEditKind, (ctx: UndoContext) => Promise<void>> = {
     doc_append: ({ userId, edit }) => undoDocChange(userId, edit),
     doc_replace_section: ({ userId, edit }) => undoDocChange(userId, edit),
     doc_canvas_update: ({ userId, edit }) => undoDocChange(userId, edit),
-    doc_blocks: ({ userId, edit }) => undoDocChange(userId, edit),
+    doc_blocks: async ({ userId, edit, data }) => {
+        await undoDocChange(userId, edit);
+        await undoCardPointer(edit.docId, data);
+    },
     doc_update: ({ userId, edit }) => undoDocUpdate(userId, edit),
     goal_create: async ({ userId, id }) => {
         await prisma.goal.deleteMany({ where: { id, userId } });
@@ -272,7 +280,9 @@ const UNDO: Record<AgentEditKind, (ctx: UndoContext) => Promise<void>> = {
         await prisma.topic.deleteMany({ where: { id: { in: created }, userId, status: 'planned', docId: null } });
     },
     topic_update: ({ userId, id, data }) => restoreTopic(userId, id, (data['before'] ?? {}) as UndoData),
-    pocket_add: async ({ userId, id }) => {
+    pocket_add: async ({ userId, id, data }) => {
+        const note = data['note'];
+        if (note && typeof note === 'object') return undoNoteEdit(userId, id, note as UndoData);
         await prisma.quickNote.deleteMany({ where: { id, userId } });
     },
     revision_schedule: ({ userId, data }) => unscheduleRevisions(userId, data),

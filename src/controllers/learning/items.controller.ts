@@ -120,15 +120,20 @@ const capturePatchSchema = z.object({
     subjectId: zId.nullable().optional(),
 });
 
+const flag = z.enum(['1', '0', 'true', 'false']).optional();
 const captureListSchema = z.object({
     q: text(200).optional(),
-    inbox: z.enum(['1', '0', 'true', 'false']).optional(),
+    inbox: flag,
+    topicId: zId.optional(),
+    subjectId: zId.optional(),
+    lessons: flag,
     limit: z.coerce.number().int().min(1).max(CAPTURES_LIST_MAX).optional(),
 });
+const on = (v: string | undefined) => v === '1' || v === 'true';
 
 export const listCapturesHandler = handler(async (req, res) => {
     const query = parse(captureListSchema, req.query);
-    ok(res, await listCaptures(requireUser(req).id, { q: query.q, inbox: query.inbox === '1' || query.inbox === 'true', limit: query.limit }));
+    ok(res, await listCaptures(requireUser(req).id, { q: query.q, inbox: on(query.inbox), topicId: query.topicId, subjectId: query.subjectId, lessons: on(query.lessons), limit: query.limit }));
 });
 export const captureCategoriesHandler = handler(async (req, res) => {
     ok(res, await listCaptureCategories(requireUser(req).id));

@@ -58,6 +58,12 @@ export const TOKEN_ROUTES: readonly TokenRoute[] = [
     route('POST', '/api/agent/docs/:id/restore', 'docs:write'),
     route('POST', '/api/agent/docs/:id/canvas/:canvasId', 'docs:write'),
     route('GET', '/api/agent/docs/:id/preview', 'read'),
+    // STUDY_FLOW_PLAN (11-23): a lesson's revision card; the notes and links on a lesson or a subject.
+    route('PUT', '/api/agent/docs/:id/card', 'docs:write'),
+    route('GET', '/api/agent/notes', 'read'),
+    route('POST', '/api/agent/notes', 'learning:write'),
+    route('PATCH', '/api/agent/notes/:id', 'learning:write'),
+    route('POST', '/api/agent/notes/:id/remove', 'learning:write'),
     route('GET', '/api/agent/edits', 'read'),
 
     // Canvas tools: stateless layout and drawing of a board (src/routers/canvas.routes.ts)
@@ -192,6 +198,12 @@ export const LOGGED: Readonly<Record<string, AgentEditKind>> = {
     'POST /api/agent/docs/:id/blocks/delete': 'doc_blocks',
     'PATCH /api/agent/docs/:id/blocks/:blockId': 'doc_blocks',
     'POST /api/agent/docs/:id/canvas/:canvasId': 'doc_canvas_update',
+    // STUDY_FLOW_PLAN: the card is a doc change (its pointer goes back with Undo); a note's add, change, move, merge
+    // and removal are pocket_add rows with undoData.note (no new enum value).
+    'PUT /api/agent/docs/:id/card': 'doc_blocks',
+    'POST /api/agent/notes': 'pocket_add',
+    'PATCH /api/agent/notes/:id': 'pocket_add',
+    'POST /api/agent/notes/:id/remove': 'pocket_add',
     'POST /api/subjects': 'subject_create',
     'POST /api/topics': 'revision_schedule',
     'POST /api/revisions/start': 'revision_schedule',
@@ -231,7 +243,7 @@ export const SELF_LOGGED: Readonly<Record<string, string>> = {
     'PUT /api/sessions/by-key/:key': 'the session list is its own log (each entry names its writer; the user edits or deletes any); a topic change it asks for is logged as topic_update',
     'PATCH /api/sessions/by-key/:key/kind': "what a chat is (Personal, Study, Work): the session row shows it and who said so (the agent, or the user's own words), and the user switches it there, which outweighs any chat",
     'PUT /api/projects/by-key/:key': "what a folder is and what is logged there, on the user's answer to the folder's one question: Settings › Tracking shows it and the user changes it there",
-    'POST /api/setup/disconnect': "a PC's own sign-in ends itself (re-collect remove): Settings › Agents shows it as ended; nothing else changes",
+    'POST /api/setup/disconnect': "a PC's own sign-in ends itself (recollect-setup remove): Settings › Agents shows it as ended; nothing else changes",
     'POST /api/suggestions': 'a pending suggestion is its own visible record (Home → Suggested, naming who proposed it): nothing changes until the user accepts it, and he can dismiss it',
     'POST /api/actions': 'a pending action is its own visible record (Home → Suggested, "Do it", naming who asked): nothing happens until the user taps it, and he can dismiss it',
     'POST /api/ambient/disconnect': "the phone app ends its own token and nothing else: Settings → Agents shows it as ended",

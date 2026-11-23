@@ -3,7 +3,7 @@
 // app) and 15 different notes on the same topic (a new example, a new term, a new insight). A missed repeat leaves one
 // visible note to delete; a refused new note loses what helped them, the costlier miss.
 import { describe, expect, it } from 'vitest';
-import { NOTE_SAME, afterIndex, footerDay, isFooter, noteFooter, noteRepeats, noteShare, notesOnDay, sectionUnits } from '../../../src/services/agent/docNotes';
+import { NOTE_SAME, afterIndex, footerDay, isFooter, noteFooter, noteRepeats, noteShare, sectionUnits } from '../../../src/services/agent/docNotes';
 
 const PAIRS: Array<{ note: string; against: string; same: boolean }> = [
     // ── Repeats ──
@@ -195,8 +195,8 @@ describe('placing a note', () => {
     });
 });
 
-describe('the last line and the day’s cap', () => {
-    it('says the day in their zone and the app; counts the day’s notes from those lines', () => {
+describe('the last line', () => {
+    it('says the day in their zone and the app', () => {
         const at = new Date(Date.UTC(2026, 10, 20, 20, 0));
         expect(footerDay(at, 'Asia/Kolkata')).toBe('21 Nov');
         expect(footerDay(at, 'America/New_York')).toBe('20 Nov');
@@ -204,6 +204,5 @@ describe('the last line and the day’s cap', () => {
         expect(noteFooter('20 Nov', '  ')).toBe('Added 20 Nov from a chat');
         expect(isFooter('Added 20 Nov from ChatGPT')).toBe(true);
         expect(isFooter('Added a cache in front of the DB')).toBe(false);
-        expect(notesOnDay(['Added 20 Nov from ChatGPT', 'x', 'Added 20 Nov from Claude', 'Added 19 Nov from Claude'], '20 Nov')).toBe(2);
     });
 });

@@ -5,6 +5,7 @@ import { getDoc, deleteDoc, getAllDocs, createDoc, updateDoc } from '../controll
 import { searchLibraryDocs } from '../controllers/docSearch.controller';
 import { emptyTrashHandler, restoreDocHandler, trashDocHandler } from '../controllers/docTrash.controller';
 import { addPerson, answerRequest, changePerson, listPeople, publishDoc, removePerson } from '../controllers/docSharing.controller';
+import { getCard } from '../controllers/agentNotes.controller';
 
 const router = express.Router();
 // Access tokens: GETs need `read`, writes `docs:write` (a cookie session has every scope). Which doc
@@ -21,6 +22,8 @@ router.post('/:id/restore', auth, restoreDocHandler);
 router.get('/', auth, getAllDocs as RequestHandler);
 router.post('/', auth, createDoc as RequestHandler);
 router.get('/:id', auth, getDoc as RequestHandler);
+// STUDY_FLOW_PLAN §4.4: the doc's revision card, drawn read-only at a review (cookie only: tokens read the doc itself).
+router.get('/:id/card', auth, getCard);
 router.patch('/:id', auth, updateDoc as RequestHandler);
 router.delete('/:id', auth, deleteDoc as RequestHandler);
 

@@ -109,7 +109,7 @@ describe('block tools', () => {
         expect(res.body.data.ids).toHaveLength(2);
         expect(await storedShape(doc.id)).toBe(['heading:Heaps', 'paragraph:A heap is a tree.', 'callout:peek is O(1)', 'diagram:flowchart LR\n  A --> B', 'bulletListItem:push', '  paragraph:O(log n)', 'paragraph:'].join('\n'));
         const edit = await prisma.agentEdit.findUniqueOrThrow({ where: { id: res.body.data.editId } });
-        expect(edit).toMatchObject({ kind: 'doc_blocks', docId: doc.id, summary: 'Added 2 blocks after block p1 in "Heaps"' });
+        expect(edit).toMatchObject({ kind: 'doc_blocks', docId: doc.id, summary: 'Added 2 blocks under "Heaps" in "Heaps"' });
 
         // Agents can't undo; the user can.
         expect((await agent.post(`/api/agent/edits/${edit.id}/undo`)).status).toBe(403);

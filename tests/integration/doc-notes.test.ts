@@ -1,7 +1,8 @@
 // ECOSYSTEM_V2_PLAN stage 14, "Docs that keep what helped": a chat adds a note inside one section of a doc on the
 // person's yes (append_to_doc with heading, after). Code places it (after the quoted paragraph, else at the section's
 // end), adds a quiet last line (the day and the app), refuses a note the section already holds (two chats at once write
-// it once) and a fourth note into one doc on a day, logs it with Undo; no model call, so it works with no AI.
+// it once), logs it with Undo; no model call, so it works with no AI. STUDY_FLOW_PLAN §4.1 (11-23): no cap on how many
+// a day, the length is a size guard only.
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import * as Y from 'yjs';
 import type { JSONContent } from '@tiptap/core';
@@ -148,26 +149,35 @@ describe('a note inside a section (stage 14)', () => {
         expect((await shape(doc.id)).filter((l) => l.includes('Conveyor belt picture'))).toHaveLength(1);
     });
 
-    it('the caps: 1,500 characters; three notes into one doc a day (an undone note frees its place); a viewer and a read token are refused', async () => {
+    it('no cap on how many a day (a fourth and a tenth go in); 6,000 characters is a size guard; a viewer and a read token are refused', async () => {
         const user = await createTestUser();
         const doc = await blocksDoc(user.id, 'Two Pointers', twoPointers());
         const chat = asAgent((await createTestToken(user, ['read', 'docs:write'], 'ChatGPT')).token, 'ChatGPT');
-        const long = await chat.post(`/api/agent/docs/${doc.id}/append`, { heading: 'Why it works', markdown: `**Long:** ${'word '.repeat(320)}` });
+        // A long explanation that is still one note goes in (the old 1,500 was too tight for a real one).
+        const longer = `**A worked trace:** ${Array.from({ length: 30 }, (_, i) => `step ${i + 1} compares candidate pair ${i + 1} against the target and decides which side gives way.`).join(' ')}`;
+        expect(longer.length).toBeGreaterThan(1500);
+        expect((await chat.post(`/api/agent/docs/${doc.id}/append`, { heading: 'Why it works', markdown: longer })).status).toBe(200);
+        const long = await chat.post(`/api/agent/docs/${doc.id}/append`, { heading: 'Why it works', markdown: `**Long:** ${'word '.repeat(1300)}` });
         expect(long.status).toBe(400);
-        expect(long.body.message).toMatch(/at most 1,500 characters/);
-        const notes = ['**Left pointer:** it only moves right.', '**Right pointer:** it only moves left.', '**When they meet:** the search is over and no pair was found.', '**Duplicates:** skip equal values after a hit.'];
-        const ids: string[] = [];
-        for (const n of notes.slice(0, 3)) {
+        expect(long.body.message).toMatch(/at most 6,000 characters/);
+        const notes = [
+            '**Left pointer:** it only moves right.',
+            '**Right pointer:** it only moves left.',
+            '**When they meet:** the search is over and no pair was found.',
+            '**Duplicates:** skip equal values after a hit.',
+            '**Negative numbers:** they change nothing, the array is still sorted.',
+            '**Three sum:** fix one value, then run two pointers on the rest.',
+            '**Closest pair:** keep the best difference seen while moving.',
+            '**Strings:** palindromes check from both ends the same way.',
+            '**Linked lists:** fast and slow pointers find the middle.',
+            '**Container with most water:** move the shorter wall inward.',
+        ];
+        for (const n of notes) {
             const r = await chat.post(`/api/agent/docs/${doc.id}/append`, { heading: 'Complexity', markdown: n });
             expect(r.status).toBe(200);
-            ids.push(r.body.data.editId);
+            expect(r.body.data.placed).toBe('section_end');
         }
-        const fourth = await chat.post(`/api/agent/docs/${doc.id}/append`, { heading: 'Complexity', markdown: notes[3] });
-        expect(fourth.status).toBe(409);
-        expect(fourth.body.message).toMatch(/3 notes were added to this doc from chats today/);
-        // Another doc has its own count; an undone note frees its place.
-        expect((await api(user).post(`/api/agent/edits/${ids[2]}/undo`)).status).toBe(200);
-        expect((await chat.post(`/api/agent/docs/${doc.id}/append`, { heading: 'Complexity', markdown: notes[3] })).status).toBe(200);
+        expect((await shape(doc.id)).filter((l) => l.startsWith('paragraph:Added '))).toHaveLength(11);
         // A read token, a stranger.
         const reader = asAgent((await createTestToken(user, ['read'], 'Claude')).token, 'Claude');
         expect((await reader.post(`/api/agent/docs/${doc.id}/append`, { heading: 'Complexity', markdown: '**x:** y z' })).status).toBe(403);

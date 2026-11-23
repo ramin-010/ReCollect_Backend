@@ -25,7 +25,7 @@ import { logDocChange, normalizeHeading, requireEditableDoc } from './agentDocs.
 import { prisma } from '../../db/prisma';
 import { plural, quoted, type AgentActor } from './agentEditLog';
 import { loadLearningContext } from '../learningDb/common';
-import { NOTES_PER_DOC_DAY, NOTE_MAX, afterIndex, footerDay, noteFooter, noteRepeats, notesOnDay } from './docNotes';
+import { NOTE_MAX, afterIndex, footerDay, noteFooter, noteRepeats, noteTooLong } from './docNotes';
 
 const OLD_EDITOR = 'This doc is still on the old editor: change it with append_to_doc or replace_section (block tools work once it is on the new editor)';
 
@@ -39,7 +39,7 @@ export function readable(doc: { id: string; yjsState: Uint8Array | null }): { yd
 }
 
 /** Every canvas id the doc already uses: in its blocks, and every board in its root maps (both editors). */
-function takenCanvasIds(ydoc: Y.Doc): Set<string> {
+export function takenCanvasIds(ydoc: Y.Doc): Set<string> {
     const ids = new Set<string>();
     for (const name of ydoc.share.keys()) {
         const m = /^canvas:(.+):(nodes|edges)$/.exec(name);
@@ -98,13 +98,42 @@ export async function readBlocksForAgent(userId: string, docId: string, ids?: re
     }
 }
 
+/** A block's kind in words for Home's row ("a to-do", not "a checkListItem"). */
+const BLOCK_WORDS: Readonly<Record<string, string>> = {
+    paragraph: 'a paragraph',
+    heading: 'a heading',
+    checkListItem: 'a to-do',
+    bulletListItem: 'a list item',
+    numberedListItem: 'a list item',
+    toggleListItem: 'a toggle',
+    codeBlock: 'a code block',
+    callout: 'a callout',
+    quote: 'a quote',
+    diagram: 'a diagram',
+    canvas: 'a board',
+    table: 'a table',
+    image: 'an image',
+};
+const blockWords = (type: string | undefined): string => (type && BLOCK_WORDS[type]) || 'a block';
+
 const describe = (blocks: readonly NewBlock[]) => plural(blocks.length, blocks.every((b) => b.type === 'paragraph') ? 'paragraph' : 'block');
 
-function whereText(where: ops.Where): string {
+/**
+ * Where blocks go, in words for Home's "From your agent" row (STUDY_FLOW_PLAN §7.2: never a block id): under the
+ * nearest heading above the place, read before the change.
+ */
+export function placeWords(top: readonly DocBlock[], where: ops.Where): string {
     if ('at' in where) return where.at === 'start' ? 'at the start' : 'at the end';
-    if ('after' in where) return `after block ${where.after}`;
-    if ('before' in where) return `before block ${where.before}`;
-    return `under block ${where.under}`;
+    const id = 'after' in where ? where.after : 'before' in where ? where.before : where.under;
+    const holds = (b: DocBlock): boolean => b.id === id || b.children.some(holds);
+    const i = top.findIndex(holds);
+    if (i < 0) return 'in the doc';
+    // Before a top-level block, the place belongs to the section above that block.
+    const from = 'before' in where && top[i]!.id === id ? i - 1 : i;
+    for (let j = from; j >= 0; j -= 1) {
+        if (top[j]!.type === 'heading') return `under ${quoted(headingText(top[j]!).trim() || 'a heading', 60)}`;
+    }
+    return 'near the start';
 }
 
 /** POST /api/agent/docs/:id/blocks { markdown, where } → { id, ids, inserted, editId, canvases? } */
@@ -113,8 +142,9 @@ export async function insertBlocksForAgent(actor: AgentActor, docId: string, mar
     // Parse first (a bad diagram or a block that can't be read is a 400 before anything changes).
     const parsed = await markdownToBlocks(markdown, {});
     if (!parsed.blocks.length) throw new ErrorResponse(400, 'markdown is empty');
-    const { change, ids, canvasIds } = await withLiveDoc(docId, actor.agentName, (live) => {
+    const { change, ids, canvasIds, place } = await withLiveDoc(docId, actor.agentName, (live) => {
         if (!onNewEditor(live.doc)) throw new ErrorResponse(409, OLD_EDITOR);
+        const place = placeWords(readBlocks(live.doc), where);
         // Canvases: fresh ids against the ones the doc has (both editors' blocks), boards written with the blocks.
         const { blocks, boards } = renameCanvases(parsed.blocks, parsed.boards, takenCanvasIds(live.doc));
         let made: string[] = [];
@@ -122,11 +152,11 @@ export async function insertBlocksForAgent(actor: AgentActor, docId: string, mar
             made = ops.insert(live.doc, blocks, where);
             writeBoards(live.doc, boards);
         });
-        return { change, ids: made, canvasIds: canvasIdsOf(blocks) };
+        return { change, ids: made, canvasIds: canvasIdsOf(blocks), place };
     });
     // Each canvas report names the board it made (ids are given after the reports are drawn up).
     const canvases = parsed.canvases.map((c, i) => ({ ...c, canvasId: canvasIds[i] ?? c.canvasId ?? null }));
-    const editId = await logDocChange(actor, docId, change, 'doc_blocks', `Added ${describe(parsed.blocks)} ${whereText(where)} in ${quoted(doc.title)}`);
+    const editId = await logDocChange(actor, docId, change, 'doc_blocks', `Added ${describe(parsed.blocks)} ${place} in ${quoted(doc.title)}`);
     return { id: docId, ids, inserted: parsed.blocks.length, editId, ...(canvases.length ? { canvases } : {}) };
 }
 
@@ -168,26 +198,29 @@ export async function updateBlockForAgent(actor: AgentActor, docId: string, bloc
     if (input.type !== undefined) patch.type = input.type;
     if (input.props !== undefined) patch.props = { ...(patch.props ?? {}), ...input.props };
     if (patch.type === undefined && patch.props === undefined && patch.content === undefined) throw new ErrorResponse(400, 'Nothing to change: give markdown, type or props');
-    const { change, block } = await withLiveDoc(docId, actor.agentName, (live) => {
+    const { change, block, place } = await withLiveDoc(docId, actor.agentName, (live) => {
         if (!onNewEditor(live.doc)) throw new ErrorResponse(409, OLD_EDITOR);
+        const place = placeWords(readBlocks(live.doc), { after: blockId });
         let block: DocBlock | null = null;
         const change = live.apply(() => {
             block = ops.update(live.doc, blockId, patch);
         });
-        return { change, block: block as DocBlock | null };
+        return { change, block: block as DocBlock | null, place };
     });
-    const editId = await logDocChange(actor, docId, change, 'doc_blocks', `Changed a ${block?.type ?? 'block'} in ${quoted(doc.title)}`);
+    const what = block?.type === 'heading' ? 'a heading' : `${blockWords(block?.type)} ${place}`;
+    const editId = await logDocChange(actor, docId, change, 'doc_blocks', `Changed ${what} in ${quoted(doc.title)}`);
     return { id: docId, block: block ? { id: block.id, type: block.type, markdown: printBlocks([{ ...block, children: [] }]) } : null, editId };
 }
 
 /** POST /api/agent/docs/:id/blocks/move { ids, where } → { id, moved, editId } */
 export async function moveBlocksForAgent(actor: AgentActor, docId: string, ids: readonly string[], where: ops.Where) {
     const doc = await requireEditableDoc(docId, actor.userId);
-    const { change } = await withLiveDoc(docId, actor.agentName, (live) => {
+    const { change, place } = await withLiveDoc(docId, actor.agentName, (live) => {
         if (!onNewEditor(live.doc)) throw new ErrorResponse(409, OLD_EDITOR);
-        return { change: live.apply(() => ops.move(live.doc, ids, where)) };
+        const place = placeWords(readBlocks(live.doc), where);
+        return { change: live.apply(() => ops.move(live.doc, ids, where)), place };
     });
-    const editId = await logDocChange(actor, docId, change, 'doc_blocks', `Moved ${plural(ids.length, 'block')} ${whereText(where)} in ${quoted(doc.title)}`);
+    const editId = await logDocChange(actor, docId, change, 'doc_blocks', `Moved ${plural(ids.length, 'block')} ${place} in ${quoted(doc.title)}`);
     return { id: docId, moved: ids.length, editId };
 }
 
@@ -229,7 +262,7 @@ export async function appendBlocksForAgent(actor: AgentActor, docId: string, mar
     return { id: r.id, appended: r.inserted, editId: r.editId, ...(r.canvases ? { canvases: r.canvases } : {}) };
 }
 
-const headingText = (b: DocBlock) =>
+export const headingText = (b: DocBlock) =>
     (Array.isArray(b.content) ? (b.content as InlineNode[]) : []).map((n) => (n.type === 'text' ? n.text : n.content.map((c) => c.text).join(''))).join('');
 
 /** A block's words, its children's too (a table's cells; a canvas or an image has none). */
@@ -267,12 +300,11 @@ const blankBlock = (b: DocBlock) => b.type === 'paragraph' && !blockText(b).trim
  * Stage 14 (ECOSYSTEM_V2_PLAN): a note inside one section, on the person's yes: right after the block that holds the
  * quoted `after` words, else at the section's end; with a quiet last line (the day and the app). Under the doc's live
  * connection (synchronous inside, so two chats saving the same note at once write it once): a note the section already
- * holds is not added (`already`), and a fourth note into the doc on one day is refused. No model call: it works with
- * no AI credits.
+ * holds is not added (`already`). No cap on how many (STUDY_FLOW_PLAN §4.1). No model call: it works with no AI credits.
  */
 export async function appendNoteInBlocks(actor: AgentActor, docId: string, input: { heading: string; after?: string | undefined; markdown: string }, now: Date = new Date()) {
     const doc = await requireEditableDoc(docId, actor.userId);
-    if (input.markdown.trim().length > NOTE_MAX) throw new ErrorResponse(400, `A note is at most ${NOTE_MAX.toLocaleString('en')} characters: keep the point, the example that worked and one line on what confused them.`);
+    if (input.markdown.trim().length > NOTE_MAX) throw new ErrorResponse(400, noteTooLong());
     const { tz } = await loadLearningContext(actor.userId, now);
     const day = footerDay(now, tz);
     const parsed = await markdownToBlocks(`${input.markdown.trim()}\n\n*${noteFooter(day, actor.agentName)}*`, {});
@@ -283,8 +315,6 @@ export async function appendNoteInBlocks(actor: AgentActor, docId: string, input
         const section = sectionOf(top, input.heading);
         if (!section) throw headingMissing(input.heading, top);
         const heading = headingText(top[section.at]!).trim();
-        if (notesOnDay(top.map(blockText), day) >= NOTES_PER_DOC_DAY)
-            throw new ErrorResponse(409, `${NOTES_PER_DOC_DAY} notes were added to this doc from chats today, the most for a day: it can wait until tomorrow, or they can add it themselves in Recollect.`);
         const body = top.slice(section.at + 1, section.end);
         const texts = body.map(blockText);
         if (noteRepeats(input.markdown, texts)) return { already: true as const, heading };

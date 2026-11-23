@@ -107,7 +107,8 @@ export function serializeChain(rows: ReadonlyArray<Parameters<typeof serializeCh
 /** What a RevisionItem needs about its topic or capture. */
 export interface RevisionItemSource {
     topic: (Pick<Topic, 'id' | 'title' | 'tags' | 'docId'> & {
-        doc: { title: string } | null;
+        /** cardBlockId: STUDY_FLOW_PLAN §4.4, the doc's revision card (a review shows it first). */
+        doc: { title: string; cardBlockId?: string | null } | null;
         subject: Pick<Subject, 'id' | 'name' | 'color'> | null;
     }) | null;
     capture: (Pick<Capture, 'id' | 'title' | 'content' | 'url' | 'attachments' | 'category'> & {
@@ -160,6 +161,7 @@ export function serializeRevisionItem(
             subject: serializeSubjectRef(t.subject),
             tags: t.tags,
             docId: t.docId,
+            hasCard: !!t.doc?.cardBlockId,
         };
     }
     const c = source.capture;
@@ -191,6 +193,9 @@ export function serializeCapture(c: Capture, subject: Pick<Subject, 'id' | 'name
         subject: serializeSubjectRef(subject),
         topicId: c.topicId,
         attachments: attachmentsOf(c.attachments),
+        // STUDY_FLOW_PLAN §4.3: a chat's note says "from <app>" in the doc's sidebar.
+        createdBy: c.createdBy,
+        agentName: c.agentName,
         createdAt: c.createdAt,
         updatedAt: c.updatedAt,
     };

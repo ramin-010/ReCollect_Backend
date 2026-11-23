@@ -1,15 +1,16 @@
 // Stage 14 (ECOSYSTEM_V2_PLAN, "Docs that keep what helped"): a note a chat adds inside one section of a doc, on the
 // owner's yes. Pure rules here (no database, no editor): where it goes (after the paragraph it quotes, else at the
-// section's end), whether it repeats what the section already holds (an earlier note, or its own text), the quiet
-// last line that says when and from which app, and the day's cap. agentDocs.service.ts and agentBlocks.service.ts
-// apply them under the doc's live connection, so two chats saving the same note at once write it once.
+// section's end), whether it repeats what the section already holds (an earlier note, or its own text), and the quiet
+// last line that says when and from which app. agentDocs.service.ts and agentBlocks.service.ts apply them under the
+// doc's live connection, so two chats saving the same note at once write it once.
+//
+// STUDY_FLOW_PLAN §4.1 (11-23, the owner: "why there have to be limits, leave it natural"): no cap on how many a day;
+// the length is a size guard only (a longer explanation belongs in several sections, or in a section's rewrite).
 import { topicStems } from '../buddy/recordRules';
 import { lineKey } from '../buddy/workRules';
 
-/** A note is short: the point, the example that worked, one line on what confused them. */
-export const NOTE_MAX = 1500;
-/** Notes added into one doc on one day from chats (the fourth is refused, the answer says why). */
-export const NOTES_PER_DOC_DAY = 3;
+/** A size guard, not a rule anyone meets: the point, the example that worked, what confused them. */
+export const NOTE_MAX = 6000;
 /** A note with fewer topic stems than this is compared as plain text (a short term's definition). */
 export const NOTE_PLAIN_STEMS = 8;
 /**
@@ -20,7 +21,7 @@ export const NOTE_PLAIN_STEMS = 8;
  * section before it offers).
  */
 export const NOTE_SAME = 0.6;
-/** An earlier note is at most this many blocks before its last line (1,500 characters make one to three). */
+/** An earlier note is at most this many blocks before its last line (a note is usually one to three). */
 const NOTE_BLOCKS = 3;
 
 /** The quiet last line under a note: "Added 20 Nov from ChatGPT". */
@@ -38,11 +39,9 @@ const FOOTER_RE = /^added (\d{1,2} [a-z]{3,4}) from \S/i;
 /** A block's text is a note's last line. */
 export const isFooter = (text: string): boolean => FOOTER_RE.test(text.trim());
 
-/** Notes added into the doc on this day (counted from their last lines: an undone note no longer counts). */
-export function notesOnDay(blockTexts: readonly string[], day: string): number {
-    const want = day.toLowerCase();
-    return blockTexts.filter((t) => FOOTER_RE.exec(t.trim())?.[1]?.toLowerCase() === want).length;
-}
+/** The 400 for a note over NOTE_MAX (said to the chat, never to the person). */
+export const noteTooLong = (): string =>
+    `A note is at most ${NOTE_MAX.toLocaleString('en')} characters: split it over the sections it belongs to, or rework the section with replace_section.`;
 
 /**
  * The section's units for the repeat check: every block on its own (a note's last line is none), and each earlier note

@@ -44,11 +44,11 @@ describe('a PC signs in by approval (EASY_SETUP_PLAN §3.2)', () => {
         expect((await api(user).get(`/api/setup/request?code=${s.userCode}`)).body.data.status).toBe('used');
 
         const pc = asAgent(got.token, 'Claude Code');
-        expect((await pc.get('/api/setup/me')).body.data).toMatchObject({ name: 'Asha', tokenName: 'LAPTOP-7 (Windows) (re-collect setup)', setup: 1 });
+        expect((await pc.get('/api/setup/me')).body.data).toMatchObject({ name: 'Asha', tokenName: 'LAPTOP-7 (Windows) · recollect-setup', setup: 1 });
         // Settings › Agents lists it as a token of theirs.
-        expect((await api(user).get('/api/tokens')).body.data.map((t: { name: string }) => t.name)).toContain('LAPTOP-7 (Windows) (re-collect setup)');
+        expect((await api(user).get('/api/tokens')).body.data.map((t: { name: string }) => t.name)).toContain('LAPTOP-7 (Windows) · recollect-setup');
 
-        // re-collect remove: the token ends itself, and stops working.
+        // recollect-setup remove: the token ends itself, and stops working.
         expect((await pc.post('/api/setup/disconnect')).body.data).toEqual({ ended: true });
         expect((await pc.get('/api/setup/me')).status).toBe(401);
         // A cookie can't use the PC's door to end anything.

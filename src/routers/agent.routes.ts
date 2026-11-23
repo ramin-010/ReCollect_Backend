@@ -28,6 +28,7 @@ import {
     updateDoc,
 } from '../controllers/agent.controller';
 import { deleteBlocks, getOutline, insertBlocks, moveBlocks, readBlocks, updateBlock } from '../controllers/agentBlocks.controller';
+import { addNote, listNotes, putCard, removeNote, updateNote } from '../controllers/agentNotes.controller';
 
 const router = express.Router();
 
@@ -52,6 +53,12 @@ router.post('/docs/:id/blocks', requireScope('docs:write'), idempotency, insertB
 router.post('/docs/:id/blocks/move', requireScope('docs:write'), idempotency, moveBlocks);
 router.post('/docs/:id/blocks/delete', requireScope('docs:write'), idempotency, deleteBlocks);
 router.patch('/docs/:id/blocks/:blockId', requireScope('docs:write'), idempotency, updateBlock);
+// STUDY_FLOW_PLAN (11-23): a lesson's revision card, and the notes and links on a lesson or a subject.
+router.put('/docs/:id/card', requireScope('docs:write'), idempotency, putCard);
+router.get('/notes', requireScope('read'), listNotes);
+router.post('/notes', requireScope('learning:write'), idempotency, addNote);
+router.patch('/notes/:id', requireScope('learning:write'), idempotency, updateNote);
+router.post('/notes/:id/remove', requireScope('learning:write'), idempotency, removeNote);
 // Who can see a doc of his (get_sharing, read only): published or not, the people, the requests.
 router.get('/docs/:id/sharing', requireScope('read'), handler(async (req, res) => ok(res, await docSharingForAgent(requireUser(req).id, param(req, 'id')))));
 

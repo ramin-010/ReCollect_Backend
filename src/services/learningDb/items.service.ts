@@ -123,7 +123,9 @@ export async function topicByDoc(userId: string, docId: string, now: Date = new 
     if (!doc) throw notFound();
     const ctx = await loadLearningContext(userId, now);
     const topic = await prisma.topic.findUnique({ where: { userId_docId: { userId, docId } } });
-    if (!topic) return { topic: null, chain: [] as ChainRevisionJson[], nextAction: { kind: 'start' as const } };
+    // STUDY_FLOW_PLAN §4.4: the doc's revision card (its pointer; the card route says 404 if its heading is gone).
+    const hasCard = !!doc.cardBlockId;
+    if (!topic) return { topic: null, chain: [] as ChainRevisionJson[], nextAction: { kind: 'start' as const }, hasCard };
     const rows = await prisma.revision.findMany({ where: { topicId: topic.id }, orderBy: chainOrder });
     const action = nextRevisionAction(rows.map(toEngineRevision), ctx.today);
     const byId = new Map(rows.map((r) => [r.id, r]));
@@ -131,7 +133,7 @@ export async function topicByDoc(userId: string, docId: string, now: Date = new 
         action.kind === 'start' || action.kind === 'completed'
             ? action
             : { ...action, next: serializeChainRevision(byId.get(action.next.id)!) };
-    return { topic: serializeTopic(topic, doc.title), chain: serializeChain(rows), nextAction };
+    return { topic: serializeTopic(topic, doc.title), chain: serializeChain(rows), nextAction, hasCard };
 }
 
 /**
@@ -272,6 +274,11 @@ export interface ListCapturesInput {
     q?: string | undefined;
     /** Only the inbox: captures not on a revision schedule (Home's inbox). */
     inbox?: boolean | undefined;
+    /** STUDY_FLOW_PLAN §4.3: one lesson's notes (the doc's right sidebar). */
+    topicId?: string | undefined;
+    /** A subject's own notes; with `lessons`, its lessons' too (each names its lesson). */
+    subjectId?: string | undefined;
+    lessons?: boolean | undefined;
     limit?: number | undefined;
 }
 
@@ -288,6 +295,8 @@ export async function listCaptures(userId: string, input: ListCapturesInput = {}
         where: {
             userId,
             ...(input.inbox ? { revisions: { none: { status: 'pending' } } } : {}),
+            ...(input.topicId ? { topicId: input.topicId } : {}),
+            ...(input.subjectId ? { subjectId: input.subjectId, ...(input.lessons ? {} : { topicId: null }) } : {}),
             AND: terms.map((t) => ({
                 OR: [
                     { title: { contains: t, mode: 'insensitive' as const } },
@@ -296,11 +305,11 @@ export async function listCaptures(userId: string, input: ListCapturesInput = {}
                 ],
             })),
         },
-        include: { subject: { select: subjectRefSelect } },
+        include: { subject: { select: subjectRefSelect }, topic: { select: { title: true, docId: true, doc: { select: { title: true } } } } },
         orderBy: [{ isPinned: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }],
         take: Math.min(CAPTURES_LIST_MAX, Math.max(1, input.limit ?? CAPTURES_LIST_DEFAULT)),
     });
-    return rows.map(({ subject, ...c }) => serializeCapture(c, subject));
+    return rows.map(({ subject, topic, ...c }) => ({ ...serializeCapture(c, subject), lesson: topic ? { docId: topic.docId, title: topic.doc?.title || topic.title } : null }));
 }
 
 /** '#Tag' / ' tag ' → 'Tag' / 'tag'; empty → null. */
