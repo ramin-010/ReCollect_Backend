@@ -637,15 +637,26 @@ function comingUpRows(list: ReadonlyArray<{ at: string; text: string }>, W: numb
     const atW = Math.max(...rows.map((r) => textWidth(r.at, size, 600)));
     const gap = first ? 0 : 8 * u;
     const rowsTop = label.h + 4 * u;
+    const tx = x + atW + 2.6 * u;
+    // A long to-do wraps under itself, as the lock's rows do (the owner, 11-25), up to three lines; the rest ends in "…".
+    const rowW = x + usable - tx;
+    const lh = size * 1.32;
+    const rowLines = rows.map((r) => {
+        const all = wrapText(r.text, size, 400, rowW, 99, 0, false);
+        return all.length <= 3 ? all : [...all.slice(0, 2), fit(all.slice(2).join(' '), size, 400, rowW)];
+    });
+    const extra = rowLines.reduce((n, ls) => n + (ls.length - 1) * lh, 0);
     return {
-        h: gap + rowsTop + size * CAP + (rows.length - 1) * step,
+        h: gap + rowsTop + size * CAP + (rows.length - 1) * step + extra,
         draw: (top) => {
             const t0 = top + gap;
             const out = label.draw(t0);
+            let below = 0;
             rows.forEach((r, i) => {
-                const base = t0 + rowsTop + size * CAP + i * step;
-                const tx = x + atW + 2.6 * u;
-                out.push(text(x, base, r.at, size, 600, ink.head), text(tx, base, fit(r.text, size, 400, x + usable - tx), size, 400, ink.body));
+                const base = t0 + rowsTop + size * CAP + i * step + below;
+                out.push(text(x, base, r.at, size, 600, ink.head));
+                rowLines[i]!.forEach((l, j) => out.push(text(tx, base + j * lh, l, size, 400, ink.body)));
+                below += (rowLines[i]!.length - 1) * lh;
             });
             return out;
         },

@@ -26,6 +26,7 @@ const userRow = {
     leetcodeUser: null,
     leetcodeSyncedAt: null,
     progressIncludesWork: false,
+    progressIncludesBuilding: true,
     newFolders: 'ask' as const,
     routineEnabled: false,
     busyUntil: null,
