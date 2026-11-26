@@ -5,6 +5,8 @@
 //
 // A doc still on the old editor (old content and no blocks) answers 409; since the switch (phase 4) every
 // doc is on the new editor, and an empty one takes blocks on its first write.
+import { pageTitlesFor } from './agentDocs.service';
+import { pageIdsIn } from '../docs/blocks/toOldJson';
 import * as Y from 'yjs';
 import ErrorResponse from '../../utils/errorResponse';
 import { newCanvasId, readBoard, takeCanvasData, writeBoardDiff, writeBoards, type Board } from '../docs/canvas';
@@ -71,7 +73,11 @@ export async function outlineForAgent(userId: string, docId: string) {
     try {
         if (!onNewEditor(ydoc)) throw new ErrorResponse(409, OLD_EDITOR);
         const role = getDocRole(doc, userId);
-        return { id: doc.id, title: doc.title, blocks: ops.outline(ydoc), canEdit: role === 'owner' || role === 'editor' };
+        // DOC_PAGES_PLAN §5: a page block's text is its page's title (when they can open it).
+        const items = ops.outline(ydoc);
+        const titles = await pageTitlesFor(items.filter((b) => b.type === 'page').map((b) => String(b.props?.['docId'] ?? '')).filter(Boolean), userId);
+        const blocks = items.map((b) => (b.type === 'page' ? { ...b, text: titles.get(String(b.props?.['docId'] ?? '')) ?? 'Page not available' } : b));
+        return { id: doc.id, title: doc.title, blocks, canEdit: role === 'owner' || role === 'editor' };
     } finally {
         done();
     }
@@ -92,7 +98,7 @@ export async function readBlocksForAgent(userId: string, docId: string, ids?: re
                   return b;
               })
             : all;
-        return { id: doc.id, title: doc.title, markdown: printBlocks(picked, { ydoc }) };
+        return { id: doc.id, title: doc.title, markdown: printBlocks(picked, { ydoc, pageTitles: await pageTitlesFor(pageIdsIn(picked), userId) }) };
     } finally {
         done();
     }

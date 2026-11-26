@@ -82,13 +82,15 @@ export async function exportAccount(userId: string, now: Date = new Date()) {
             exportBuddy(userId, now),
         ]);
 
+    // DOC_PAGES_PLAN §5: a page block prints as its link line, with the title of any doc of theirs.
+    const ownTitles = new Map(docs.map((d) => [d.id, d.title]));
     return {
         format: 'recollect-export',
         version: EXPORT_VERSION,
         exportedAt: now.toISOString(),
         account: user,
         docs: docs.map((d) => {
-            const { json, title } = currentContent({ id: d.id, title: d.title, yjsState: d.yjsState });
+            const { json, title } = currentContent({ id: d.id, title: d.title, yjsState: d.yjsState }, { pageTitles: ownTitles });
             // DOC_PAGES_PLAN §3.2: where it sits in a tree (parentId null: a top-level doc).
             return { id: d.id, title, parentId: d.parentId, position: d.position, markdown: docJsonToMarkdown(json), pinned: d.isPinned, archived: d.isArchived, trashedAt: d.trashedAt, publishedAt: d.publishedAt, createdAt: d.createdAt, updatedAt: d.updatedAt };
         }),

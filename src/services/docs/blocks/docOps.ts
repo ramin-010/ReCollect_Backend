@@ -91,7 +91,7 @@ function firstWords(b: DocBlock): string {
     return text.length > 80 ? `${text.slice(0, 79)}…` : text;
 }
 
-const OUTLINE_PROPS: Record<string, string[]> = { heading: ['level'], callout: ['kind'], checkListItem: ['checked'], codeBlock: ['language'] };
+const OUTLINE_PROPS: Record<string, string[]> = { heading: ['level'], callout: ['kind'], checkListItem: ['checked'], codeBlock: ['language'], page: ['docId'] };
 
 /** Every block in reading order with its depth (children right after their parent). */
 export function outline(doc: Y.Doc): OutlineItem[] {

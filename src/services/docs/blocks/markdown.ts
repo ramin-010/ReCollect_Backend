@@ -89,6 +89,8 @@ function printTable(content: TableContent): string {
 interface PrintContext {
     /** The doc's Y.Doc, for canvas boards (root maps). Without it a canvas prints with an empty board. */
     ydoc?: Y.Doc | undefined;
+    /** DOC_PAGES_PLAN §5: the titles of the pages the reader may open (a page block prints `[Title](/docs/<id>)`). */
+    pageTitles?: ReadonlyMap<string, string> | undefined;
 }
 
 /** A list run's items, nested children indented under each item. */
@@ -107,6 +109,11 @@ function printBlock(b: AnyBlock, ctx: PrintContext, numbered: number): string {
     const kids = b.children ?? [];
     const after = (text: string) => (kids.length ? `${text}\n\n${printBlocks(kids, ctx)}` : text);
     switch (b.type) {
+        case 'page': {
+            const id = String(b.props?.['docId'] ?? '');
+            const title = id ? ctx.pageTitles?.get(id) : undefined;
+            return after(title !== undefined ? `[${(title.trim() || 'Untitled').replace(/([[\]])/g, '\\$1')}](/docs/${id})` : '');
+        }
         case 'paragraph':
             return after(printInline(inline(b)));
         case 'heading': {
@@ -176,7 +183,7 @@ export function printBlocks(blocks: readonly AnyBlock[], ctx: PrintContext = {})
         const text = printBlock(b, ctx, n);
         const tight = prev && LIST.has(prev.type) && prev.type === b.type;
         // An empty paragraph between blocks is a blank line the editor shows; Markdown drops it.
-        if (b.type === 'paragraph' && !text && !(b.children ?? []).length) {
+        if ((b.type === 'paragraph' || b.type === 'page') && !text && !(b.children ?? []).length) {
             prev = b;
             continue;
         }

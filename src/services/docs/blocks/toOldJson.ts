@@ -7,6 +7,24 @@ import type { DocBlock, InlineNode, NewBlock, Styles, TableContent } from './ser
 
 type AnyBlock = DocBlock | NewBlock;
 
+/** DOC_PAGES_PLAN §5: the titles of the pages the reader may open; a page block prints as `[Title](/docs/<id>)`. */
+export interface OldJsonOptions {
+    pageTitles?: ReadonlyMap<string, string>;
+}
+
+/** The docs page blocks point at, anywhere in these blocks. */
+export function pageIdsIn(blocks: readonly AnyBlock[]): string[] {
+    const out: string[] = [];
+    const walk = (list: readonly AnyBlock[]) => {
+        for (const b of list) {
+            if (b.type === 'page' && typeof b.props?.['docId'] === 'string' && b.props['docId']) out.push(b.props['docId']);
+            if (b.children?.length) walk(b.children as AnyBlock[]);
+        }
+    };
+    walk(blocks);
+    return [...new Set(out)];
+}
+
 function marksOf(styles: Styles, href?: string): JSONContent['marks'] {
     const marks: NonNullable<JSONContent['marks']> = [];
     for (const k of ['bold', 'italic', 'strike', 'code', 'underline'] as const) if (styles[k]) marks.push({ type: k });
@@ -59,15 +77,22 @@ function tableText(content: TableContent): string {
 
 const LIST: Record<string, string> = { bulletListItem: 'bulletList', numberedListItem: 'orderedList', checkListItem: 'taskList' };
 
-function listItemToOld(b: AnyBlock): JSONContent {
-    const item: JSONContent = { type: b.type === 'checkListItem' ? 'taskItem' : 'listItem', content: [paragraph(b.content), ...blocksToOldNodes(b.children ?? [])] };
+function listItemToOld(b: AnyBlock, opts: OldJsonOptions): JSONContent {
+    const item: JSONContent = { type: b.type === 'checkListItem' ? 'taskItem' : 'listItem', content: [paragraph(b.content), ...blocksToOldNodes(b.children ?? [], opts)] };
     if (b.type === 'checkListItem') item.attrs = { checked: b.props?.['checked'] === true };
     return item;
 }
 
-function blockToOld(b: AnyBlock): JSONContent[] {
-    const after = blocksToOldNodes(b.children ?? []);
+function blockToOld(b: AnyBlock, opts: OldJsonOptions): JSONContent[] {
+    const after = blocksToOldNodes(b.children ?? [], opts);
     switch (b.type) {
+        case 'page': {
+            // A line with one link when the reader may open the page; nothing otherwise (search, previews, Recall).
+            const id = String(b.props?.['docId'] ?? '');
+            const title = id ? opts.pageTitles?.get(id) : undefined;
+            if (title === undefined) return after;
+            return [{ type: 'paragraph', content: [{ type: 'text', text: title.trim() || 'Untitled', marks: [{ type: 'link', attrs: { href: `/docs/${id}` } }] }] }, ...after];
+        }
         case 'paragraph':
             return [paragraph(b.content), ...after];
         case 'heading': {
@@ -131,26 +156,26 @@ function blockToOld(b: AnyBlock): JSONContent[] {
 }
 
 /** Blocks → old block nodes; consecutive list items of one kind become one list. */
-export function blocksToOldNodes(blocks: readonly AnyBlock[]): JSONContent[] {
+export function blocksToOldNodes(blocks: readonly AnyBlock[], opts: OldJsonOptions = {}): JSONContent[] {
     const out: JSONContent[] = [];
     for (const b of blocks) {
         const listType = LIST[b.type];
         if (listType) {
             const last = out[out.length - 1];
             if (last?.type === listType && !(b.type === 'numberedListItem' && b.props?.['start'] !== undefined && Number(b.props['start']) !== 1)) {
-                last.content!.push(listItemToOld(b));
+                last.content!.push(listItemToOld(b, opts));
                 continue;
             }
             const start = Number(b.props?.['start']) || 1;
-            out.push({ type: listType, ...(listType === 'orderedList' && start !== 1 ? { attrs: { start } } : {}), content: [listItemToOld(b)] });
+            out.push({ type: listType, ...(listType === 'orderedList' && start !== 1 ? { attrs: { start } } : {}), content: [listItemToOld(b, opts)] });
             continue;
         }
-        out.push(...blockToOld(b));
+        out.push(...blockToOld(b, opts));
     }
     return out;
 }
 
 /** The doc's blocks as an old JSON doc. */
-export function blocksToOldJson(blocks: readonly AnyBlock[]): JSONContent {
-    return { type: 'doc', content: blocksToOldNodes(blocks) };
+export function blocksToOldJson(blocks: readonly AnyBlock[], opts: OldJsonOptions = {}): JSONContent {
+    return { type: 'doc', content: blocksToOldNodes(blocks, opts) };
 }

@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { defaultBlockSpecs } from '@blocknote/core';
-import { CALLOUT_KINDS, calloutBlockConfig, canvasBlockConfig, diagramBlockConfig } from '../../../src/services/docs/blocks/specs';
+import { CALLOUT_KINDS, calloutBlockConfig, canvasBlockConfig, diagramBlockConfig, pageBlockConfig } from '../../../src/services/docs/blocks/specs';
 
 const FRONT = path.resolve(__dirname, '../../../../recollect/lib/blocks');
 const has = fs.existsSync(FRONT);
@@ -33,6 +33,10 @@ describe.skipIf(!has)('block specs: browser and server agree', () => {
         expect(front).toEqual({ type: calloutBlockConfig.type, content: calloutBlockConfig.content, props: serverProps(calloutBlockConfig.propSchema) });
         const kinds = /CALLOUT_KINDS\s*=\s*\[([^\]]+)\]/.exec(frontSpec('callout'))?.[1]?.match(/'(\w+)'/g)?.map((s) => s.slice(1, -1));
         expect(kinds).toEqual([...CALLOUT_KINDS]);
+    });
+
+    it('page (DOC_PAGES_PLAN §5)', () => {
+        expect(parse(frontSpec('page'))).toEqual({ type: pageBlockConfig.type, content: pageBlockConfig.content, props: serverProps(pageBlockConfig.propSchema) });
     });
 
     it('diagram', () => {

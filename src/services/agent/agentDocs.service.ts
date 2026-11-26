@@ -29,14 +29,14 @@ import { canEditDoc, getDocRole } from '../docs/docPermissions';
 import { findAccessibleDoc, normalizeDocTitle } from '../docs/docs.service';
 import { searchDocs } from '../docs/docSearch.service';
 import { restoreDoc, trashDoc } from '../docs/trash.service';
-import { yjsStateToDocJson } from '../docs/docContent';
+import { yjsStateToDocJson, pageIdsOfState } from '../docs/docContent';
 import { DOC_YJS_FRAGMENT } from '../docs/docSchema';
 import { docJsonToMarkdown, docJsonToYElements, docJsonToYjsState, markdownToBlocks, markdownToDocJson, nodePlainText } from '../docs/markdown/docMarkdown';
 import { createTopic } from '../learningDb/items.service';
 import { attachDocToTopic, detachDocFromTopic, type TopicBeforeAttach } from '../learningDb/path.service';
 import { plural, quoted, recordAgentEdit, type AgentActor } from './agentEditLog';
 import { hasBlocks, readBlocks } from '../docs/blocks/serverEditor';
-import { blocksToOldJson } from '../docs/blocks/toOldJson';
+import { blocksToOldJson, pageIdsIn, type OldJsonOptions } from '../docs/blocks/toOldJson';
 import { appendBlocksForAgent, appendNoteInBlocks, canvasIdsOf, docUsesBlocks, renameCanvases, replaceSectionInBlocks } from './agentBlocks.service';
 import { loadLearningContext } from '../learningDb/common';
 import { NOTE_MAX, afterIndex, footerDay, noteFooter, noteRepeats, noteTooLong } from './docNotes';
@@ -92,18 +92,32 @@ export async function searchDocsForAgent(userId: string, options: { query?: stri
  * The doc's current content (the live doc when it is open) and title, canvas boards injected.
  * Recall mode reads docs this way too.
  */
-export function currentContent(doc: { id: string; title: string; yjsState: DocState | null }): { json: JSONContent; title: string } {
+export function currentContent(doc: { id: string; title: string; yjsState: DocState | null }, opts: OldJsonOptions = {}): { json: JSONContent; title: string } {
     const live = liveDocument(doc.id);
     if (live) {
         const metaTitle = live.getMap('metadata').get('title');
         // A doc on the new editor reads from its blocks (as old JSON, for every reader written for it).
-        const content = hasBlocks(live) ? blocksToOldJson(readBlocks(live)) : (yXmlFragmentToProsemirrorJSON(live.getXmlFragment(DOC_YJS_FRAGMENT)) as JSONContent);
+        const content = hasBlocks(live) ? blocksToOldJson(readBlocks(live), opts) : (yXmlFragmentToProsemirrorJSON(live.getXmlFragment(DOC_YJS_FRAGMENT)) as JSONContent);
         return {
             json: withCanvasData(content, live),
             title: typeof metaTitle === 'string' && metaTitle.trim() ? metaTitle.trim() : doc.title,
         };
     }
-    return { json: doc.yjsState ? (yjsStateToDocJson(doc.yjsState) as JSONContent) : { type: 'doc', content: [] }, title: doc.title };
+    return { json: doc.yjsState ? (yjsStateToDocJson(doc.yjsState, opts) as JSONContent) : { type: 'doc', content: [] }, title: doc.title };
+}
+
+/** DOC_PAGES_PLAN §5: the docs a doc's page blocks point at (the live doc when it is open). */
+export function pageIdsOfDoc(doc: { id: string; yjsState: DocState | null }): string[] {
+    const live = liveDocument(doc.id);
+    if (live) return hasBlocks(live) ? pageIdsIn(readBlocks(live)) : [];
+    return pageIdsOfState(doc.yjsState);
+}
+
+/** The titles of these docs that the user can open (not in the trash): what a page block prints. */
+export async function pageTitlesFor(ids: readonly string[], userId: string): Promise<Map<string, string>> {
+    if (!ids.length) return new Map();
+    const rows = await prisma.doc.findMany({ where: { id: { in: [...ids] }, trashedAt: null, ...accessibleDocWhere(userId) }, select: { id: true, title: true } });
+    return new Map(rows.map((r) => [r.id, r.title]));
 }
 
 /** GET /api/agent/docs/:id → { id, title, markdown, subject, topicId, updatedAt, canEdit }. */
@@ -111,7 +125,7 @@ export async function readDocForAgent(userId: string, docId: string) {
     const doc = await findAccessibleDoc(docId, userId);
     if (!doc) throw new ErrorResponse(404, 'Doc not found');
     const role = getDocRole(doc, userId);
-    const { json, title } = currentContent(doc);
+    const { json, title } = currentContent(doc, { pageTitles: await pageTitlesFor(pageIdsOfDoc(doc), userId) });
     const subject = (await subjectsOf(userId, [doc.id])).get(doc.id) ?? null;
     const topic = await prisma.topic.findUnique({ where: { userId_docId: { userId, docId: doc.id } }, select: { id: true } });
     // STUDY_FLOW_PLAN: whether it has a revision card, and how many notes and links its lesson holds.
@@ -549,7 +563,7 @@ export async function docTreeForAgent(userId: string, input: { docId?: string | 
         let full = false;
         for (const n of nodes) {
             const row = rows.get(n.id);
-            const markdown = row ? docJsonToMarkdown(currentContent(row).json) : '';
+            const markdown = row ? docJsonToMarkdown(currentContent(row, { pageTitles: await pageTitlesFor(pageIdsOfDoc(row), userId) }).json) : '';
             if (!full && used + markdown.length <= TREE_CONTENT_MAX) {
                 n.markdown = markdown;
                 n.chars = markdown.length;

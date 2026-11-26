@@ -24,7 +24,7 @@ import { PendingDiagramError, copyCanvasMaps, readBoard, takeCanvasData, withCan
 import { BLOCKS_YJS_FRAGMENT, DOC_EDITOR_EXTENSIONS, DOC_YJS_FRAGMENT, getDocSchema } from './docSchema';
 import { repairDoc } from './docRepair';
 import { hasBlocks, readBlocks } from './blocks/serverEditor';
-import { blocksToOldJson } from './blocks/toOldJson';
+import { blocksToOldJson, type OldJsonOptions, pageIdsIn } from './blocks/toOldJson';
 import { stateBytes, stateUpdate, type DocState, type StateBytes } from './docState';
 
 export { DOC_EDITOR_EXTENSIONS, DOC_YJS_FRAGMENT, getDocSchema };
@@ -192,12 +192,12 @@ export function docJsonToYjsState(content: unknown, metadata?: { title?: string;
  * A stored Yjs state (bytes, or Base64) → TipTap JSON, exactly like the browser's yjsStateToJson()
  * (schema-free), with each canvas's board injected as attrs.data (for reading: Markdown, search text).
  */
-export function yjsStateToDocJson(state: DocState): { type: 'doc'; content: unknown[] } {
+export function yjsStateToDocJson(state: DocState, opts: OldJsonOptions = {}): { type: 'doc'; content: unknown[] } {
     const ydoc = new Y.Doc();
     try {
         Y.applyUpdate(ydoc, stateUpdate(state));
         // A doc on the new editor reads from its blocks, as old JSON (DOCS_EDITOR_V2_PLAN phase 4).
-        if (hasBlocks(ydoc)) return withCanvasData(blocksToOldJson(readBlocks(ydoc)), ydoc) as { type: 'doc'; content: unknown[] };
+        if (hasBlocks(ydoc)) return withCanvasData(blocksToOldJson(readBlocks(ydoc), opts), ydoc) as { type: 'doc'; content: unknown[] };
         // A stored state from before a repair reads as the editor will show it (./docRepair.ts).
         repairDoc(ydoc);
         const json = yXmlFragmentToProsemirrorJSON(ydoc.getXmlFragment(DOC_YJS_FRAGMENT)) as JSONContent;
@@ -284,6 +284,18 @@ export function extractImageIdsFromYjsState(state: DocState): string[] | null {
     } catch (err) {
         console.error('[docContent] Failed to read image ids from a yjsState:', err);
         return null;
+    } finally {
+        ydoc.destroy();
+    }
+}
+
+/** DOC_PAGES_PLAN §5: the docs page blocks point at in a stored state (empty for a doc on the old editor). */
+export function pageIdsOfState(state: DocState | null): string[] {
+    if (!state) return [];
+    const ydoc = new Y.Doc();
+    try {
+        Y.applyUpdate(ydoc, stateUpdate(state));
+        return hasBlocks(ydoc) ? pageIdsIn(readBlocks(ydoc)) : [];
     } finally {
         ydoc.destroy();
     }

@@ -224,10 +224,32 @@ function textAndChildren(node: JSONContent, report: ConversionReport): { content
     return { content: joinParagraphs(kids.slice(0, i)), children: convertBlocks(kids.slice(i), report) };
 }
 
+const PAGE_HREF = /^(?:https?:\/\/[^/\s]+)?\/docs\/([A-Za-z0-9]{1,64})\/?$/;
+
+/** The doc id when a paragraph's whole content is one link to /docs/<id> (blank text aside), else null. */
+export function pageLinkOf(node: JSONContent): string | null {
+    const parts = (node.content ?? []).filter((n) => !(n.type === 'text' && !(n.text ?? '').trim() && !n.marks?.length));
+    if (!parts.length) return null;
+    let id: string | null = null;
+    for (const n of parts) {
+        if (n.type !== 'text') return null;
+        const href = n.marks?.find((m) => m.type === 'link')?.attrs?.['href'];
+        const m = typeof href === 'string' ? PAGE_HREF.exec(href.trim()) : null;
+        if (!m) return null;
+        if (id && id !== m[1]) return null;
+        id = m[1]!;
+    }
+    return id;
+}
+
 function convertBlock(node: JSONContent, report: ConversionReport): NewBlock[] {
     switch (node.type) {
-        case 'paragraph':
+        case 'paragraph': {
+            // DOC_PAGES_PLAN §5: a line that is one link to /docs/<id> places that page here.
+            const pageId = pageLinkOf(node);
+            if (pageId) return [{ type: 'page', props: { docId: pageId } }];
             return [{ type: 'paragraph', content: inlineContent(node.content) }];
+        }
         case 'heading': {
             const level = Math.min(Math.max(Number(node.attrs?.['level']) || 1, 1), 6);
             return [{ type: 'heading', props: { level }, content: inlineContent(node.content) }];

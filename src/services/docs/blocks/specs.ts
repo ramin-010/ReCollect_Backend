@@ -30,6 +30,15 @@ export const canvasBlockConfig = {
     content: 'none' as const,
 };
 
+/** DOC_PAGES_PLAN §5: a page shown at a spot in its parent's text (it points at the page; the tree owns it, D2). */
+export const pageBlockConfig = {
+    type: 'page' as const,
+    propSchema: {
+        docId: { default: '' },
+    },
+    content: 'none' as const,
+};
+
 const make = (tag: string): HTMLElement => (globalThis as unknown as { document: Document }).document.createElement(tag);
 
 const calloutBlock = createBlockSpec(calloutBlockConfig, {
@@ -61,6 +70,14 @@ const canvasBlock = createBlockSpec(canvasBlockConfig, {
     },
 });
 
+const pageBlock = createBlockSpec(pageBlockConfig, {
+    render: (block) => {
+        const dom = make('div');
+        dom.setAttribute('data-page-id', String(block.props.docId));
+        return { dom };
+    },
+});
+
 /**
  * The block registry on the server: BlockNote's built-ins plus ours (the browser's order: the
  * diagram first). Cast: BlockNote's types don't accept this project's exactOptionalPropertyTypes.
@@ -71,5 +88,6 @@ export const serverDocSchema = BlockNoteSchema.create({
         ...defaultBlockSpecs,
         canvas: canvasBlock(),
         callout: calloutBlock(),
+        page: pageBlock(),
     } as never,
 });

@@ -99,6 +99,23 @@ describe('pages inside docs, for agents (DOC_PAGES_PLAN stage 2)', () => {
         expect((await agent.patch(`/api/agent/docs/${a}`, { after: 'start' })).status).toBe(400);
     });
 
+    it('the page block (stage 5): the link line places a page; it reads back with the live title; dropping the line keeps the page', async () => {
+        const { agent, make } = await setup();
+        const a = await make('Course', '## Parts\n\nThe overview.');
+        const b = await make('Part one', 'Alpha.', a);
+        const appended = await agent.post(`/api/agent/docs/${a}/append`, { markdown: `[Part one](/docs/${b})` });
+        expect(appended.status, JSON.stringify(appended.body)).toBe(200);
+        const outline = await agent.get(`/api/agent/docs/${a}/outline`);
+        expect((outline.body.data.blocks as Array<{ type: string; text: string; props?: { docId?: string } }>).find((x) => x.type === 'page')).toMatchObject({ text: 'Part one', props: { docId: b } });
+        await agent.patch(`/api/agent/docs/${b}`, { title: 'Part 1' });
+        expect((await agent.get(`/api/agent/docs/${a}`)).body.data.markdown).toContain(`[Part 1](/docs/${b})`);
+        const replaced = await agent.post(`/api/agent/docs/${a}/replace-section`, { heading: 'Parts', markdown: 'No links here.' });
+        expect(replaced.status, JSON.stringify(replaced.body)).toBe(200);
+        const read = await agent.get(`/api/agent/docs/${a}`);
+        expect(read.body.data.markdown).not.toContain(`/docs/${b}`);
+        expect((read.body.data.pages as Array<{ id: string }>).map((p) => p.id)).toEqual([b]);
+    });
+
     it('trash and restore say the pages; search names the docs above a hit', async () => {
         const { agent, make } = await setup();
         const a = await make('Kafka', 'x');
