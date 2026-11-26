@@ -84,6 +84,7 @@ describe('GET / PATCH /api/learning/settings', () => {
             progressIncludesBuilding: true,
             // EASY_SETUP_PLAN: a new folder asks once.
             newFolders: 'ask',
+            pocketForAgents: false,
         });
     });
 
