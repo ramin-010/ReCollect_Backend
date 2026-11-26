@@ -3,6 +3,7 @@
 // (the same Markdown the block tools take), children indented under their parent; » marks their focus
 // (the blocks he selected, or the one his cursor is in). The model changes blocks by these ids with
 // the block tools, through the same catalogue, edit log and Undo as every agent.
+import { pagesOf, trailFor } from '../docs/docTree.service';
 import type * as Y from 'yjs';
 import ErrorResponse from '../../utils/errorResponse';
 import { printBlocks, printInline } from '../docs/blocks/markdown';
@@ -129,7 +130,14 @@ export async function docAskContext(userId: string, docId: string, focus: DocFoc
     const { ydoc, done } = readable(doc);
     try {
         if (!onNewEditor(ydoc)) throw new ErrorResponse(409, 'This doc is still on the old editor');
-        return docForModel(ydoc, { docId: doc.id, title: doc.title }, focus);
+        const ctx = docForModel(ydoc, { docId: doc.id, title: doc.title }, focus);
+        // DOC_PAGES_PLAN §8.3: where the page sits, and the pages inside it (read_doc each by id).
+        const [trail, pages] = await Promise.all([trailFor(doc.id, userId), pagesOf(doc.id, userId)]);
+        const where = [
+            trail.length ? `This page is inside ${trail.map((t) => `"${t.title.trim() || 'Untitled'}"`).join(' › ')}.` : '',
+            pages.length ? `Pages inside it: ${pages.slice(0, 20).map((p) => `"${p.title.trim() || 'Untitled'}" (docId ${p.id})`).join(', ')}${pages.length > 20 ? ` and ${pages.length - 20} more` : ''}.` : '',
+        ].filter(Boolean);
+        return where.length ? { ...ctx, text: `${where.join(' ')}\n${ctx.text}` } : ctx;
     } finally {
         done();
     }
