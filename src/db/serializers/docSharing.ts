@@ -66,4 +66,6 @@ export interface DocPeopleJson {
     people: DocPersonJson[];
     requests: DocRequestJson[];
     published: PublishedJson | null;
+    /** DOC_PAGES_PLAN D6: how many pages of the owner's are inside it (0 for anyone else): "also the N pages inside". */
+    pages: number;
 }

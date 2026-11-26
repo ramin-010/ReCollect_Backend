@@ -32,7 +32,8 @@ const handle =
 export const publishDoc = handle(async (req, res) => {
     const on = req.body?.on;
     if (typeof on !== 'boolean') throw new ErrorResponse(400, 'Send { on: true } to publish, { on: false } to stop');
-    const published = await setDocPublished(requireUser(req).id, param(req, 'id'), on);
+    // DOC_PAGES_PLAN D6: { withPages: true } does the same to every page inside.
+    const published = await setDocPublished(requireUser(req).id, param(req, 'id'), on, new Date(), req.body?.withPages === true);
     res.status(200).json({ success: true, data: { published } });
 });
 
@@ -43,18 +44,19 @@ export const listPeople = handle(async (req, res) => {
 
 /** POST /api/docs/:id/people { email, role } */
 export const addPerson = handle(async (req, res) => {
-    const { people, already, name } = await addDocPerson(requireUser(req).id, param(req, 'id'), { email: req.body?.email, role: req.body?.role });
+    const { people, already, name } = await addDocPerson(requireUser(req).id, param(req, 'id'), { email: req.body?.email, role: req.body?.role, withPages: req.body?.withPages === true });
     res.status(already ? 200 : 201).json({ success: true, data: people, already, name });
 });
 
 /** PATCH /api/docs/:id/people/:userId { role } */
 export const changePerson = handle(async (req, res) => {
-    res.status(200).json({ success: true, data: await changeDocPersonRole(requireUser(req).id, param(req, 'id'), param(req, 'userId'), req.body?.role) });
+    res.status(200).json({ success: true, data: await changeDocPersonRole(requireUser(req).id, param(req, 'id'), param(req, 'userId'), req.body?.role, req.body?.withPages === true) });
 });
 
 /** DELETE /api/docs/:id/people/:userId (the owner, or someone leaving) */
 export const removePerson = handle(async (req, res) => {
-    const out = await removeDocPerson(requireUser(req).id, param(req, 'id'), param(req, 'userId'));
+    const withPages = req.query['withPages'] === '1' || req.query['withPages'] === 'true' || req.body?.withPages === true;
+    const out = await removeDocPerson(requireUser(req).id, param(req, 'id'), param(req, 'userId'), withPages);
     res.status(200).json('left' in out ? { success: true, left: true } : { success: true, data: out });
 });
 

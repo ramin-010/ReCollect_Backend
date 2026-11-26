@@ -29,6 +29,25 @@ export function publicBlocks(ydoc: Y.Doc): NewBlock[] {
     return hasBlocks(ydoc) ? readBlocks(ydoc) : planMigration(ydoc).blocks;
 }
 
+/**
+ * DOC_PAGES_PLAN §7: on a published doc a page block is a line linking to that page's public address when the page is
+ * published (`links`: its id → its title and slug), and goes when it is not (a private page's title never reaches the web).
+ */
+export function publicPageLinks(blocks: readonly NewBlock[], links: ReadonlyMap<string, { title: string; slug: string }>): NewBlock[] {
+    const out: NewBlock[] = [];
+    for (const b of blocks) {
+        const children = b.children?.length ? publicPageLinks(b.children, links) : [];
+        if (b.type === 'page') {
+            const to = links.get(String(b.props?.['docId'] ?? ''));
+            if (to) out.push({ type: 'paragraph', content: [{ type: 'link', href: `/p/${to.slug}`, content: [{ type: 'text', text: to.title, styles: {} }] }] as never, children });
+            else out.push(...children);
+            continue;
+        }
+        out.push({ ...b, children });
+    }
+    return out;
+}
+
 /** The page's state: a new Y.Doc with the blocks (fragment "blocks") and their boards, encoded. */
 export function publicDocState(ydoc: Y.Doc): Uint8Array {
     return stateOfBlocks(ydoc, publicBlocks(ydoc));

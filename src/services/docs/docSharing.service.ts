@@ -18,6 +18,8 @@
 //   DELETE /api/docs/:id/people/:userId            owner, or oneself  → DocPeopleJson | { left: true }
 //   POST   /api/docs/:id/requests/:reqId/approve   owner              → DocPeopleJson (they can edit)
 //   POST   /api/docs/:id/requests/:reqId/decline   owner              → DocPeopleJson
+import { descendantsOf } from './docTree.service';
+import { pageIdsIn } from './blocks/toOldJson';
 import { randomBytes } from 'crypto';
 import * as Y from 'yjs';
 import type { CollaboratorRole } from '@prisma/client';
@@ -39,7 +41,7 @@ import { disconnectUser, refreshUserAccess } from '../../collaboration/hocuspocu
 import { isDeliverableEmail } from '../learning/nudge';
 import { createNotification } from '../notifications/notifications.service';
 import { liveDocument } from '../agent/liveDoc';
-import { publicDocState } from './blocks/publicState';
+import { publicBlocks, stateOfBlocks, publicPageLinks } from './blocks/publicState';
 import { accessibleDocWhere, getDocRole, isDocOwner } from './docPermissions';
 
 export type ShareRole = CollaboratorRole;
@@ -103,14 +105,29 @@ async function ownedDoc(docId: string, ownerId: string) {
 
 const titleOf = (doc: { title: string }) => doc.title.trim() || 'Untitled';
 
+/** DOC_PAGES_PLAN D6: the owner's live pages inside a doc (a share or a publish "with the pages inside" reaches these). */
+async function ownPagesInside(docId: string, ownerId: string): Promise<string[]> {
+    return (await descendantsOf(docId)).filter((r) => r.userId === ownerId).map((r) => r.id);
+}
+
 // ─── Publish ───────────────────────────────────────────────────────────
 
 /**
  * Publish or unpublish (owner only). On: the doc's link (the same one when it is already on). Off:
  * the link stops working. `updatedAt` stays (raw SQL), so the library's order doesn't move.
  */
-export async function setDocPublished(ownerId: string, docId: string, on: boolean, now: Date = new Date()): Promise<PublishedJson | null> {
+export async function setDocPublished(ownerId: string, docId: string, on: boolean, now: Date = new Date(), withPages = false): Promise<PublishedJson | null> {
     const doc = await ownedDoc(docId, ownerId);
+    // D6: "also the pages inside": each page gets its own link, or loses it.
+    if (withPages) {
+        for (const id of await ownPagesInside(docId, ownerId)) {
+            if (!on) await prisma.$executeRaw`UPDATE "Doc" SET "publicSlug" = NULL, "publishedAt" = NULL WHERE "id" = ${id}`;
+            else {
+                const page = await prisma.doc.findUniqueOrThrow({ where: { id }, select: { title: true, publicSlug: true } });
+                if (!page.publicSlug) await prisma.$executeRaw`UPDATE "Doc" SET "publicSlug" = ${newPublicSlug(titleOf(page))}, "publishedAt" = ${now} WHERE "id" = ${id} AND "publicSlug" IS NULL`;
+            }
+        }
+    }
     if (!on) {
         if (doc.publicSlug) await prisma.$executeRaw`UPDATE "Doc" SET "publicSlug" = NULL, "publishedAt" = NULL WHERE "id" = ${docId}`;
         return null;
@@ -142,6 +159,9 @@ export interface PublicDocJson {
     access: PublicAccess;
     /** Only for someone who has the doc in the app ("Open in Kaaga"). */
     docId: string | null;
+    /** DOC_PAGES_PLAN §7: the published pages inside it that no page block places, in order; its parent, when published. */
+    pages: Array<{ title: string; slug: string }>;
+    parent: { title: string; slug: string } | null;
 }
 
 /** GET /api/public/docs/:slug: a published doc as anyone reads it. A trashed or unpublished doc is 404. */
@@ -149,7 +169,7 @@ export async function readPublishedDoc(slug: string, viewerId: string | null): P
     if (!isPublicSlug(slug)) throw new ErrorResponse(404, 'This page is not published');
     const doc = await prisma.doc.findFirst({
         where: { publicSlug: slug, trashedAt: null },
-        select: { id: true, title: true, coverImage: true, updatedAt: true, publishedAt: true, yjsState: true, userId: true, user: { select: { name: true } } },
+        select: { id: true, title: true, coverImage: true, updatedAt: true, publishedAt: true, yjsState: true, userId: true, parentId: true, user: { select: { name: true } } },
     });
     if (!doc || !doc.publishedAt) throw new ErrorResponse(404, 'This page is not published');
 
@@ -159,9 +179,18 @@ export async function readPublishedDoc(slug: string, viewerId: string | null): P
     let state: Uint8Array;
     let title = doc.title;
     let coverImage = doc.coverImage;
+    let placed: string[] = [];
     try {
         if (!live && doc.yjsState) Y.applyUpdate(ydoc, doc.yjsState);
-        state = publicDocState(ydoc);
+        // DOC_PAGES_PLAN §7: a page block is a link to that page's own public page when it is published, and goes when
+        // it is not (a private page's title never reaches the web).
+        const blocks = publicBlocks(ydoc);
+        placed = pageIdsIn(blocks);
+        const pub = placed.length
+            ? await prisma.doc.findMany({ where: { id: { in: placed }, trashedAt: null, publicSlug: { not: null }, publishedAt: { not: null } }, select: { id: true, title: true, publicSlug: true } })
+            : [];
+        const links = new Map(pub.map((p) => [p.id, { title: titleOf(p), slug: p.publicSlug! }]));
+        state = stateOfBlocks(ydoc, publicPageLinks(blocks, links));
         const meta = ydoc.getMap('metadata');
         const metaTitle = meta.get('title');
         if (typeof metaTitle === 'string' && metaTitle.trim()) title = metaTitle;
@@ -171,6 +200,15 @@ export async function readPublishedDoc(slug: string, viewerId: string | null): P
         if (!live) ydoc.destroy();
     }
 
+    // The published pages inside it that no block places, and its parent when that is published.
+    const kids = await prisma.doc.findMany({
+        where: { parentId: doc.id, trashedAt: null, publicSlug: { not: null }, publishedAt: { not: null }, id: { notIn: placed } },
+        select: { title: true, publicSlug: true },
+        orderBy: [{ position: 'asc' }, { id: 'asc' }],
+    });
+    const up = doc.parentId
+        ? await prisma.doc.findFirst({ where: { id: doc.parentId, trashedAt: null, publicSlug: { not: null }, publishedAt: { not: null } }, select: { title: true, publicSlug: true } })
+        : null;
     return {
         title: title.trim() || 'Untitled',
         coverImage,
@@ -179,6 +217,8 @@ export async function readPublishedDoc(slug: string, viewerId: string | null): P
         owner: { name: doc.user.name },
         state: Buffer.from(state).toString('base64'),
         ...(await readerAccess(doc, viewerId)),
+        pages: kids.map((k) => ({ title: titleOf(k), slug: k.publicSlug! })),
+        parent: up ? { title: titleOf(up), slug: up.publicSlug! } : null,
     };
 }
 
@@ -226,6 +266,8 @@ export async function docPeople(docId: string, userId: string): Promise<DocPeopl
         people: doc.collaborators.map(serializeDocPerson),
         requests: requests.map(serializeDocRequest),
         published: published(doc),
+        // D6: the owner may share or publish "also the N pages inside".
+        pages: you === 'owner' ? (await ownPagesInside(doc.id, userId)).length : 0,
     };
 }
 
@@ -243,7 +285,7 @@ const ROLE_WORDS: Record<ShareRole, string> = { editor: 'can edit', viewer: 'can
 export async function addDocPerson(
     ownerId: string,
     docId: string,
-    input: { email: unknown; role: unknown }
+    input: { email: unknown; role: unknown; withPages?: boolean | undefined }
 ): Promise<{ people: DocPeopleJson; already: boolean; name: string }> {
     const email = typeof input.email === 'string' ? input.email.trim() : '';
     if (!/^[^\s@]+@[^\s@]+$/.test(email)) throw new ErrorResponse(400, 'Write their email address');
@@ -266,6 +308,14 @@ export async function addDocPerson(
         await tx.accessRequest.updateMany({ where: { docId, userId: person.id, status: 'pending' }, data: { status: 'approved', respondedAt: new Date() } });
     });
     if (before && before.role !== role) refreshUserAccess(docId, person.id);
+    // D6: the same person, with the same role, on every page inside (one notification: the doc's).
+    if (input.withPages) {
+        for (const id of await ownPagesInside(docId, ownerId)) {
+            const was = await prisma.docCollaborator.findUnique({ where: { docId_userId: { docId: id, userId: person.id } }, select: { role: true } });
+            await prisma.docCollaborator.upsert({ where: { docId_userId: { docId: id, userId: person.id } }, create: { docId: id, userId: person.id, role }, update: { role } });
+            if (was && was.role !== role) refreshUserAccess(id, person.id);
+        }
+    }
     if (!before) await tellShared(person, doc, ownerId, role);
     return { people: await docPeople(docId, ownerId), already: !!before, name: person.name };
 }
@@ -286,12 +336,19 @@ async function tellShared(person: { id: string; name: string; email: string }, d
 }
 
 /** PATCH /api/docs/:id/people/:userId (owner). Their open editor reconnects with the new role. */
-export async function changeDocPersonRole(ownerId: string, docId: string, personId: string, role: unknown): Promise<DocPeopleJson> {
+export async function changeDocPersonRole(ownerId: string, docId: string, personId: string, role: unknown, withPages = false): Promise<DocPeopleJson> {
     const next = assertRole(role);
     await ownedDoc(docId, ownerId);
     const { count } = await prisma.docCollaborator.updateMany({ where: { docId, userId: personId }, data: { role: next } });
     if (count === 0) throw new ErrorResponse(404, 'They are not on this doc');
     refreshUserAccess(docId, personId);
+    // D6: the pages inside they are on change with it.
+    if (withPages) {
+        for (const id of await ownPagesInside(docId, ownerId)) {
+            const changed = await prisma.docCollaborator.updateMany({ where: { docId: id, userId: personId }, data: { role: next } });
+            if (changed.count) refreshUserAccess(id, personId);
+        }
+    }
     return docPeople(docId, ownerId);
 }
 
@@ -299,7 +356,7 @@ export async function changeDocPersonRole(ownerId: string, docId: string, person
  * DELETE /api/docs/:id/people/:userId: the owner removes someone, or someone leaves. Their live
  * connection closes at once. No ban: they may ask again (and he may decline).
  */
-export async function removeDocPerson(actorId: string, docId: string, personId: string): Promise<DocPeopleJson | { left: true }> {
+export async function removeDocPerson(actorId: string, docId: string, personId: string, withPages = false): Promise<DocPeopleJson | { left: true }> {
     const doc = await prisma.doc.findFirst({
         where: { id: docId, ...accessibleDocWhere(actorId) },
         select: { id: true, userId: true, collaborators: { select: { userId: true } } },
@@ -311,6 +368,13 @@ export async function removeDocPerson(actorId: string, docId: string, personId: 
     const { count } = await prisma.docCollaborator.deleteMany({ where: { docId, userId: personId } });
     if (count === 0) throw new ErrorResponse(404, 'They are not on this doc');
     disconnectUser(docId, personId, Math.max(0, doc.collaborators.length - 1), leaving, actorId);
+    // D6: off the pages inside too (the owner's pages; one leaving leaves them all).
+    if (withPages) {
+        for (const id of await ownPagesInside(docId, doc.userId)) {
+            const left = await prisma.docCollaborator.deleteMany({ where: { docId: id, userId: personId } });
+            if (left.count) disconnectUser(id, personId, 0, leaving, actorId);
+        }
+    }
     return leaving ? { left: true } : docPeople(docId, actorId);
 }
 

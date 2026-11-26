@@ -360,3 +360,58 @@ describe('what is gone', () => {
         expect((await as(owner).get('/api/docs/shared-by-me')).status).toBe(404);
     });
 });
+
+describe('pages inside (DOC_PAGES_PLAN stage 6, D6)', () => {
+    const pageIn = async (owner: TestUser, parentId: string, title: string) => {
+        const res = await as(owner).post('/api/docs', { title, parentId });
+        expect(res.status).toBe(201);
+        return res.body.data._id as string;
+    };
+
+    it('sharing with the pages inside gives and takes every page; without it only the doc', async () => {
+        const [owner, friend] = await Promise.all([person('Owner'), person('Friend')]);
+        const doc = await ownedDoc(owner, 'Course');
+        const p1 = await pageIn(owner, doc.id, 'One');
+        const p2 = await pageIn(owner, p1, 'Two');
+        expect((await as(owner).get(`/api/docs/${doc.id}/people`)).body.data.pages).toBe(2);
+        await as(owner).post(`/api/docs/${doc.id}/people`, { email: friend.email, role: 'viewer', withPages: true });
+        for (const id of [doc.id, p1, p2]) expect((await as(friend).get(`/api/docs/${id}`)).body.role).toBe('viewer');
+        expect(mailsTo(friend.email)).toHaveLength(1);
+        await as(owner).patch(`/api/docs/${doc.id}/people/${friend.id}`, { role: 'editor', withPages: true });
+        expect((await as(friend).get(`/api/docs/${p2}`)).body.role).toBe('editor');
+        await as(owner).delete(`/api/docs/${doc.id}/people/${friend.id}?withPages=1`);
+        for (const id of [doc.id, p1, p2]) expect((await as(friend).get(`/api/docs/${id}`)).status).toBe(404);
+
+        await as(owner).post(`/api/docs/${doc.id}/people`, { email: friend.email, role: 'viewer' });
+        expect((await as(friend).get(`/api/docs/${doc.id}`)).status).toBe(200);
+        expect((await as(friend).get(`/api/docs/${p1}`)).status).toBe(404);
+    });
+
+    it("publishing with the pages inside gives each its own address; a published doc never shows an unpublished page's title", async () => {
+        const owner = await person('Owner');
+        const doc = await ownedDoc(owner, 'Handbook');
+        const secret = await pageIn(owner, doc.id, 'Private salaries');
+        const open = await pageIn(owner, doc.id, 'Open chapter');
+        // A page block for the private page in the doc's text.
+        const agent = asAgent((await createTestToken(owner)).token, 'Claude');
+        expect((await agent.post(`/api/agent/docs/${doc.id}/append`, { markdown: `[Private salaries](/docs/${secret})` })).status).toBe(200);
+        const slug = await publish(owner, doc.id);
+        const alone = await request(app).get(`/api/public/docs/${slug}`);
+        expect(alone.status).toBe(200);
+        expect(JSON.stringify(pageDoc(alone.body.data.state).getXmlFragment(BLOCKS_FRAGMENT).toJSON())).not.toContain('Private salaries');
+        expect(alone.body.data.pages).toEqual([]);
+        expect(alone.body.data.parent).toBeNull();
+
+        const res = await as(owner).put(`/api/docs/${doc.id}/publish`, { on: true, withPages: true });
+        expect(res.status).toBe(200);
+        const rows = await prisma.doc.findMany({ where: { id: { in: [secret, open] } }, select: { id: true, publicSlug: true } });
+        for (const r of rows) expect((await request(app).get(`/api/public/docs/${r.publicSlug}`)).status).toBe(200);
+        const both = await request(app).get(`/api/public/docs/${slug}`);
+        const secretSlug = rows.find((r) => r.id === secret)!.publicSlug!;
+        // The placed page is a link in the text; the other is listed under Pages.
+        expect(JSON.stringify(pageDoc(both.body.data.state).getXmlFragment(BLOCKS_FRAGMENT).toJSON())).toContain(`/p/${secretSlug}`);
+        expect(both.body.data.pages).toEqual([{ title: 'Open chapter', slug: rows.find((r) => r.id === open)!.publicSlug }]);
+        const child = await request(app).get(`/api/public/docs/${secretSlug}`);
+        expect(child.body.data.parent).toEqual({ title: 'Handbook', slug });
+    });
+});
