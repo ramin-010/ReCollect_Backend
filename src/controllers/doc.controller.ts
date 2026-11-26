@@ -1,6 +1,7 @@
 // Doc endpoints (Postgres). DB access: src/services/docs/docs.service.ts; permission rules:
 // src/services/docs/docPermissions.ts; editor JSON → Yjs: src/services/docs/docContent.ts.
 // Routes, status codes, messages and JSON shapes are the same as the Mongo version.
+import { pagesOf, trailFor } from '../services/docs/docTree.service';
 import { Request, Response, NextFunction } from 'express';
 import ErrorResponse from '../utils/errorResponse';
 import { requireUser } from '../middlwares/auth';
@@ -29,6 +30,8 @@ export const createDoc = async (req: Request, res: Response, next: NextFunction)
     const newDoc = await createDocInDb(user.id, {
       title: readOptionalString(body.title, 'title'),
       content: body.content,
+      // DOC_PAGES_PLAN: a page inside a doc of theirs.
+      parentId: readOptionalString(body.parentId, 'parentId'),
     });
 
     res.status(201).json({
@@ -60,10 +63,16 @@ export const getDoc = async (req: Request, res: Response, next: NextFunction): P
     const user = requireUser(req);
     const found = await findAccessibleDocWithUsers(routeParam(req, 'id'), user.id);
     if (!found) throw new ErrorResponse(404, 'Doc not found');
+    // DOC_PAGES_PLAN §3.3: the trail above it (what they can open) and the pages inside it, in order.
+    const [trail, pages] = await Promise.all([trailFor(found.doc.id, user.id), pagesOf(found.doc.id, user.id)]);
 
     res.status(200).json({
       success: true,
-      data: serializeDocWithUsers(found.doc),
+      data: {
+        ...serializeDocWithUsers(found.doc),
+        trail: trail.map((t) => ({ _id: t.id, title: t.title })),
+        pages: pages.map((p) => ({ _id: p.id, title: p.title, position: p.position, pages: p.pages })),
+      },
       // The Mongo handler always said 'viewer' for collaborators here (it compared a populated
       // user object with an id); this is the real role.
       role: found.role,

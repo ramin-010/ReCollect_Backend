@@ -46,6 +46,10 @@ export const docListSelect = {
     coverImage: true,
     createdAt: true,
     updatedAt: true,
+    // DOC_PAGES_PLAN §3.2: where it sits in a tree.
+    parentId: true,
+    position: true,
+    trashedWithId: true,
     user: { select: userSummarySelect },
     collaborators: {
         select: { userId: true, role: true, addedAt: true, user: { select: userSummarySelect } },
@@ -59,6 +63,10 @@ export type DocRoleJson = 'owner' | CollaboratorRole;
 interface DocBaseJson {
     _id: string;
     title: string;
+    /** DOC_PAGES_PLAN: the doc it is a page of (null: top level), its place there, the doc whose trashing took it. */
+    parentId: string | null;
+    position: number;
+    trashedWithId: string | null;
     previewState: string | null;
     coverImage: string | null;
     isPinned: boolean;
@@ -84,6 +92,9 @@ function docBase(doc: DocRow | DocWithUsers): DocBaseJson {
     return {
         _id: doc.id,
         title: doc.title,
+        parentId: doc.parentId,
+        position: doc.position,
+        trashedWithId: doc.trashedWithId,
         previewState: doc.previewState,
         coverImage: doc.coverImage,
         isPinned: doc.isPinned,
@@ -119,6 +130,10 @@ export function serializeDocWithUsers(doc: DocWithUsers): DocWithUsersJson {
 export interface DocListItemJson {
     _id: string;
     title: string;
+    /** DOC_PAGES_PLAN: the doc it is a page of (null: top level), its place there, and the doc whose trashing took it. */
+    parentId: string | null;
+    position: number;
+    trashedWithId: string | null;
     previewState: string | null;
     isPinned: boolean;
     isArchived: boolean;
@@ -140,6 +155,9 @@ export function serializeDocListItem(doc: DocListRow, role: DocRoleJson): DocLis
     return {
         _id: doc.id,
         title: doc.title,
+        parentId: doc.parentId,
+        position: doc.position,
+        trashedWithId: doc.trashedWithId,
         previewState: doc.previewState,
         isPinned: doc.isPinned,
         isArchived: doc.isArchived,
