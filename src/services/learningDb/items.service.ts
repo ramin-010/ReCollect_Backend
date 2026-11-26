@@ -6,6 +6,7 @@ import { prisma } from '../../db/prisma';
 import { isUniqueViolation } from '../../db/errors';
 import { batchDeleteFromCloud } from '../../utils/cloudinary';
 import { findAccessibleDoc } from '../docs/docs.service';
+import { assertCanBeLesson, lessonOf } from '../docs/docTree.service';
 import { nextRevisionAction } from '../learning';
 import { badRequest, conflict, notFound } from '../learning/http';
 import {
@@ -126,7 +127,8 @@ export async function topicByDoc(userId: string, docId: string, now: Date = new 
     const topic = await prisma.topic.findUnique({ where: { userId_docId: { userId, docId } } });
     // STUDY_FLOW_PLAN §4.4: the doc's revision card (its pointer; the card route says 404 if its heading is gone).
     const hasCard = !!doc.cardBlockId;
-    if (!topic) return { topic: null, chain: [] as ChainRevisionJson[], nextAction: { kind: 'start' as const }, hasCard };
+    // DOC_PAGES_PLAN §3.2 (D5): a page inside a lesson has no topic of its own; it is revised with that lesson.
+    if (!topic) return { topic: null, chain: [] as ChainRevisionJson[], nextAction: { kind: 'start' as const }, hasCard, lesson: await lessonOf(docId, userId) };
     const rows = await prisma.revision.findMany({ where: { topicId: topic.id }, orderBy: chainOrder });
     const action = nextRevisionAction(rows.map(toEngineRevision), ctx.today);
     const byId = new Map(rows.map((r) => [r.id, r]));
@@ -134,7 +136,7 @@ export async function topicByDoc(userId: string, docId: string, now: Date = new 
         action.kind === 'start' || action.kind === 'completed'
             ? action
             : { ...action, next: serializeChainRevision(byId.get(action.next.id)!) };
-    return { topic: serializeTopic(topic, doc.title), chain: serializeChain(rows), nextAction, hasCard };
+    return { topic: serializeTopic(topic, doc.title), chain: serializeChain(rows), nextAction, hasCard, lesson: null };
 }
 
 /**
@@ -193,6 +195,8 @@ export async function createTopic(userId: string, input: CreateTopicInput, now: 
     await ownedSubjectOr404(userId, input.subjectId);
     const existing = await prisma.topic.findUnique({ where: { userId_docId: { userId, docId: input.docId } }, select: { id: true } });
     if (existing) throw conflict('This doc is already a topic', 'TOPIC_EXISTS');
+    // DOC_PAGES_PLAN D5: one lesson per branch.
+    await assertCanBeLesson(input.docId, userId);
 
     let topicId: string;
     try {
@@ -306,11 +310,16 @@ export async function listCaptures(userId: string, input: ListCapturesInput = {}
                 ],
             })),
         },
-        include: { subject: { select: subjectRefSelect }, topic: { select: { title: true, docId: true, doc: { select: { title: true } } } } },
+        include: { subject: { select: subjectRefSelect }, topic: { select: { title: true, docId: true, doc: { select: { title: true } } } }, doc: { select: { id: true, title: true } } },
         orderBy: [{ isPinned: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }],
         take: Math.min(CAPTURES_LIST_MAX, Math.max(1, input.limit ?? CAPTURES_LIST_DEFAULT)),
     });
-    return rows.map(({ subject, topic, ...c }) => ({ ...serializeCapture(c, subject), lesson: topic ? { docId: topic.docId, title: topic.doc?.title || topic.title } : null }));
+    // DOC_PAGES_PLAN D4: each note names the page it was written on.
+    return rows.map(({ subject, topic, doc, ...c }) => ({
+        ...serializeCapture(c, subject),
+        lesson: topic ? { docId: topic.docId, title: topic.doc?.title || topic.title } : null,
+        page: doc ? { id: doc.id, title: doc.title } : null,
+    }));
 }
 
 /** '#Tag' / ' tag ' → 'Tag' / 'tag'; empty → null. */
@@ -333,6 +342,8 @@ export interface CreateCaptureInput {
     isPinned?: boolean | undefined;
     attachments?: AttachmentJson[] | undefined;
     revise?: boolean | undefined;
+    /** DOC_PAGES_PLAN D4: the page it is written on; kept only when that page is revised with the note's lesson (topicId). */
+    docId?: string | undefined;
 }
 
 async function loadCaptureJson(captureId: string) {
@@ -355,6 +366,8 @@ export async function createCapture(userId: string, input: CreateCaptureInput, n
         const topic = await ownedTopicOr404(userId, input.topicId);
         subjectId ??= topic.subjectId; // a topic's resource belongs to the topic's subject
     }
+    let docId: string | null = null;
+    if (input.docId && input.topicId && (await findAccessibleDoc(input.docId, userId)) && (await lessonOf(input.docId, userId))?.topicId === input.topicId) docId = input.docId;
 
     let captureId: string;
     try {
@@ -371,6 +384,7 @@ export async function createCapture(userId: string, input: CreateCaptureInput, n
                     isPinned: input.isPinned ?? false,
                     subjectId,
                     topicId: input.topicId ?? null,
+                    docId,
                     attachments,
                 },
                 select: { id: true },

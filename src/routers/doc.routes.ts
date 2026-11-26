@@ -1,7 +1,7 @@
 import express, { RequestHandler } from 'express';
 import authMiddleware from '../middlwares/auth';
 import { scopeByMethod } from '../middlwares/scopes';
-import { getDoc, deleteDoc, getAllDocs, createDoc, updateDoc } from '../controllers/doc.controller';
+import { getDoc, deleteDoc, getAllDocs, createDoc, updateDoc, getDocTree } from '../controllers/doc.controller';
 import { searchLibraryDocs } from '../controllers/docSearch.controller';
 import { emptyTrashHandler, restoreDocHandler, trashDocHandler } from '../controllers/docTrash.controller';
 import { addPerson, answerRequest, changePerson, listPeople, publishDoc, removePerson } from '../controllers/docSharing.controller';
@@ -21,6 +21,8 @@ router.post('/:id/trash', auth, trashDocHandler);
 router.post('/:id/restore', auth, restoreDocHandler);
 router.get('/', auth, getAllDocs as RequestHandler);
 router.post('/', auth, createDoc as RequestHandler);
+// DOC_PAGES_PLAN §3.3: the tree a doc is in (cookie only), before '/:id'.
+router.get('/:id/tree', auth, getDocTree as RequestHandler);
 router.get('/:id', auth, getDoc as RequestHandler);
 // STUDY_FLOW_PLAN §4.4: the doc's revision card, drawn read-only at a review (cookie only: tokens read the doc itself).
 router.get('/:id/card', auth, getCard);

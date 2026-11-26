@@ -110,6 +110,8 @@ const captureCreateSchema = z.object({
     isPinned: z.boolean().optional(),
     attachments: z.array(zAttachment).max(20).optional(),
     revise: z.boolean().optional(),
+    // DOC_PAGES_PLAN D4: the page it is written on (with topicId, its lesson).
+    docId: zId.optional(),
 });
 const capturePatchSchema = z.object({
     title: optText(500),

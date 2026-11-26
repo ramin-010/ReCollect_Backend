@@ -13,6 +13,7 @@
 // "cache") or the start of a word ("lim" finds "limiter"). The whole query inside a title matches
 // too (for what words drop: "C++", "O(n)"). Order: a title holding the query, then ts_rank (title
 // words weigh most), then newest. The snippet is ts_headline's, with the matched words marked.
+import { pathsFor } from './docTree.service';
 import { createHash } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import type { JSONContent } from '@tiptap/core';
@@ -126,6 +127,14 @@ export interface DocSearchHit {
     snippet: string;
     /** [start, end) of each matched word in `snippet`. */
     marks: Array<[number, number]>;
+    /** DOC_PAGES_PLAN §3.2: the titles of the docs above it that the user can open, root first ([] at the top level). */
+    path: string[];
+}
+
+/** The path of each hit (one query for all of them). */
+async function withPaths(userId: string, hits: Array<Omit<DocSearchHit, 'path'>>): Promise<DocSearchHit[]> {
+    const paths = await pathsFor(hits.map((h) => h.id), userId);
+    return hits.map((h) => ({ ...h, path: (paths.get(h.id) ?? []).map((p) => p.title) }));
 }
 
 /** The words of a query: letters and digits, lower case, each once, at most 8. */
@@ -241,7 +250,7 @@ export async function searchDocs(userId: string, options: { query?: string | und
             WHERE NOT d."isArchived" AND d."trashedAt" IS NULL AND ${accessibleSql(userId)}
             ORDER BY d."updatedAt" DESC, d."id" DESC
             LIMIT ${limit}`;
-        return rows.map((r) => ({ id: r.id, title: r.title, updatedAt: r.updatedAt, ...snippetFrom(r.text ?? '', r.title) }));
+        return withPaths(userId, rows.map((r) => ({ id: r.id, title: r.title, updatedAt: r.updatedAt, ...snippetFrom(r.text ?? '', r.title) })));
     }
 
     const terms = searchTerms(raw);
@@ -273,5 +282,5 @@ export async function searchDocs(userId: string, options: { query?: string | und
                END AS "headline"
         FROM hits h, q
         ORDER BY h."rank" DESC, h."updatedAt" DESC, h."id" DESC`;
-    return rows.map((r) => ({ id: r.id, title: r.title, updatedAt: r.updatedAt, ...snippetFrom(r.headline ?? '', r.title) }));
+    return withPaths(userId, rows.map((r) => ({ id: r.id, title: r.title, updatedAt: r.updatedAt, ...snippetFrom(r.headline ?? '', r.title) })));
 }

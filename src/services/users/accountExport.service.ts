@@ -50,7 +50,7 @@ export async function exportAccount(userId: string, now: Date = new Date()) {
     });
     const [docs, todos, reminders, subjects, topics, revisions, captures, goals, focus, pocket, weekTargets, decisions, sessions, projects, weakSpots, suggestions, history, threads, lockPins, routines, chapters, buddyReminders, aiSettings, grants, usage, tokens, feedback, buddy] =
         await Promise.all([
-            prisma.doc.findMany({ where, orderBy: { createdAt: 'asc' }, select: { id: true, title: true, yjsState: true, isPinned: true, isArchived: true, trashedAt: true, publishedAt: true, createdAt: true, updatedAt: true } }),
+            prisma.doc.findMany({ where, orderBy: { createdAt: 'asc' }, select: { id: true, title: true, yjsState: true, isPinned: true, isArchived: true, trashedAt: true, publishedAt: true, createdAt: true, updatedAt: true, parentId: true, position: true } }),
             prisma.todo.findMany({ where, orderBy: { createdAt: 'asc' } }),
             prisma.reminder.findMany({ where, orderBy: { createdAt: 'asc' } }),
             prisma.subject.findMany({ where, orderBy: { createdAt: 'asc' } }),
@@ -89,7 +89,8 @@ export async function exportAccount(userId: string, now: Date = new Date()) {
         account: user,
         docs: docs.map((d) => {
             const { json, title } = currentContent({ id: d.id, title: d.title, yjsState: d.yjsState });
-            return { id: d.id, title, markdown: docJsonToMarkdown(json), pinned: d.isPinned, archived: d.isArchived, trashedAt: d.trashedAt, publishedAt: d.publishedAt, createdAt: d.createdAt, updatedAt: d.updatedAt };
+            // DOC_PAGES_PLAN §3.2: where it sits in a tree (parentId null: a top-level doc).
+            return { id: d.id, title, parentId: d.parentId, position: d.position, markdown: docJsonToMarkdown(json), pinned: d.isPinned, archived: d.isArchived, trashedAt: d.trashedAt, publishedAt: d.publishedAt, createdAt: d.createdAt, updatedAt: d.updatedAt };
         }),
         tasks: todos.map((t) => plain(t)),
         reminders: reminders.map((r) => plain(r)),

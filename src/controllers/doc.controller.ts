@@ -1,7 +1,7 @@
 // Doc endpoints (Postgres). DB access: src/services/docs/docs.service.ts; permission rules:
 // src/services/docs/docPermissions.ts; editor JSON → Yjs: src/services/docs/docContent.ts.
 // Routes, status codes, messages and JSON shapes are the same as the Mongo version.
-import { pagesOf, trailFor } from '../services/docs/docTree.service';
+import { pagesOf, trailFor, treeOf } from '../services/docs/docTree.service';
 import { Request, Response, NextFunction } from 'express';
 import ErrorResponse from '../utils/errorResponse';
 import { requireUser } from '../middlwares/auth';
@@ -92,12 +92,29 @@ export const updateDoc = async (req: Request, res: Response, next: NextFunction)
       isPinned: readOptionalBoolean(body.isPinned, 'isPinned'),
       isArchived: readOptionalBoolean(body.isArchived, 'isArchived'),
       coverImage: readOptionalString(body.coverImage, 'coverImage'),
+      // DOC_PAGES_PLAN §3.3: move it inside a doc (null: the top level), after one of its pages or at the 'start'.
+      parentId: readOptionalString(body.parentId, 'parentId'),
+      after: readOptionalString(body.after, 'after') ?? undefined,
     });
 
     res.status(200).json({
       success: true,
       data: serializeDoc(updatedDoc),
       message: 'Doc updated successfully',
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/** GET /api/docs/:id/tree → { rootId, nodes: [{ _id, parentId, title, position }] } (DOC_PAGES_PLAN §3.3). */
+export const getDocTree = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const user = requireUser(req);
+    const tree = await treeOf(routeParam(req, 'id'), user.id);
+    res.status(200).json({
+      success: true,
+      data: { rootId: tree.rootId, nodes: tree.nodes.map((n) => ({ _id: n.id, parentId: n.parentId, title: n.title, position: n.position })) },
     });
   } catch (err) {
     next(err);

@@ -12,6 +12,7 @@ import { prisma, type DbClient } from '../../db/prisma';
 import { LearningHttpError, badRequest, conflict, notFound } from '../learning/http';
 import { fromDbDay, loadLearningContext } from './common';
 import { createRevisionChain } from './revisions.service';
+import { assertCanBeLesson } from '../docs/docTree.service';
 
 export const PATH_TITLE_MAX = 200;
 export const NEXT_STEP_MAX = 300;
@@ -308,6 +309,8 @@ export async function attachDocToTopic(
         }
         const other = await tx.topic.findUnique({ where: { userId_docId: { userId, docId: input.docId } }, select: { id: true } });
         if (other) throw conflict(`This doc is already topic ${other.id}`, 'TOPIC_EXISTS');
+        // DOC_PAGES_PLAN D5: one lesson per branch.
+        await assertCanBeLesson(input.docId, userId, tx);
 
         const status: TopicStatus = input.revise || topic.status === 'done' ? 'done' : 'in_progress';
         await tx.topic.update({

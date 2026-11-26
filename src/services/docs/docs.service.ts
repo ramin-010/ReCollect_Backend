@@ -6,7 +6,7 @@
 //   - collaborators[]                    → DocCollaborator rows (unique per doc+user)
 //   - $push / $pull on cloudImages       → atomic SQL on the Json column (appendDocCloudImage, removeDocCloudImages)
 // Permission rules live in ./docPermissions.ts.
-import { assertParentForNewPage, nextPosition } from './docTree.service';
+import { assertParentForNewPage, moveDoc, nextPosition } from './docTree.service';
 import type { Prisma } from '@prisma/client';
 import type { StateBytes } from './docState';
 import { prisma, type DbClient } from '../../db/prisma';
@@ -142,6 +142,10 @@ export interface UpdateDocMetaInput {
     isPinned?: boolean | undefined;
     isArchived?: boolean | undefined;
     coverImage?: string | null | undefined;
+    /** DOC_PAGES_PLAN §3.2: move it inside this doc (null = the top level); owner only. */
+    parentId?: string | null | undefined;
+    /** With a parent: after this page of it, or 'start'. Alone: a new place among its own parent's pages. */
+    after?: string | undefined;
 }
 
 /**
@@ -158,6 +162,8 @@ export async function updateDocMeta(
     if (!doc) throw new ErrorResponse(404, 'Doc not found');
 
     const role = getDocRole(doc, userId);
+    const moving = input.parentId !== undefined || input.after !== undefined;
+    if (moving && role !== 'owner') throw new ErrorResponse(403, 'Only the owner can move a doc');
     if (role !== 'owner') {
         if (input.title !== undefined || input.isPinned !== undefined || input.isArchived !== undefined) {
             throw new ErrorResponse(403, 'Only the owner can rename or pin this document');
@@ -173,7 +179,14 @@ export async function updateDocMeta(
     if (input.title !== undefined) data.title = normalizeDocTitle(input.title ?? '');
     if (input.coverImage !== undefined) data.coverImage = input.coverImage;
 
-    await db.doc.update({ where: { id: docId }, data, select: { id: true } });
+    // A move alone keeps updatedAt (it changes where the doc sits, not the doc).
+    const fields = input.title !== undefined || input.isPinned !== undefined || input.isArchived !== undefined || input.coverImage !== undefined;
+    if (fields || !moving) await db.doc.update({ where: { id: docId }, data, select: { id: true } });
+    if (moving) {
+        const parentId = input.parentId !== undefined ? input.parentId || null : doc.parentId;
+        if (input.parentId === undefined && !parentId) throw new ErrorResponse(400, '`after` orders the pages inside a doc: this one is at the top level');
+        await moveDoc(userId, docId, { parentId, ...(input.after !== undefined ? { after: input.after } : {}) });
+    }
     return loadDocRow(docId, db);
 }
 
@@ -186,12 +199,18 @@ export async function deleteOrLeaveDoc(docId: string, userId: string, db: DbClie
     if (!doc) throw new ErrorResponse(404, 'Doc not found');
 
     if (isDocOwner(doc, userId)) {
-        const images = readCloudImages(doc.cloudImages);
+        // DOC_PAGES_PLAN §3.2 (D8): a doc deleted from the trash takes the pages that went to the trash with it. The
+        // live pages inside a doc deleted outside the trash stay, at the top level (Doc.parentId is SET NULL).
+        const taken = doc.trashedAt
+            ? await db.doc.findMany({ where: { trashedWithId: docId, userId }, select: { id: true, title: true, cloudImages: true } })
+            : [];
+        const all = [{ id: doc.id, title: doc.title, cloudImages: doc.cloudImages }, ...taken];
+        const images = all.flatMap((d) => readCloudImages(d.cloudImages));
         if (images.length > 0) await batchDeleteFromCloud(images.map((img) => img.cloudPublicId));
         // Its path topics survive (SET NULL, with their revision history); they keep the doc's last
         // title instead of the one they were made with ("Untitled" for a doc named later).
-        await db.topic.updateMany({ where: { docId }, data: { title: doc.title.trim() || 'Untitled' } });
-        await db.doc.deleteMany({ where: { id: docId } });
+        for (const d of all) await db.topic.updateMany({ where: { docId: d.id }, data: { title: d.title.trim() || 'Untitled' } });
+        await db.doc.deleteMany({ where: { id: { in: all.map((d) => d.id) } } });
         return 'deleted';
     }
     await db.docCollaborator.deleteMany({ where: { docId, userId } });

@@ -192,6 +192,8 @@ export function serializeCapture(c: Capture, subject: Pick<Subject, 'id' | 'name
         isPinned: c.isPinned,
         subject: serializeSubjectRef(subject),
         topicId: c.topicId,
+        // DOC_PAGES_PLAN D4: the page it was written on (its lesson stays topicId).
+        docId: c.docId,
         attachments: attachmentsOf(c.attachments),
         // STUDY_FLOW_PLAN §4.3: a chat's note says "from <app>" in the doc's sidebar.
         createdBy: c.createdBy,

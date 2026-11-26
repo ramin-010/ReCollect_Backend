@@ -18,6 +18,8 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../db/prisma';
 import { deleteOrLeaveDoc } from '../docs/docs.service';
+import { descendantsOf } from '../docs/docTree.service';
+import type { DbClient } from '../../db/prisma';
 import { notFound } from '../learning/http';
 
 export const UNDO_DAYS = 7;
@@ -132,6 +134,9 @@ async function collect(db: Tx | typeof prisma, userId: string, subjectId: string
     const weekTargets = await db.weekTarget.findMany({ where: { userId, OR: [{ subjectId }, { topicId: { in: topicIds } }, { todoId: { in: todoIds } }] }, select: { id: true, subjectId: true, topicId: true, todoId: true } });
     const decisions = await db.decision.findMany({ where: { userId, subjectId }, select: { id: true, subjectId: true } });
     const pointing = await db.capture.findMany({ where: { topicId: { in: topicIds }, NOT: { subjectId } }, select: { id: true, topicId: true } });
+    // DOC_PAGES_PLAN §3.2: the live pages inside each of its docs go to the trash with it (taken along by that doc).
+    const pageOf = new Map<string, string>();
+    for (const root of docIds) for (const r of await descendantsOf(root, db as DbClient)) if (!docIds.has(r.id)) pageOf.set(r.id, root);
     const payload: Payload = {
         rows: {
             subject: [subject as unknown as Row],
@@ -151,14 +156,14 @@ async function collect(db: Tx | typeof prisma, userId: string, subjectId: string
         relink: { workSession: sessions, weekTarget: weekTargets, decision: decisions, capture: pointing },
     };
     const counts: DeletionCounts = {
-        docs: docIds.size,
+        docs: docIds.size + pageOf.size,
         topics: topics.length,
         notes: captures.length,
         revisions: revisions.length,
         tasks: todos.length,
         sessions: sessions.length,
     };
-    return { subject, payload, docIds: [...docIds], counts };
+    return { subject, payload, docIds: [...docIds, ...pageOf.keys()], pageOf, counts };
 }
 
 /** GET /api/subjects/:id/deletion: what a delete would take, for the confirm. */
@@ -192,7 +197,7 @@ function serialize(row: { id: string; subjectId: string; name: string; createdAt
 export async function deleteSubjectWithUndo(userId: string, subjectId: string, now: Date = new Date()): Promise<SubjectDeletionJson> {
     const saved = await prisma.$transaction(
         async (tx) => {
-            const { subject, payload, docIds } = await collect(tx, userId, subjectId);
+            const { subject, payload, docIds, pageOf } = await collect(tx, userId, subjectId);
             const row = await tx.subjectDeletion.create({
                 data: {
                     userId,
@@ -204,7 +209,12 @@ export async function deleteSubjectWithUndo(userId: string, subjectId: string, n
                     expiresAt: new Date(now.getTime() + UNDO_DAYS * DAY_MS),
                 },
             });
-            if (docIds.length) await tx.doc.updateMany({ where: { id: { in: docIds } }, data: { trashedAt: now } });
+            const lessonDocs = docIds.filter((id) => !pageOf.has(id));
+            if (lessonDocs.length) await tx.doc.updateMany({ where: { id: { in: lessonDocs } }, data: { trashedAt: now, trashedWithId: null } });
+            for (const root of lessonDocs) {
+                const pages = [...pageOf].filter(([, r]) => r === root).map(([id]) => id);
+                if (pages.length) await tx.doc.updateMany({ where: { id: { in: pages } }, data: { trashedAt: now, trashedWithId: root } });
+            }
             const todoIds = (payload.rows.todo ?? []).map((t) => t.id as string);
             if (todoIds.length) await tx.todo.deleteMany({ where: { id: { in: todoIds } } }); // labels' links and reminders cascade
             const captureIds = (payload.rows.capture ?? []).map((c) => c.id as string);
@@ -233,7 +243,7 @@ export async function undoSubjectDeletion(userId: string, deletionId: string, no
             if (!row) throw notFound();
             const payload = row.payload as unknown as Payload;
             // Docs first: a topic points at its doc only while that doc still exists.
-            if (row.docIds.length) await tx.doc.updateMany({ where: { id: { in: row.docIds }, userId }, data: { trashedAt: null } });
+            if (row.docIds.length) await tx.doc.updateMany({ where: { id: { in: row.docIds }, userId }, data: { trashedAt: null, trashedWithId: null } });
             const docs = new Set((await tx.doc.findMany({ where: { id: { in: (payload.rows.topic ?? []).map((t) => t.docId as string).filter(Boolean) } }, select: { id: true } })).map((d) => d.id));
             const goals = new Set((await tx.goal.findMany({ where: { userId, id: { in: (payload.rows.goalSubject ?? []).map((g) => g.goalId as string) } }, select: { id: true } })).map((g) => g.id));
             const people = new Set((await tx.user.findMany({ where: { id: { in: (payload.rows.todoAssignee ?? []).map((a) => a.userId as string) } }, select: { id: true } })).map((u) => u.id));
@@ -262,9 +272,15 @@ export async function undoSubjectDeletion(userId: string, deletionId: string, no
 export async function purgeSubjectDeletions(now: Date = new Date()): Promise<number> {
     const rows = await prisma.subjectDeletion.findMany({ where: { expiresAt: { lte: now } }, select: { id: true, userId: true, docIds: true } });
     for (const row of rows) {
-        const stillTrashed = await prisma.doc.findMany({ where: { id: { in: row.docIds }, userId: row.userId, trashedAt: { not: null } }, select: { id: true } });
+        // The lesson docs first: each takes the pages that went with it.
+        const stillTrashed = await prisma.doc.findMany({
+            where: { id: { in: row.docIds }, userId: row.userId, trashedAt: { not: null } },
+            select: { id: true },
+            orderBy: [{ trashedWithId: { sort: 'asc', nulls: 'first' } }, { id: 'asc' }],
+        });
         for (const doc of stillTrashed) {
             try {
+                if (!(await prisma.doc.findUnique({ where: { id: doc.id }, select: { id: true } }))) continue;
                 await deleteOrLeaveDoc(doc.id, row.userId);
             } catch (err) {
                 console.error(`[subjects] could not delete doc ${doc.id}:`, err);

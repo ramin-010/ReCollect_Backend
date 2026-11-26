@@ -5,13 +5,13 @@ import { requireUser } from '../middlwares/auth';
 import { emptyTrash, restoreDoc, trashDoc } from '../services/docs/trash.service';
 import { handler, ok, param } from './learning/common';
 
-/** POST /api/docs/:id/trash → { _id, title, trashedAt } */
+/** POST /api/docs/:id/trash → { _id, title, trashedAt, pages } (pages: how many went with it) */
 export const trashDocHandler = handler(async (req, res) => {
     const { changed: _changed, ...state } = await trashDoc(requireUser(req).id, param(req, 'id'));
     ok(res, state);
 });
 
-/** POST /api/docs/:id/restore → { _id, title, trashedAt: null } */
+/** POST /api/docs/:id/restore → { _id, title, trashedAt: null, pages, detached } */
 export const restoreDocHandler = handler(async (req, res) => {
     const { changed: _changed, ...state } = await restoreDoc(requireUser(req).id, param(req, 'id'));
     ok(res, state);
