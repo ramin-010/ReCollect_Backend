@@ -127,6 +127,9 @@ describe('GET /api/agent/docs and /:id', () => {
         expect(res.body.data).toEqual({
             id: doc.id,
             title: 'Heaps',
+            // DOC_PAGES_PLAN: a top-level doc with no pages inside.
+            path: [],
+            pages: [],
             markdown: '## Idea\n\nA **heap** keeps the min on top.',
             subject: { id: subject.id, name: 'DSA' },
             topicId: topic.id,

@@ -12,6 +12,7 @@
 // the ```canvas fence), writes lay out the diagrams of the text form first (../docs/diagram), then
 // absorb each board into the doc's canvas maps in the same transaction as the blocks, so Undo
 // takes both back. A write that makes canvases answers with a report per canvas (`canvases`).
+import { assertParentForNewPage, nextPosition, pagesOf, trailFor } from '../docs/docTree.service';
 import type { AgentEdit, Prisma } from '@prisma/client';
 import { hasRevisionCard } from './docCard';
 import type { JSONContent } from '@tiptap/core';
@@ -110,9 +111,13 @@ export async function readDocForAgent(userId: string, docId: string) {
     const topic = await prisma.topic.findUnique({ where: { userId_docId: { userId, docId: doc.id } }, select: { id: true } });
     // STUDY_FLOW_PLAN: whether it has a revision card, and how many notes and links its lesson holds.
     const notes = topic ? await prisma.capture.count({ where: { userId, topicId: topic.id } }) : 0;
+    // DOC_PAGES_PLAN §3.4: where it sits (the docs above it they can open) and the pages inside it.
+    const [path, pages] = await Promise.all([trailFor(doc.id, userId), pagesOf(doc.id, userId)]);
     return {
         id: doc.id,
         title,
+        path,
+        pages: pages.map((p) => ({ id: p.id, title: p.title, pages: p.pages })),
         markdown: docJsonToMarkdown(json),
         subject,
         topicId: topic?.id ?? null,
@@ -135,6 +140,8 @@ export interface CreateAgentDocInput {
     revise?: boolean | undefined;
     /** false: don't refuse a ```mermaid block Mermaid can't parse (AI practice notes; agents always check). */
     checkMermaid?: boolean | undefined;
+    /** DOC_PAGES_PLAN: a page inside this doc (the user's own, not in the trash). */
+    parentId?: string | undefined;
 }
 
 /** A doc made by createDocFromMarkdown. */
@@ -192,10 +199,16 @@ export async function createDocFromMarkdown(userId: string, input: CreateAgentDo
     const reports = parsed.canvases;
     const canvasIds = canvasIdsOf(blocks);
     const yjsState = blocksDocState(blocks, boards, { title, coverImage: null });
+    // DOC_PAGES_PLAN §3.4: a page goes after its parent's last page, shared with the parent's people (D6).
+    const parent = input.parentId ? await assertParentForNewPage(userId, input.parentId) : null;
     const doc = await prisma.doc.create({
-        data: { userId, title, yjsState, previewState: generatePreviewState(yjsState), cloudImages: [] },
+        data: { userId, title, yjsState, previewState: generatePreviewState(yjsState), cloudImages: [], ...(parent ? { parentId: parent.id, position: await nextPosition(parent.id) } : {}) },
         select: { id: true, title: true },
     });
+    if (parent) {
+        const people = await prisma.docCollaborator.findMany({ where: { docId: parent.id }, select: { userId: true, role: true } });
+        if (people.length) await prisma.docCollaborator.createMany({ data: people.map((p) => ({ docId: doc.id, userId: p.userId, role: p.role })), skipDuplicates: true });
+    }
 
     let topicId: string | null = null;
     let attached: TopicBeforeAttach | undefined;
@@ -243,7 +256,8 @@ export async function createDocForAgent(actor: AgentActor, input: CreateAgentDoc
     // Agents always get the Mermaid check, whatever the request carried.
     const { attached: _undoOnly, ...doc } = await createDocFromMarkdown(actor.userId, { ...input, checkMermaid: true }, async (made) => {
         const onPath = made.attached ? ' as a topic of its path' : '';
-        const summary = `Created ${quoted(made.title)}${made.subject ? ` in ${made.subject.name}` : ''}${onPath}${input.revise ? ' and scheduled it for revision' : ''}`;
+        const inside = input.parentId ? (await prisma.doc.findUnique({ where: { id: input.parentId }, select: { title: true } }))?.title : null;
+        const summary = `Created ${quoted(made.title)}${inside ? ` inside ${quoted(inside, 60)}` : ''}${made.subject ? ` in ${made.subject.name}` : ''}${onPath}${input.revise ? ' and scheduled it for revision' : ''}`;
         const undoData = made.attached ? { topicId: made.topicId, attached: { ...made.attached } } : { topicId: made.topicId };
         editId = await recordAgentEdit(actor, { kind: 'doc_create', summary, docId: made.id, entityId: made.id, undoData });
     });

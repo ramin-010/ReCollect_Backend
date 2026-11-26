@@ -64,6 +64,8 @@ const createSchema = z.object({
     subjectId: zId.optional(),
     topicId: zId.optional(),
     revise: z.boolean().optional(),
+    // DOC_PAGES_PLAN: a page inside a doc of theirs.
+    parentId: zId.optional(),
 });
 
 /** POST /api/agent/docs {title, markdown, subjectId?, topicId?, revise?} → 201 { id, title, subject, topicId, nextRevision, topicStatus?, editId, canvases? } */

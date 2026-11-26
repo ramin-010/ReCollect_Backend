@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import { api, createLearner } from '../helpers/learning';
 import { orderTree } from '../../src/services/docs/docTree.service';
+import { asAgent, createTestToken } from '../helpers/agent';
 
 const make = async (user: { id: string }, title: string, parentId?: string) => {
     const res = await api(user).post('/api/docs', { title, ...(parentId ? { parentId } : {}) });
@@ -42,6 +43,18 @@ describe('pages inside docs (DOC_PAGES_PLAN stage 1)', () => {
         const pages = (await api(user).get(`/api/docs/${a._id}`)).body.data.pages as Array<{ title: string }>;
         expect(pages.map((p) => p.title)).toEqual(['One', 'Two', 'Three']);
         expect((await api(other).post('/api/docs', { title: 'X', parentId: a._id })).status).toBe(403);
+    });
+
+    it('an agent makes a page inside a doc; reading it says its path, reading the parent its pages', async () => {
+        const user = await createLearner();
+        const agent = asAgent((await createTestToken(user)).token, 'Claude');
+        const a = await make(user, 'Kafka');
+        const made = await agent.post('/api/agent/docs', { title: 'Partitions', markdown: 'How a topic splits.', parentId: a._id });
+        expect(made.status, JSON.stringify(made.body)).toBe(201);
+        const page = await agent.get(`/api/agent/docs/${made.body.data.id}`);
+        expect(page.body.data.path).toEqual([{ id: a._id, title: 'Kafka' }]);
+        const parent = await agent.get(`/api/agent/docs/${a._id}`);
+        expect(parent.body.data.pages).toEqual([{ id: made.body.data.id, title: 'Partitions', pages: 0 }]);
     });
 
     it('orderTree: depth-first, siblings by position', () => {
