@@ -16,7 +16,7 @@ describe('the manager conversations', () => {
         await addMessage(me.id, t._id, {
             role: 'assistant',
             text: '6 h of study, 2 topics done.',
-            tools: [{ name: 'get_mirror', level: 1, input: '{}', result: 'Hours per week…', ok: true }],
+            tools: [{ name: 'get_standing', level: 1, input: '{}', result: 'Hours per week…', ok: true }],
             costUsd: 0.0312,
         });
 
@@ -27,7 +27,7 @@ describe('the manager conversations', () => {
             ['user', null],
             ['assistant', 0.0312],
         ]);
-        expect(read.body.data.messages[1].tools[0]).toMatchObject({ name: 'get_mirror', level: 1, ok: true });
+        expect(read.body.data.messages[1].tools[0]).toMatchObject({ name: 'get_standing', level: 1, ok: true });
 
         expect((await api(other).get(`/api/assistant/threads/${t._id}`)).status).toBe(404);
         expect((await api(other).delete(`/api/assistant/threads/${t._id}`)).status).toBe(404);

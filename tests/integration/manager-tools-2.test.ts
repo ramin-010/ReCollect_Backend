@@ -60,7 +60,7 @@ describe('reminders', () => {
 });
 
 describe('Recall results and sharing (reads)', () => {
-    it("get_recall's route: the finished sets, the missed questions with the grader's words, open weak spots; his own topics only", async () => {
+    it("get_quiz_results' route: the finished sets, the missed questions with the grader's words, open weak spots; his own topics only", async () => {
         const [user, other] = await Promise.all([createLearner(IST), createTestUser()]);
         const subject = await createSubjectRow(user.id);
         const { doc, topic } = await createTopicRow(user.id, subject.id, 'Heaps');
