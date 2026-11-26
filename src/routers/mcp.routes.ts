@@ -22,13 +22,17 @@ function unauthorized(res: Response, message: string, invalid = false): void {
     res.status(401).json({ jsonrpc: '2.0', error: { code: -32001, message }, id: null });
 }
 
-// Hosting P1-4: knocking without a valid token is limited per address (the refusals count; a valid token passes freely).
-router.post('/mcp', doorLimit('mcp'), express.json({ limit: '2mb' }), async (req: Request, res: Response) => {
+// Hosting P1-4: knocking without a valid token is limited per address. Only a refused request meets the limiter
+// (TOOL_ACCESS_PLAN stage 0, the bench): every claude.ai or ChatGPT user's calls come from that host's few addresses,
+// and a limiter in front of every request counts the ones in flight too, so busy hours would answer valid tokens 429.
+const knock = doorLimit('mcp');
+router.post('/mcp', express.json({ limit: '2mb' }), async (req: Request, res: Response) => {
     const token = bearer(req);
-    if (!token || !isApiTokenFormat(token)) return unauthorized(res, 'Add a Kaaga token: Authorization: Bearer rcl_… (Settings → Agents).');
+    const refuse = (message: string, invalid = false) => knock(req, res, () => unauthorized(res, message, invalid));
+    if (!token || !isApiTokenFormat(token)) return refuse('Add a Kaaga token: Authorization: Bearer rcl_… (Settings → Agents).');
     const row = await findApiToken(token);
-    if (!row || row.revokedAt) return unauthorized(res, 'This token is not valid any more. Make a new one in Settings → Agents.', true);
-    if (row.expiresAt && row.expiresAt.getTime() <= Date.now()) return unauthorized(res, 'This token has expired: refresh it, or sign in again.', true);
+    if (!row || row.revokedAt) return refuse('This token is not valid any more. Make a new one in Settings → Agents.', true);
+    if (row.expiresAt && row.expiresAt.getTime() <= Date.now()) return refuse('This token has expired: refresh it, or sign in again.', true);
     try {
         // The tools call this server on the address it listens on, never the public one (hosting P1-9).
         await serveMcpHttp(req, res, { baseUrl: internalUrl(req.socket.localPort), token, agentName: row.name || 'Remote MCP' });
