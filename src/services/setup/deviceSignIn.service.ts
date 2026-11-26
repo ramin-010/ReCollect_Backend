@@ -7,7 +7,7 @@
 //   setupMe        GET  /api/setup/me                    (token)    → who this PC is signed in as
 //   disconnect     POST /api/setup/disconnect            (token)    → the PC's own token ends itself
 //
-// `npx recollect-setup` holds the device code (only its hash is kept here) and shows the user code; the person opens
+// `npx kaaga-setup` holds the device code (only its hash is kept here) and shows the user code; the person opens
 // the page, checks the code against their terminal and approves while signed in. The command's next poll gets a token
 // of its own, made then and shown that once (never stored in plain text), with every scope an agent may have (not the
 // phone's `ambient`). A request lives 10 minutes and is used once. Phishing (someone sends a link to approve): the page
@@ -112,7 +112,7 @@ export async function pollSignIn(deviceCode: unknown, now: Date = new Date()): P
     const active = await prisma.apiToken.count({ where: { userId, revokedAt: null } });
     if (active >= ACTIVE_TOKEN_LIMIT) return { status: 'denied', message: `Your account has ${ACTIVE_TOKEN_LIMIT} active tokens: end one in Settings › Agents, then run the command again.` };
     const { token, tokenHash, prefix } = generateApiToken();
-    const name = `${row.deviceName} · recollect-setup`.slice(0, API_TOKEN_NAME_MAX);
+    const name = `${row.deviceName} · kaaga-setup`.slice(0, API_TOKEN_NAME_MAX);
     const made = await prisma.apiToken.create({ data: { userId, name, scopes: [...SETUP_SCOPES], tokenHash, prefix }, select: { id: true } });
     await prisma.deviceSignIn.update({ where: { id: row.id }, data: { apiTokenId: made.id }, select: { id: true } });
     const user = await prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { name: true } });
@@ -184,7 +184,7 @@ export async function setupMe(userId: string, auth: RequestAuth | undefined): Pr
     return { name: firstName(user.name), tokenName: token?.name ?? null, scopes: [...(auth?.scopes ?? [])], setup: 1 };
 }
 
-/** POST /api/setup/disconnect (the PC's token, `recollect-setup remove`): the token ends itself; nothing else changes. */
+/** POST /api/setup/disconnect (the PC’s token, `kaaga-setup remove`): the token ends itself; nothing else changes. */
 export async function disconnect(userId: string, auth: RequestAuth | undefined, now: Date = new Date()): Promise<{ ended: true }> {
     if (auth?.via !== 'token') throw new ErrorResponse(400, 'Only a token can end itself: use Settings › Agents');
     await revokeApiToken(userId, auth.tokenId, now);
