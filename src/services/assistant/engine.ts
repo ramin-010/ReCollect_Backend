@@ -1,5 +1,5 @@
 // The manager (MANAGER_AND_DOCS_PLAN §3.4): one message in, a tool loop on Claude over the
-// catalogue (./catalogue.ts: the MCP tools themselves, acting through this API as "Ask AI"), the
+// catalogue (./catalogue.ts: the MCP tools themselves, acting through this API as "Ask Kaaga"), the
 // answer out. Claude Sonnet 5.5 at low effort (the owner's choice, ASSISTANT_MODEL overrides); the tool
 // list and the rules are the cached start, the brief follows them. At most MAX_ROUNDS model calls
 // per message; the monthly cap is checked before each; every call is metered as `assistant`. A
@@ -16,7 +16,7 @@ import { aiAccessFor, aiPaused, noteAiFailure } from '../claude/access';
 import { allowancePaused } from '../claude/allowance';
 import { isUnderCap, recordAiUsage } from '../claude/usage.service';
 import type { BetaCreateParams } from '../recall/prompts';
-import { ASK_AI_AGENT } from '../actions/actions.service';
+import { ASK_AI_AGENTS } from '../actions/actions.service';
 import { openCatalogueFor, type Catalogue } from './catalogue';
 import { fakeClientFor } from './fakeModel';
 import type { ToolUseJson } from './threads.service';
@@ -31,7 +31,7 @@ const HISTORY_MESSAGES = 20;
 export const assistantModel = (): string => process.env['ASSISTANT_MODEL']?.trim() || ASSISTANT_DEFAULT_MODEL;
 
 export const ASSISTANT_RULES = [
-    "You are Ask AI, the manager inside Recollect: the user's learning app and the record of their work. You act for them through the tools; the tools read and change their plan, docs, tasks, settings and record. Answer in short plain sentences.",
+    "You are Kaaga, the assistant inside Kaaga (the user opens you as Ask Kaaga): their learning app and the record of their work. You act for them through the tools; the tools read and change their plan, docs, tasks, settings and record. Answer in short plain sentences.",
     'Levels: a read tool changes nothing; a change happens at once and they can undo it from Home → From your agent; an action that needs their tap (empty_trash) only asks: it waits under Suggested on their Home until they tap "Do it". Never say such an action is done.',
     'Numbers about them come from tools, never from memory. Search before you create (search_docs before a new doc). When you changed something, end with what changed, one line each. If a tool fails, say what failed and what you did instead.',
     'Use the tool made for a job instead of many small calls: a pile of overdue reviews is one spread_backlog call (it spreads them by their daily budget); never move reviews one by one to spread them.',
@@ -115,7 +115,7 @@ const resultLine = (text: string) =>
         200
     );
 
-/** The card a level-3 tool left waiting (its action has the tool's name; else the newest of Ask AI's). */
+/** The card a level-3 tool left waiting (its action has the tool's name; else the newest of Ask Kaaga's). */
 async function pendingAction(userId: string, toolName: string): Promise<string | null> {
     const byName = await prisma.suggestion.findFirst({
         where: { userId, kind: 'action', status: 'pending', payload: { path: ['action'], equals: toolName } },
@@ -127,13 +127,13 @@ async function pendingAction(userId: string, toolName: string): Promise<string |
     return newest?.id ?? null;
 }
 
-/** The newest edit "Ask AI" made since `since` (the row's Undo on the page). */
+/** The newest edit "Ask Kaaga" made since `since` (the row's Undo on the page). */
 async function editSince(userId: string, since: Date): Promise<string | null> {
-    const edit = await prisma.agentEdit.findFirst({ where: { userId, agentName: ASK_AI_AGENT, createdAt: { gte: since } }, orderBy: { createdAt: 'desc' }, select: { id: true } });
+    const edit = await prisma.agentEdit.findFirst({ where: { userId, agentName: { in: [...ASK_AI_AGENTS] }, createdAt: { gte: since } }, orderBy: { createdAt: 'desc' }, select: { id: true } });
     return edit?.id ?? null;
 }
 
-/** The buddy's voice for Ask AI: its character and notebook, when his buddy is on (null otherwise). */
+/** The buddy's voice for Ask Kaaga: its character and notebook, when his buddy is on (null otherwise). */
 /** The chat on personal things (stage 5, V3). */
 // Stage 5b: a to-do with a day is put on that day's list by the buddy itself (with a quiet reminder early): the chat
 // neither adds it nor offers to, so it is never there twice.
@@ -201,7 +201,7 @@ export async function runAssistant(input: AssistantInput): Promise<AssistantTurn
         const second = input.doc
             ? { type: 'text' as const, text: input.doc.text, cache_control: { type: 'ephemeral' as const } }
             : await catalogue.call('get_brief', {}).then((brief) => ({ type: 'text' as const, text: `Where they stand now (get_brief):\n${brief.isError ? '(the brief could not load)' : brief.text}` }));
-        // B5 (BUDDY_MEMORY_PLAN §3.4): with his buddy on, Ask AI is the same buddy: its character and its notebook (the portrait is in the brief).
+        // B5 (BUDDY_MEMORY_PLAN §3.4): with his buddy on, Ask Kaaga is the same buddy: its character and its notebook (the portrait is in the brief).
         const buddy = input.doc ? null : await buddyVoice(userId);
         // Stage 5 (M1, M2): with the loop on, what the buddy knows that bears on this message.
         const knows = buddy ? await buddyKnows(userId, input.text) : null;

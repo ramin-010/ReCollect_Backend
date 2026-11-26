@@ -1,4 +1,4 @@
-// Writes a Revise import plan (./reviseImport.ts) into one Recollect account, in one transaction:
+// Writes a Revise import plan (./reviseImport.ts) into one Kaaga account, in one transaction:
 // subjects first, then notes and links with their revisions, tasks, quick notes. Every row made is
 // remembered in ImportedRow, so the next run's plan leaves it out. Used by scripts/import-revise.ts.
 import { prisma, type TxClient } from '../../db/prisma';

@@ -66,7 +66,7 @@ export interface TaskDrop {
 /** Who adds them: the buddy, by its name (Home's "From your agent" row). */
 export async function buddyActor(userId: string, db: TxClient | typeof prisma = prisma): Promise<AgentActor> {
     const state = await db.buddyState.findUnique({ where: { userId }, select: { name: true } });
-    return { userId, agentName: state?.name || 'Your buddy', tokenId: null };
+    return { userId, agentName: state?.name || 'Kaaga', tokenId: null };
 }
 
 /**

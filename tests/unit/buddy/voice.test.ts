@@ -25,10 +25,11 @@ describe('the buddy’s voice', () => {
     });
 
     it('the character is for the account’s own person: its first name, else "the user"; no one’s life story', () => {
-        expect(characterPrompt({ name: null, tone: 'candid', person: '  Sam Lee ' })).toMatch(/^You are Sam's buddy inside Recollect/);
+        // KAAGA_REBRAND_PLAN D2: a buddy with no name of its own is Kaaga.
+        expect(characterPrompt({ name: null, tone: 'candid', person: '  Sam Lee ' })).toMatch(/^You are "Kaaga", Sam's buddy inside Kaaga/);
         expect(characterPrompt({ name: 'Pip', tone: 'gentle', person: 'Sam' })).toMatch(/^You are "Pip", Sam's buddy/);
         const none = characterPrompt({ name: null, tone: 'candid', person: '   ' });
-        expect(none).toMatch(/^You are the user's buddy/);
+        expect(none).toMatch(/^You are "Kaaga", the user's buddy/);
         // Who the person is comes from the portrait and the memories, never from this text.
         expect(none).not.toMatch(/India|full-time job|job offer|software engineer/);
     });

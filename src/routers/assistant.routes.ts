@@ -1,4 +1,4 @@
-// /api/assistant: the Ask AI manager's conversations (cookie only: not on the token list).
+// /api/assistant: the Ask Kaaga manager's conversations (cookie only: not on the token list).
 import express from 'express';
 import { authOnce, cookieOnly } from '../middlwares/scopes';
 import { deleteThreadHandler, getThreadHandler, listThreadsHandler, sendMessageHandler, stopTurnHandler } from '../controllers/assistant.controller';

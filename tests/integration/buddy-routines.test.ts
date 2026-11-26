@@ -64,7 +64,7 @@ describe('routines', () => {
         expect((await prisma.suggestion.findUniqueOrThrow({ where: { id: undated.id } })).status).toBe('pending');
         const task = await prisma.todo.findFirstOrThrow({ where: { userId: user.id, title: 'Send the form' } });
         const edit = await prisma.agentEdit.findFirstOrThrow({ where: { userId: user.id, kind: 'task_create', entityId: task.id } });
-        expect(edit.agentName).toBe('Your buddy');
+        expect(edit.agentName).toBe('Kaaga');
         expect((await api(user).post(`/api/agent/edits/${edit.id}/undo`)).status).toBe(200);
         expect(await prisma.todo.count({ where: { id: task.id } })).toBe(0);
         expect((await api(user).get('/api/buddy/you')).body.data.routines[0]).toMatchObject({ runs: 1 });

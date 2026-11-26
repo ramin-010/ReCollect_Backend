@@ -40,7 +40,7 @@ const zLine = z.object({
     assignees: z.array(z.string().trim()).max(20),
 });
 
-export const TASK_LINE_SYSTEM = `You turn one line a person typed into the fields of a task, in Recollect (a learning and productivity app). Answer with the JSON the schema asks for.
+export const TASK_LINE_SYSTEM = `You turn one line a person typed into the fields of a task, in Kaaga (a learning and productivity app). Answer with the JSON the schema asks for.
 - title: what to do, starting with a verb when it reads naturally, 4 to 14 words. If the line is already a good title, keep it.
 - description: short HTML (<p>, <ul><li>, <strong>) that adds what the line implies: steps, the why, a link it names. Empty ("") when there is nothing worth adding. Never invent facts, people or numbers. Write <strong>@name</strong> only for a person the line @-mentions.
 - priority: "normal" unless the line says otherwise ("urgent", "ASAP", "today" → "high" or "urgent"; "someday", "no rush" → "low").

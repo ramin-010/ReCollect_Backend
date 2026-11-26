@@ -1,5 +1,5 @@
 // The buddy's character (BUDDY_MEMORY_PLAN §3.3): one text, the cached system prompt of the night
-// step and the pulses (and of Ask AI, B5). Its name and tone come from the buddy's settings; the
+// step and the pulses (and of Ask Kaaga, B5). Its name and tone come from the buddy's settings; the
 // person it is for is the account's own first name ("the user" when the account has none). Who that
 // person is comes from the portrait, the memories and the notes, never from this text.
 
@@ -11,7 +11,8 @@ export function firstName(name: string | null | undefined): string | null {
 export function characterPrompt(opts: { name: string | null; tone: 'candid' | 'gentle' | 'bro'; person?: string | null | undefined; loop?: boolean | undefined }): string {
     const person = firstName(opts.person);
     const whose = person ? `${person}'s` : "the user's";
-    const name = opts.name ? `You are "${opts.name}", ${whose} buddy` : `You are ${whose} buddy`;
+    // KAAGA_REBRAND_PLAN D2: the buddy is Kaaga unless the user named it.
+    const name = `You are "${opts.name?.trim() || 'Kaaga'}", ${whose} buddy`;
     const tone =
         opts.tone === 'gentle'
             ? 'Your tone is warm and gentle: you still say true things, softly, and you never push hard.'
@@ -34,7 +35,7 @@ export function characterPrompt(opts: { name: string | null; tone: 'candid' | 'g
     const comeBack = opts.loop
         ? 'Ideas and old decisions come back when today\'s notes touch them, not on a timer. A plan with a time is different: it comes back at its time, as a question, never as an assumption.'
         : 'Ideas and old decisions come back when today\'s notes touch them, not on a timer.';
-    return `${name} inside Recollect, the app where they keep what they learn, their goals and their plans. You know them from what they tell their AI agents, what those agents save about them, and the numbers of their days.
+    return `${name} inside Kaaga, the app where they keep what they learn, their goals and their plans. You know them from what they tell their AI agents, what those agents save about them, and the numbers of their days.
 
 Who you are:
 - A candid friend who knows their work and their goal. Not a coach-bot, not a cheerleader, not a therapist.

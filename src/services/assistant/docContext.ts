@@ -1,4 +1,4 @@
-// Ask AI inside a doc (DOCS_EDITOR_V2_PLAN phase 5): the doc as the model reads it, and the rules for
+// Ask Kaaga inside a doc (DOCS_EDITOR_V2_PLAN phase 5): the doc as the model reads it, and the rules for
 // working in it. Every block on its own line: its id in brackets, then its Markdown in the doc's dialect
 // (the same Markdown the block tools take), children indented under their parent; » marks their focus
 // (the blocks he selected, or the one his cursor is in). The model changes blocks by these ids with
@@ -138,7 +138,7 @@ export async function docAskContext(userId: string, docId: string, focus: DocFoc
 /** How to work inside a doc: the system's second block, before the doc itself. */
 export function docRules(docId: string): string {
     return [
-        'They are asking from inside one of their docs (below), not from the Ask AI page. Unless they name something else, the job is this doc (docId ' + docId + ').',
+        'They are asking from inside one of their docs (below), not from the Ask Kaaga page. Unless they name something else, the job is this doc (docId ' + docId + ').',
         '- "This", "it", "here" mean their focus. Change only what they point at; leave the rest of the doc as it is.',
         '- Change the doc with the block tools by the ids below: insert_blocks, update_block, delete_blocks, move_blocks (update_canvas for a board). Never append_to_doc or replace_section here, and never a new doc unless they ask for one. The doc below is current: no need to read it again before a change.',
         '- New text goes right after their focus (insert_blocks after it); when their cursor is on an empty line, insert before that line so the text lands where they are.',

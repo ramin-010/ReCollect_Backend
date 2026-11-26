@@ -1,5 +1,5 @@
 // Ask AI inside a doc (DOCS_EDITOR_V2_PLAN phase 5) with a fake Claude: the doc and his focus go to the
-// model instead of the brief; its block tools write into the doc as "Ask AI" (Undo takes it back); the
+// model instead of the brief; its block tools write into the doc as "Ask Kaaga" (Undo takes it back); the
 // thread belongs to the doc and stays off /ask; metered as doc_ask; a viewer can't ask in the doc.
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
@@ -98,7 +98,7 @@ async function noteFor(cookie: string[]) {
 }
 
 describe('Ask AI inside a doc', () => {
-    it('reads the doc and his focus, writes after it as "Ask AI"; the thread stays with the doc; Undo takes it back', async () => {
+    it('reads the doc and his focus, writes after it as "Ask Kaaga"; the thread stays with the doc; Undo takes it back', async () => {
         const user = await createTestUser();
         const cookie = authCookie(user);
         const { docId, headingId, paragraphId } = await noteFor(cookie);
@@ -129,7 +129,7 @@ describe('Ask AI inside a doc', () => {
         // Written into the doc as Ask AI, right after his line.
         expect((await stored(docId)).map((b) => b.type)).toEqual(['heading', 'paragraph', 'bulletListItem']);
         const editId = got[1]!.data.editId as string;
-        expect(await prisma.agentEdit.findUniqueOrThrow({ where: { id: editId } })).toMatchObject({ agentName: 'Ask AI', docId, kind: 'doc_blocks' });
+        expect(await prisma.agentEdit.findUniqueOrThrow({ where: { id: editId } })).toMatchObject({ agentName: 'Ask Kaaga', docId, kind: 'doc_blocks' });
 
         // The thread is the doc's: not listed on /ask; the spend is doc_ask.
         const thread = await prisma.assistantThread.findUniqueOrThrow({ where: { id: got[0]!.data._id } });

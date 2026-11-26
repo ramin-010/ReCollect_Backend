@@ -5,7 +5,7 @@ import { addDays, dayOf, type DayString } from '../learning';
 import { zonedWallTimeToDate } from '../../utils/timezone';
 import { badRequest } from '../learning/http';
 
-/** Whose word a connected assistant passed on (§4.4); null = Recollect heard it itself, or an older build (passed on). */
+/** Whose word a connected assistant passed on (§4.4); null = Kaaga heard it itself, or an older build (passed on). */
 export type Basis = 'said' | 'inferred';
 
 /** What an update says about something known (§4.2); stored on the note as `updateKind`. */
@@ -49,7 +49,7 @@ export function saidTimeOf(saidOn: string | null | undefined, ctx: { today: DayS
     return { at: noon.getTime() > now.getTime() ? now : noon, dayOnly: true, day };
 }
 
-/** One statement for ordering: when it was said (and whether only its day is known), and when it reached Recollect. */
+/** One statement for ordering: when it was said (and whether only its day is known), and when it reached Kaaga. */
 export interface Statement {
     at: Date;
     dayOnly: boolean;

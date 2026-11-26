@@ -11,7 +11,7 @@ export const SECRET = '[secret]';
 /** Known key and token shapes (each matched as a whole word). */
 const KEY_PATTERNS: readonly RegExp[] = [
     /\bsk-(?:ant-)?[A-Za-z0-9_-]{16,}/g, // Anthropic, OpenAI
-    /\brcl_[A-Za-z0-9_-]{16,}/g, // Recollect's own access tokens
+    /\brcl_[A-Za-z0-9_-]{16,}/g, // Kaaga's own access tokens
     /\b(?:ghp|gho|ghs|ghu|ghr)_[A-Za-z0-9]{20,}/g, // GitHub
     /\bgithub_pat_[A-Za-z0-9_]{20,}/g,
     /\bglpat-[A-Za-z0-9_-]{16,}/g, // GitLab

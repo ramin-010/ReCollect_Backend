@@ -43,15 +43,15 @@ export function fileSize(bytes: number): string {
     return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-// Recollect's mark (components/brand/Logo.tsx), in ink.
+// Kaaga's mark (components/brand/Logo.tsx), in ink.
 const MARK = `<svg class="mark" viewBox="12 10 32 28" width="44" height="38" aria-hidden="true"><path d="M16 24C16 19 19 16 22 16C25 16 26.5 17.5 28 19.5C29.5 17.5 31 16 34 16C37 16 40 19 40 24C40 29 37 32 34 32C31 32 29.5 30.5 28 28.5C26.5 30.5 25 32 22 32C19 32 16 29 16 24Z" fill="currentColor" opacity="0.12"/><path d="M16 24C16 19 19 16 22 16C25 16 26.5 17.5 28 19.5M28 19.5C29.5 17.5 31 16 34 16C37 16 40 19 40 24C40 29 37 32 34 32C31 32 29.5 30.5 28 28.5M28 28.5C26.5 30.5 25 32 22 32C19 32 16 29 16 24M28 19.5V28.5" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/><circle cx="22" cy="16" r="2.5" fill="currentColor"/><circle cx="34" cy="16" r="2.5" fill="currentColor"/><circle cx="28" cy="24" r="3" fill="currentColor"/></svg>`;
 
 /** The page. `apkBytes`: the app's file size when this server has it, else null. */
 export function connectPage(apkBytes: number | null): string {
     const download = apkBytes !== null
-        ? `<a class="btn main" href="/phone/recollect.apk" download>Download the phone app</a>
+        ? `<a class="btn main" href="/phone/kaaga.apk" download>Download the phone app</a>
       <p class="meta">Android, ${fileSize(apkBytes)}. Open the file to install it: the phone asks once to allow installs from Chrome. Then come back here and tap Open the phone app.</p>`
-        : `<p class="meta">This server doesn't have the phone app's file yet. Install it from the computer (see android/README.md in Recollect), then tap Open the phone app.</p>`;
+        : `<p class="meta">This server doesn't have the phone app's file yet. Install it from the computer (see android/README.md in Kaaga), then tap Open the phone app.</p>`;
     return `<!doctype html>
 <html lang="en">
 <head>
@@ -59,7 +59,7 @@ export function connectPage(apkBytes: number | null): string {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
 <meta name="color-scheme" content="light dark">
-<title>Connect this phone · Recollect</title>
+<title>Connect this phone · Kaaga</title>
 <style>
   :root { --page:#FFFFFF; --ink-1:#2C2C2B; --ink-2:#5F5E59; --ink-3:#73706B; --ring:#E3E2DF; --main:#2C2C2B; --main-hover:#3F3E3C; --on-main:#FFFFFF; --surface:#FFFFFF; --accent:#1F6FD1; --focus:#2383E2; }
   @media (prefers-color-scheme: dark) { :root { --page:#191919; --ink-1:#F0EFED; --ink-2:#ADA9A3; --ink-3:#8E8B86; --ring:#383836; --main:#E6E5E3; --main-hover:#F0EFED; --on-main:#191919; --surface:#202020; --accent:#5B9BEA; } }
@@ -101,13 +101,13 @@ export function connectPage(apkBytes: number | null): string {
   </div>
   <div id="no-code" hidden>
     <h1>This link has no connect code</h1>
-    <p>Make a new code on your computer: Recollect → Settings → Phone app, then scan it with this phone's camera.</p>
+    <p>Make a new code on your computer: Kaaga → Settings → Phone app, then scan it with this phone's camera.</p>
   </div>
   <div id="not-android" hidden>
     <h1>Open this on your Android phone</h1>
-    <p>The phone app is for Android. Scan the code in Recollect → Settings → Phone app with the phone's camera.</p>
+    <p>The phone app is for Android. Scan the code in Kaaga → Settings → Phone app with the phone's camera.</p>
   </div>
-  <p class="meta foot">The code only lets the app read the picture of your day and its lines. End it any time in Recollect → Settings → Agents (&ldquo;Phone app&rdquo;).</p>
+  <p class="meta foot">The code only lets the app read the picture of your day and its lines. End it any time in Kaaga → Settings → Agents (&ldquo;Phone app&rdquo;).</p>
 </main>
 <script>${SCRIPT}</script>
 </body>

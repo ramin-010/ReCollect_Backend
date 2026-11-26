@@ -9,14 +9,19 @@ import { CONNECT_PAGE_HEADERS, connectPage } from '../services/ambient/connectPa
 const router = express.Router();
 
 /**
- * The app's file: RECOLLECT_APK_PATH when set; else the copy committed with the backend (assets/phone, written by
- * android/build.mjs on every release build, so a backend deploy carries the newest app); else the Android build folder.
+ * The app's file: KAAGA_APK_PATH (or the older RECOLLECT_APK_PATH) when set; else the copy committed with the backend
+ * (assets/phone, written by android/build.mjs on every release build, so a backend deploy carries the newest app:
+ * kaaga.apk since the rename, recollect.apk before it); else the Android build folder.
  */
 export function phoneApkPath(): string {
-    const env = process.env.RECOLLECT_APK_PATH?.trim();
+    const env = (process.env.KAAGA_APK_PATH ?? process.env.RECOLLECT_APK_PATH)?.trim();
     if (env) return env;
-    const shipped = path.resolve(__dirname, '..', '..', 'assets', 'phone', 'recollect.apk');
-    return fs.existsSync(shipped) ? shipped : path.resolve(__dirname, '..', '..', '..', 'android', 'build', 'recollect.apk');
+    for (const name of ['kaaga.apk', 'recollect.apk']) {
+        const shipped = path.resolve(__dirname, '..', '..', 'assets', 'phone', name);
+        if (fs.existsSync(shipped)) return shipped;
+    }
+    const built = path.resolve(__dirname, '..', '..', '..', 'android', 'build');
+    return fs.existsSync(path.join(built, 'kaaga.apk')) ? path.join(built, 'kaaga.apk') : path.join(built, 'recollect.apk');
 }
 
 function apkSize(): number | null {
@@ -32,12 +37,13 @@ router.get('/phone/connect', (_req, res) => {
     res.set(CONNECT_PAGE_HEADERS).send(connectPage(apkSize()));
 });
 
-router.get('/phone/recollect.apk', (_req, res) => {
+// The app's file under its name (and the old name, for links already shared).
+router.get(['/phone/kaaga.apk', '/phone/recollect.apk'], (_req, res) => {
     if (apkSize() === null) {
         res.status(404).type('text/plain').send("This server doesn't have the phone app's file yet.");
         return;
     }
-    res.set({ 'Content-Type': 'application/vnd.android.package-archive', 'Content-Disposition': 'attachment; filename="recollect.apk"', 'Cache-Control': 'no-cache' });
+    res.set({ 'Content-Type': 'application/vnd.android.package-archive', 'Content-Disposition': 'attachment; filename="kaaga.apk"', 'Cache-Control': 'no-cache' });
     res.sendFile(phoneApkPath());
 });
 

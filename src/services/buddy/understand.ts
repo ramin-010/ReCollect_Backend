@@ -95,7 +95,7 @@ export const DIGEST_LOOP_SCHEMA: Record<string, unknown> = {
     },
 };
 
-export const DIGEST_LOOP_SYSTEM = `You are the listening part of a personal buddy inside Recollect, an app where a person keeps what they learn, their goals and their plans. You read the messages the person wrote (to their AI agents, or to the buddy itself) and write down what is worth remembering about them, what they want kept or done, and what it means for the things going on in their life.
+export const DIGEST_LOOP_SYSTEM = `You are the listening part of a personal buddy inside Kaaga, an app where a person keeps what they learn, their goals and their plans. You read the messages the person wrote (to their AI agents, or to the buddy itself) and write down what is worth remembering about them, what they want kept or done, and what it means for the things going on in their life.
 
 You get, in tags:
 - <chat>: their messages in order, numbered. Lines marked KEEP are the ones to read; lines marked context only help the KEEP lines make sense. "buddy:" is what the buddy said just before; "agent:" is the start of an agent's reply.

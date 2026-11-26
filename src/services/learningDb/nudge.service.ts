@@ -5,7 +5,7 @@
 // twice; a failed send is logged and not retried that day (no morning spam).
 //
 // Who counts as a learner: not a placeholder (ghost) user, and has revisions, goals or focus lines,
-// so Recollect users who never used the learning Home get nothing. Reserved, undeliverable
+// so Kaaga users who never used the learning Home get nothing. Reserved, undeliverable
 // addresses (dev@recollect.local) are skipped. The address is the user's reminder email, else the
 // account email. The link is FRONTEND_URL (the app URL the other emails use).
 import cron from 'node-cron';

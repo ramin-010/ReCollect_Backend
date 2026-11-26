@@ -3,7 +3,7 @@
 import { z } from 'zod';
 import { requireUser } from '../../middlwares/auth';
 import { agentActor } from '../../services/agent/agentEditLog';
-import { ASK_AI_AGENT, spreadBacklog } from '../../services/actions/actions.service';
+import { isAskAiAgent, spreadBacklog } from '../../services/actions/actions.service';
 import { recallResults } from '../../services/recall/recallResults.service';
 import { revisionCalendar } from '../../services/learningDb/calendar.service';
 import { assertDay } from '../../services/learning/time';
@@ -39,7 +39,7 @@ export const setReminderHandler = handler(async (req, res) => {
             .refine((b) => !!b.taskId !== !!b.title, 'Give a taskId (a reminder on that task) or a title (a new task), not both'),
         req.body
     );
-    // The chat and agents (a token, the in-app Ask AI's too) set silent ones unless he said alarm or ring; his own call rings.
+    // The chat and agents (a token, the in-app Ask Kaaga's too) set silent ones unless he said alarm or ring; his own call rings.
     ok(res, await setReminder(requireUser(req).id, { ...input, ring: input.ring ?? req.auth?.via !== 'token' }), 201);
 });
 
@@ -62,9 +62,9 @@ export const setLockPinHandler = handler(async (req, res) => {
             .strict(),
         req.body
     );
-    // Who set it: an agent's token, the in-app chat (Ask AI), or he himself.
+    // Who set it: an agent's token, the in-app chat (Ask Kaaga), or he himself.
     const actor = agentActor(req);
-    const by = req.auth?.via !== 'token' ? { setBy: 'you' as const } : { setBy: actor.agentName === ASK_AI_AGENT ? ('ask_ai' as const) : ('agent' as const), agentName: actor.agentName };
+    const by = req.auth?.via !== 'token' ? { setBy: 'you' as const } : { setBy: isAskAiAgent(actor.agentName) ? ('ask_ai' as const) : ('agent' as const), agentName: actor.agentName };
     ok(res, await setLockPin(requireUser(req).id, input, by), 201);
 });
 

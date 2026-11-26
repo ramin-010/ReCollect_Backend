@@ -140,7 +140,7 @@ export interface PublicDocJson {
     /** The page's Y.Doc (blocks + their boards; ./blocks/publicState.ts), base64. */
     state: string;
     access: PublicAccess;
-    /** Only for someone who has the doc in the app ("Open in Recollect"). */
+    /** Only for someone who has the doc in the app ("Open in Kaaga"). */
     docId: string | null;
 }
 
@@ -253,7 +253,7 @@ export async function addDocPerson(
         where: { email: { equals: email, mode: 'insensitive' }, isGhost: false },
         select: { id: true, name: true, email: true },
     });
-    if (!person) throw new LearningHttpError(404, 'NO_ACCOUNT', 'No Recollect account uses that email. They need to sign up first.');
+    if (!person) throw new LearningHttpError(404, 'NO_ACCOUNT', 'No Kaaga account uses that email. They need to sign up first.');
     if (person.id === ownerId) throw new ErrorResponse(400, 'That is you: you own this doc');
 
     const before = await prisma.docCollaborator.findUnique({ where: { docId_userId: { docId, userId: person.id } }, select: { role: true } });
@@ -453,7 +453,7 @@ export async function describeShareAction(
         return `Stop publishing ${title}: its link stops working`;
     }
     const person = await prisma.user.findFirst({ where: { email: { equals: input.email.trim(), mode: 'insensitive' }, isGhost: false }, select: { id: true, name: true } });
-    if (!person) throw new LearningHttpError(404, 'NO_ACCOUNT', 'No Recollect account uses that email. They need to sign up first.');
+    if (!person) throw new LearningHttpError(404, 'NO_ACCOUNT', 'No Kaaga account uses that email. They need to sign up first.');
     if (person.id === userId) throw new ErrorResponse(400, 'That is him: he owns this doc');
     if (input.role === 'remove') return `Remove ${person.name} from ${title}`;
     return `Share ${title} with ${person.name} (${input.email.trim()}): they ${ROLE_WORDS[input.role]}`;
@@ -470,7 +470,7 @@ export async function runShareAction(
     }
     if (input.role === 'remove') {
         const person = await prisma.user.findFirst({ where: { email: { equals: input.email.trim(), mode: 'insensitive' } }, select: { id: true, name: true } });
-        if (!person) throw new ErrorResponse(404, 'No Recollect account uses that email');
+        if (!person) throw new ErrorResponse(404, 'No Kaaga account uses that email');
         await removeDocPerson(userId, input.docId, person.id);
         return `Removed ${person.name}`;
     }

@@ -33,7 +33,7 @@ export const removePushSubscriptionHandler = handler(async (req, res) => {
 export const testPushHandler = handler(async (req, res) => {
     const userId = requireUser(req).id;
     try {
-        const line = (await morningLine(userId)) ?? { title: 'Recollect', body: 'Notifications work. Nothing is planned for today.', url: '/' };
+        const line = (await morningLine(userId)) ?? { title: 'Kaaga', body: 'Notifications work. Nothing is planned for today.', url: '/' };
         ok(res, await pushToUser(userId, line));
     } catch (err) {
         if (err instanceof PushNotConfigured) throw new ErrorResponse(503, err.message);

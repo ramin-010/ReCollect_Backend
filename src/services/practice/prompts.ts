@@ -12,7 +12,7 @@ export const PRACTICE_EFFORT = 'low' as const;
 
 const EPHEMERAL = { type: 'ephemeral' } as const;
 
-export const PRACTICE_SYSTEM_PROMPT = `You write a study note in Recollect, a learning app, about a coding problem the learner has just solved. They paste the problem (a link, the statement, or both), the code they wrote and, sometimes, what tripped them up. The note is theirs: plain, exact and short enough to skim in a minute. The app later quizzes them on it, so it must hold the idea that cracks the problem, its cost, and their own mistakes.
+export const PRACTICE_SYSTEM_PROMPT = `You write a study note in Kaaga, a learning app, about a coding problem the learner has just solved. They paste the problem (a link, the statement, or both), the code they wrote and, sometimes, what tripped them up. The note is theirs: plain, exact and short enough to skim in a minute. The app later quizzes them on it, so it must hold the idea that cracks the problem, its cost, and their own mistakes.
 
 Return two fields:
 - title: the problem's usual name, such as "Two Sum" or "Longest Substring Without Repeating Characters". At most 80 characters; no number, site name, quotes or Markdown. If the problem has no well-known name, a short descriptive one.

@@ -10,16 +10,16 @@ export const sendOtpEmail = async (
 ): Promise<boolean> => {
     try {
         const transporter = createTransporter();
-        const LOGO_LIGHT_URL = 'https://res.cloudinary.com/dsfb3jjqx/image/upload/v1773391852/recollect-logo-1024px_3_yalexb.png';
-        const LOGO_DARK_URL = 'https://res.cloudinary.com/dsfb3jjqx/image/upload/v1773391852/recollect-logo-1024px_4_crmydu.png';
+        const LOGO_LIGHT_URL = 'https://kaaga.in/icons/icon-192.png';
+        const LOGO_DARK_URL = 'https://kaaga.in/icons/icon-192.png';
         
         const TEXT_BLACK = '#37352f';
         const TEXT_GRAY = '#787774';
         const BORDER_COLOR = '#e4e4e7';
 
         const logoBlock = (size: number = 24): string => `
-<img src="${LOGO_LIGHT_URL}" class="logo-light" alt="ReCollect" width="${size}" height="${size}" style="display: block;" />
-<!--[if !mso]><!--><img src="${LOGO_DARK_URL}" class="logo-dark" alt="ReCollect" width="${size}" height="${size}" style="display: none;" /><!--<![endif]-->`;
+<img src="${LOGO_LIGHT_URL}" class="logo-light" alt="Kaaga" width="${size}" height="${size}" style="display: block;" />
+<!--[if !mso]><!--><img src="${LOGO_DARK_URL}" class="logo-dark" alt="Kaaga" width="${size}" height="${size}" style="display: none;" /><!--<![endif]-->`;
 
         const avatarBlock = (name: string, size: number = 24): string => {
             const initial = name ? name.charAt(0).toUpperCase() : 'R';
@@ -29,7 +29,7 @@ export const sendOtpEmail = async (
         const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
 
         const mailOptions = {
-            from: `"ReCollect" <${process.env.EMAIL_FROM || 'noreply@recollect.com'}>`,
+            from: `"Kaaga" <${process.env.EMAIL_FROM || 'noreply@recollect.com'}>`,
             to: email,
             subject: `Login Code: ${otp}`,
             html: `
@@ -64,10 +64,10 @@ export const sendOtpEmail = async (
                 <table role="presentation" cellspacing="0" cellpadding="0" border="0">
                   <tr>
                     <td style="padding-right: 12px;">
-                      ${avatarBlock('ReCollect Workspace', 24)}
+                      ${avatarBlock('Kaaga', 24)}
                     </td>
                     <td valign="middle">
-                      <span style="font-size: 16px; font-weight: 600; color: ${TEXT_GRAY}; letter-spacing: -0.01em;">ReCollect Workspace</span>
+                      <span style="font-size: 16px; font-weight: 600; color: ${TEXT_GRAY}; letter-spacing: -0.01em;">Kaaga</span>
                     </td>
                   </tr>
                 </table>
@@ -97,13 +97,13 @@ export const sendOtpEmail = async (
                       ${logoBlock(48)}
                     </td>
                     <td valign="top">
-                      <p style="margin: 0 0 4px; font-size: 16px; font-weight: 600; color: ${TEXT_BLACK};">ReCollect</p>
+                      <p style="margin: 0 0 4px; font-size: 16px; font-weight: 600; color: ${TEXT_BLACK};">Kaaga</p>
                       <p style="margin: 0; font-size: 15px; color: #a1a1aa; line-height: 1.4;">
-                        <span style="color: #787774; border-bottom: 1px solid #d4d4d8;">ReCollect.com</span>, the connected workspace<br />
+                        <span style="color: #787774; border-bottom: 1px solid #d4d4d8;">kaaga.in</span>, one memory for all your AIs<br />
                         for docs, projects, and wikis.
                       </p>
                       <div style="margin-top: 12px;">
-                        <span style="color: #9ca3af; font-size: 14px;">&copy; ${new Date().getFullYear()} ReCollect</span>
+                        <span style="color: #9ca3af; font-size: 14px;">&copy; ${new Date().getFullYear()} Kaaga</span>
                       </div>
                     </td>
                   </tr>

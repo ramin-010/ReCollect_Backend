@@ -10,7 +10,7 @@
 // nothing for what the picture already has; open things are closed by a later line; rows keep their ids (other lines
 // point at them); and one reader (`workRules.ts`) behind every surface, so every surface says the same.
 //
-//   GET    /api/buddy/work?project=&from=&to=&q=&limit=&view=&work=1   read: the app, agents, Ask AI (views: all, done, decided, open)
+//   GET    /api/buddy/work?project=&from=&to=&q=&limit=&view=&work=1   read: the app, agents, Ask Kaaga (views: all, done, decided, open)
 //   GET    /api/buddy/work/picture?project=&day=&work=1                 read: what a writer is shown (Claude Code's log_work)
 //   POST   /api/buddy/work                                              sessions:write: a chat's list for a day (Claude Code's log_work, /log-work)
 //   POST   /api/buddy/work/line                                         sessions:write: one outcome (claude.ai and ChatGPT's log_work)
@@ -181,7 +181,7 @@ export async function workLogOn(userId: string): Promise<boolean> {
 // ─── Loading the picture ────────────────────────────────────────────────────
 
 /**
- * Who reads (stage 12): Recollect itself (the app, Ask AI, the night: everything); a connected chat (ChatGPT, Claude,
+ * Who reads (stage 12): Kaaga itself (the app, Ask Kaaga, the night: everything); a connected chat (ChatGPT, Claude,
  * Claude Code outside a work folder: a work folder's lines only while the person shares them); a work folder (its own
  * project only).
  */
@@ -298,7 +298,7 @@ function pictureJson(v: WriterView, p?: Picture): WorkPictureJson {
 function appOfChunk(chunk: Partial<Pick<BuddyChunk, 'source' | 'via'>>): string {
     if (!chunk.source || chunk.source === 'hook') return 'Claude Code';
     if (chunk.via === 'connector') return 'a connected chat';
-    return 'Recollect';
+    return 'Kaaga';
 }
 
 /**

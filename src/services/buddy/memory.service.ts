@@ -254,7 +254,7 @@ export async function rememberNotes(writer: NoteWriter, notes: readonly NoteInpu
         const said = saidTimeOf(note.saidOn, ctx, now);
         const basis: Basis | null = note.inferred === undefined ? null : note.inferred ? 'inferred' : 'said';
         const inferred = basis === 'inferred';
-        // The person's own word: Recollect heard it (the app, "Tell"), or an assistant passed it on as said.
+        // The person's own word: Kaaga heard it (the app, "Tell"), or an assistant passed it on as said.
         const theirWord = writer.source !== 'agent' || basis === 'said';
         if (theirWord && !inferred && directSaveChangesToday(text, said, now, ctx.tz, today)) changesToday = changesToday ? `${changesToday} / ${text}` : text;
         const kind: MemoryKind = note.kind ?? 'fact';

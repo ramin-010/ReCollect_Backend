@@ -24,7 +24,7 @@ export const CARD_TITLE = 'Revision card';
 /** A card is a page: key points, one diagram, a handful of questions. */
 export const CARD_MAX = 12_000;
 
-const OLD_EDITOR = 'This doc is still on the old editor: a revision card needs the new one (open the doc once in Recollect)';
+const OLD_EDITOR = 'This doc is still on the old editor: a revision card needs the new one (open the doc once in Kaaga)';
 
 const levelOf = (b: DocBlock | NewBlock): number => Number(b.props?.['level']) || 1;
 const isHeading = (b: DocBlock | NewBlock): boolean => b.type === 'heading';

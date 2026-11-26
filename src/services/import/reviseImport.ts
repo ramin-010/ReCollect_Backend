@@ -1,4 +1,4 @@
-// The Revise import's mapping (LOOP_COMPLETE_SPEC S3): Revise's rows in, what Recollect would make
+// The Revise import's mapping (LOOP_COMPLETE_SPEC S3): Revise's rows in, what Kaaga would make
 // out. Pure: backend/scripts/import-revise.ts reads Revise (read-only), prints the plan, and writes
 // it with --apply.
 //
@@ -9,7 +9,7 @@
 //   QuickNote           → QuickNote (Vault / Scratch kept)
 //   Subject             → the subject of the same name (any case), made only when a row needs it
 // Files stay where they are (their links are kept) but lose their Cloudinary ids: deleting the
-// copy in Recollect must never delete a file Revise still shows. Reminders are not brought (old
+// copy in Kaaga must never delete a file Revise still shows. Reminders are not brought (old
 // ones would fire at once). Empty quick notes are left out, and so is anything that looks like it
 // holds a key, a token or a password (his Revise quick notes have some; keepSecrets brings them).
 import { randomUUID } from 'node:crypto';
@@ -97,7 +97,7 @@ export interface ReviseData {
 
 // ─── The plan ──────────────────────────────────────────────────────────
 
-/** Where an imported row goes: a Recollect subject id, or a Revise subject to make first. */
+/** Where an imported row goes: a Kaaga subject id, or a Revise subject to make first. */
 export type SubjectRef = { existing: string } | { make: string } | null;
 
 /** As the app stores a file (items.service AttachmentJson); a type, so it is a Prisma JSON value. */
@@ -250,7 +250,7 @@ export function planReviseImport(source: ReviseData, target: ImportTarget, optio
         if (out) filesOf.set(a.captureId, [...(filesOf.get(a.captureId) ?? []), out]);
     }
 
-    // One revision per cycle (Recollect keeps a cycle once): the newest wins.
+    // One revision per cycle (Kaaga keeps a cycle once): the newest wins.
     const revisionsOf = new Map<string, Map<number, ReviseRevision>>();
     let duplicateCycles = 0;
     let odd = 0;
@@ -266,7 +266,7 @@ export function planReviseImport(source: ReviseData, target: ImportTarget, optio
         revisionsOf.set(r.captureId, cycles);
     }
     if (duplicateCycles > 0) notes.push(`${duplicateCycles} revision(s) repeat a cycle of the same note: the newest of each cycle comes over`);
-    if (odd > 0) notes.push(`${odd} revision(s) have a status Recollect doesn't know: left out`);
+    if (odd > 0) notes.push(`${odd} revision(s) have a status Kaaga doesn't know: left out`);
 
     const already = { captures: 0, todos: 0, quickNotes: 0 };
     const captures: PlannedCapture[] = [];

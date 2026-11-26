@@ -21,7 +21,7 @@ export interface FirstRunJson {
     zone: string;
     /** Whether the app's AI runs for them (the buddy's steps show only then). */
     ai: boolean;
-    /** The buddy's first words in Ask AI, while they have never talked to it (else null). */
+    /** The buddy's first words in Ask Kaaga, while they have never talked to it (else null). */
     opening: string | null;
 }
 

@@ -1,5 +1,5 @@
 // The manager's engine and its stream (MANAGER_AND_DOCS_PLAN §3.4) with a fake Claude: a tool round
-// then an answer through POST /api/assistant/messages (events, the doc made as "Ask AI", the thread,
+// then an answer through POST /api/assistant/messages (events, the doc made as "Ask Kaaga", the thread,
 // the metering); a level-3 tool only asks; the loop stops at its round limit and at the cap.
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
@@ -59,7 +59,7 @@ const events = (body: string) =>
         });
 
 describe('the manager', () => {
-    it('streams a tool round and the answer; the doc is made as "Ask AI"; the thread and the cost are kept', async () => {
+    it('streams a tool round and the answer; the doc is made as "Ask Kaaga"; the thread and the cost are kept', async () => {
         const user = await createTestUser();
         const requests = scripted([() => toolUse('create_doc', { title: 'Heaps', markdown: 'k smallest: a max-heap of size k.' }), () => answer('Made the note "Heaps".')]);
         const res = await request(app)
@@ -79,7 +79,7 @@ describe('the manager', () => {
         expect(got[2]!.data).toMatchObject({ stopped: 'done', rounds: 2, message: { role: 'assistant', text: 'Made the note "Heaps".', costUsd: expect.any(Number) } });
 
         expect(await prisma.doc.count({ where: { userId: user.id, title: 'Heaps' } })).toBe(1);
-        expect((await prisma.agentEdit.findFirstOrThrow({ where: { userId: user.id } })).agentName).toBe('Ask AI');
+        expect((await prisma.agentEdit.findFirstOrThrow({ where: { userId: user.id } })).agentName).toBe('Ask Kaaga');
         expect(await prisma.aiUsage.count({ where: { userId: user.id, feature: 'assistant' } })).toBe(2);
         // The cached start: the tool list (cache mark on the last tool) and the rules, then the brief.
         const first = requests[0]! as { model: string; tools: Array<Record<string, unknown>>; system: Array<{ text: string; cache_control?: unknown }> };

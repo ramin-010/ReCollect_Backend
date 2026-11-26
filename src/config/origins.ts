@@ -5,6 +5,10 @@ const DEFAULT_ORIGINS = [
     'http://localhost:3005',
     'http://localhost:5173',
     'http://192.168.40.58:3005',
+    'https://kaaga.in',
+    'https://api.kaaga.in',
+    'https://www.kaaga.in',
+    // The old address until it lapses (22 Jan 2027): it redirects, but a tab left open still calls.
     'https://re-collect.in',
     'https://api.re-collect.in',
     'https://www.re-collect.in',

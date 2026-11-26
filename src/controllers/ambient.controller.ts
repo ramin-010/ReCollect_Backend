@@ -34,7 +34,7 @@ export const ambientAddressesHandler = handler(async (req, res) => {
 });
 
 /**
- * Settings → Phone app: whether this server holds the app's file (GET /phone/recollect.apk serves it), its size and
+ * Settings → Phone app: whether this server holds the app's file (GET /phone/kaaga.apk serves it), its size and
  * when it was built, so the page can offer a download button (the owner, 11-23 night).
  */
 export const ambientAppHandler = handler(async (_req, res) => {
@@ -55,7 +55,7 @@ const appFrom = (q: unknown) => (typeof q === 'string' && /^\d+\.\d+\.\d+(-[a-z]
 
 /**
  * GET /api/ambient/widget[?titles=0] -> the day's lines, plus what the phone app's screen shows: whose
- * day it is (`account`), where a tap opens Recollect (`appUrl`, the web app; null when unknown), the
+ * day it is (`account`), where a tap opens Kaaga (`appUrl`, the web app; null when unknown), the
  * day in numbers for the widget (`numbers`), what is left by kind under it on the app's day card
  * (`breakdown`, B8) and the buddy's part of the app's screen (`buddy`: its
  * note, the lines it said, his thumbs; null while it is off). The widget itself keeps to `line`, the

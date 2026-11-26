@@ -164,8 +164,11 @@ describe('the ambient phone (6.6)', () => {
             expect((await request(app).get('/phone/recollect.apk')).status).toBe(404);
             expect((await request(app).get('/phone/connect')).text).toContain("doesn't have the phone app's file");
             fs.writeFileSync(apk, Buffer.alloc(2048, 1));
-            const file = await request(app).get('/phone/recollect.apk');
+            const file = await request(app).get('/phone/kaaga.apk');
             expect([file.status, file.headers['content-type']]).toEqual([200, 'application/vnd.android.package-archive']);
+            expect(file.headers['content-disposition']).toContain('kaaga.apk');
+            // The old link, already shared before the rename, still downloads it.
+            expect((await request(app).get('/phone/recollect.apk')).status).toBe(200);
             expect((await request(app).get('/phone/connect')).text).toContain('Android, 2 KB');
         } finally {
             vi.unstubAllEnvs();

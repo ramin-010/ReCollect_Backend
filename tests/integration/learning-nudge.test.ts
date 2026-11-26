@@ -71,11 +71,11 @@ describe('morning nudge', () => {
         expect(mail!.html).not.toContain('<b>Heaps</b>');
         expect(mail!.html).toContain('SDE role');
         expect(mail!.html).toContain('228 days left');
-        expect(mail!.html).toContain('Open Recollect');
+        expect(mail!.html).toContain('Open Kaaga');
         expect(mail!.html).toContain('href="http://localhost:3005"');
         expect(mail!.text).toContain('- Binary search (DSA · cycle 1 · 8 min)');
         expect(mail!.text).toContain('- SDE role: 228 days left');
-        expect(mail!.text).toContain('Open Recollect: http://localhost:3005');
+        expect(mail!.text).toContain('Open Kaaga: http://localhost:3005');
         expect(dayStr((await prisma.user.findUniqueOrThrow({ where: { id: user.id } })).lastNudgeDay)).toBe(TODAY);
 
         vi.setSystemTime(new Date('2026-11-14T03:20:00Z'));

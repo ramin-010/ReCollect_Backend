@@ -1,4 +1,4 @@
-// A stand-in for Claude, only for QA of the Ask AI page (MANAGER_AND_DOCS_PLAN stage 4 part 2, step
+// A stand-in for Claude, only for QA of the Ask Kaaga page (MANAGER_AND_DOCS_PLAN stage 4 part 2, step
 // 4): no model is called and nothing is spent. It is on only outside production and only for the
 // accounts ASSISTANT_FAKE names (comma-separated emails, or "all"). It picks REAL tools by keywords
 // in his message, so the catalogue, the edit log, Undo and "Do it" all run for real; only the
@@ -107,7 +107,7 @@ function docAskOf(system: unknown): DocAsk | null {
 const FAKE_SECTION = [
     '## A section from the fake model',
     '',
-    'The fake model wrote this to test Ask AI in a doc: no AI was called. Undo in the box takes it back.',
+    'The fake model wrote this to test Ask Kaaga in a doc: no AI was called. Undo in the box takes it back.',
     '',
     '- It went in through insert_blocks, like any agent write.',
     '- It is one change in the edit log.',
@@ -149,12 +149,12 @@ function firstStep(text: string, system?: unknown): BetaMessage {
     const t = text.toLowerCase();
     if (/\b(note|doc)\b/.test(t) && /\b(make|write|create|new)\b/.test(t)) {
         const title = titleFrom(text, 'A note from the fake model');
-        return tools(['create_doc', { title, markdown: `A note the fake model made for testing the Ask AI page.\n\n- It was made through the real tools.\n- Undo takes it back.` }]);
+        return tools(['create_doc', { title, markdown: `A note the fake model made for testing the Ask Kaaga page.\n\n- It was made through the real tools.\n- Undo takes it back.` }]);
     }
     if (/\bremind\b/.test(t)) return tools(['set_reminder', { title: titleFrom(text, 'A reminder from the fake model'), at: '23:59' }]);
-    if (/\b(spread|backlog)\b/.test(t)) return tools(['spread_backlog', { reason: 'They asked in Ask AI.' }]);
+    if (/\b(spread|backlog)\b/.test(t)) return tools(['spread_backlog', { reason: 'They asked in Ask Kaaga.' }]);
     if (/\btask\b/.test(t) && /\badd\b/.test(t)) return tools(['add_task', { title: titleFrom(text, 'A task from the fake model') }]);
-    if (/\btrash\b/.test(t) && /\bempty\b/.test(t)) return tools(['empty_trash', { reason: 'They asked in Ask AI.' }]);
+    if (/\btrash\b/.test(t) && /\bempty\b/.test(t)) return tools(['empty_trash', { reason: 'They asked in Ask Kaaga.' }]);
     if (/\b(break|fail)\b/.test(t)) return tools(['read_doc', { docId: 'doc-that-does-not-exist' }]);
     if (/\bweek\b/.test(t)) return tools(['get_week', {}], ['list_sessions', {}]);
     if (/\b(due|today)\b/.test(t)) return tools(['list_due', {}]);

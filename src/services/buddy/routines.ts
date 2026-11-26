@@ -105,7 +105,7 @@ export async function runRoutines(userId: string, now: Date = new Date()): Promi
     if (!routines.length) return [];
     const { today } = await loadLearningContext(userId, now);
     const state = await prisma.buddyState.findUnique({ where: { userId }, select: { name: true } });
-    const actor = { userId, agentName: state?.name || 'Your buddy', tokenId: null };
+    const actor = { userId, agentName: state?.name || 'Kaaga', tokenId: null };
     const done: string[] = [];
     for (const r of routines) {
         let runs = 0;

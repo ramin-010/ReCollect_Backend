@@ -176,7 +176,7 @@ export async function updateTopicOnPath(userId: string, topicId: string, patch: 
         if (patch.title !== undefined) {
             const title = patch.title.replace(/\s+/g, ' ').trim();
             if (!title) throw badRequest('title cannot be empty');
-            if (topic.docId) throw badRequest("This topic's title is its doc's title: rename the doc in Recollect");
+            if (topic.docId) throw badRequest("This topic's title is its doc's title: rename the doc in Kaaga");
         }
         const nextStep = patch.nextStep === undefined ? undefined : patch.nextStep === null ? null : patch.nextStep.trim().slice(0, NEXT_STEP_MAX) || null;
         await tx.topic.update({

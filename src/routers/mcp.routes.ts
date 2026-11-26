@@ -25,7 +25,7 @@ function unauthorized(res: Response, message: string, invalid = false): void {
 // Hosting P1-4: knocking without a valid token is limited per address (the refusals count; a valid token passes freely).
 router.post('/mcp', doorLimit('mcp'), express.json({ limit: '2mb' }), async (req: Request, res: Response) => {
     const token = bearer(req);
-    if (!token || !isApiTokenFormat(token)) return unauthorized(res, 'Add a Recollect token: Authorization: Bearer rcl_… (Settings → Agents).');
+    if (!token || !isApiTokenFormat(token)) return unauthorized(res, 'Add a Kaaga token: Authorization: Bearer rcl_… (Settings → Agents).');
     const row = await findApiToken(token);
     if (!row || row.revokedAt) return unauthorized(res, 'This token is not valid any more. Make a new one in Settings → Agents.', true);
     if (row.expiresAt && row.expiresAt.getTime() <= Date.now()) return unauthorized(res, 'This token has expired: refresh it, or sign in again.', true);
@@ -34,7 +34,7 @@ router.post('/mcp', doorLimit('mcp'), express.json({ limit: '2mb' }), async (req
         await serveMcpHttp(req, res, { baseUrl: internalUrl(req.socket.localPort), token, agentName: row.name || 'Remote MCP' });
     } catch (err) {
         console.error('[mcp] request failed:', err);
-        if (!res.headersSent) res.status(500).json({ jsonrpc: '2.0', error: { code: -32603, message: 'The Recollect tools could not run.' }, id: null });
+        if (!res.headersSent) res.status(500).json({ jsonrpc: '2.0', error: { code: -32603, message: 'The Kaaga tools could not run.' }, id: null });
     }
 });
 

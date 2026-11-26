@@ -16,7 +16,7 @@
 //   resizableImage / image            image (src → url; a pixel width → previewWidth)
 //   mediaRow / mediaItem              images, one per item
 //   embed                             a paragraph with the link (no embed block in the new editor)
-//   inlineAi                          dropped (the old "Ask AI to write" node, §11)
+//   inlineAi                          dropped (the old "Ask Kaaga to write" node, §11)
 // Marks: bold, italic, strike, code, underline as styles; link as a link; highlight → a background
 // colour; a text colour → textColor when it is one of BlockNote's names. A hard break is "\n".
 import type { JSONContent } from '@tiptap/core';

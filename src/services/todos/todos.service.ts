@@ -106,7 +106,7 @@ async function loadTodoOrThrow(todoId: string, db: DbClient = prisma): Promise<T
 /**
  * Due date for a weekly / monthly goal that has none (LEARNING_SPEC §2 "Changes to /api/todos"):
  * the engine's goal due day (this / next Sunday, or the end of the month) in the user's zone, at
- * 18:00 local (Recollect's date-only rule). Null for NONE.
+ * 18:00 local (Kaaga's date-only rule). Null for NONE.
  */
 async function goalDueDate(userId: string, goalType: GoalType, now: Date, db: DbClient): Promise<Date | null> {
     if (goalType === 'NONE') return null;

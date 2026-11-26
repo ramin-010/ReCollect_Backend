@@ -72,7 +72,7 @@ export interface DayEvent {
     dayOnly?: boolean;
 }
 
-/** The person's word: heard by Recollect itself, or passed on by an assistant as what they said (§4.4). */
+/** The person's word: heard by Kaaga itself, or passed on by an assistant as what they said (§4.4). */
 export const weighs = (e: { direct: boolean; basis?: string | null }): boolean => e.direct || e.basis === 'said';
 
 /** Whose word an event is, for the night's and the pulses' inputs (§4.4). */
@@ -299,7 +299,7 @@ export function isDuplicate(
         return sameDay.some((e) => e.kind === kind && memoryKey(e.text) === key);
     }
     // MCP_MEMORY_PLAN §4.4: what an assistant passed on as said weighs as their own word here. Their own word heard by
-    // Recollect is compared with its own kind only, so it stands over a said copy (which then becomes the duplicate).
+    // Kaaga is compared with its own kind only, so it stands over a said copy (which then becomes the duplicate).
     const theirs = weighs({ direct, basis });
     const earlier = sameDay.filter((e) => DAY_KINDS.has(e.kind as EventKind) && e.saidAt.getTime() <= saidAt.getTime() && (!theirs || (direct ? e.direct : weighs(e))));
     if (!theirs) return earlier.some((e) => e.kind === kind);

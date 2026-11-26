@@ -8,7 +8,7 @@
  *     is a `DayString` ('YYYY-MM-DD' in the user's time zone), e.g. a
  *     Postgres `date` column read with `dayFromUtcMidnight`;
  *   - real instants (completedAt, createdAt) stay `Date`.
- * A Revise "workspace" is scoped to the Recollect *user*, so no type carries a
+ * A Revise "workspace" is scoped to the Kaaga *user*, so no type carries a
  * workspaceId; the service layer adds the owner.
  */
 import type { DayString } from './time';
@@ -158,5 +158,5 @@ export interface DayDebrief {
 // Goals
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Revise enum GoalType on TASK captures (Recollect todos later). */
+/** Revise enum GoalType on TASK captures (Kaaga todos later). */
 export type GoalType = 'NONE' | 'WEEKLY' | 'MONTHLY';

@@ -1,4 +1,4 @@
-// LeetCode (11-22, the owner: "how would I track LeetCode that isn't in Recollect?"): their public LeetCode username;
+// LeetCode (11-22, the owner: "how would I track LeetCode that isn't in Kaaga?"): their public LeetCode username;
 // their newly accepted problems are logged as practice sessions, at most once in 20 hours (and at once on "Import
 // now" or a new username). It reads LeetCode's public profile data (the GraphQL their own site uses): not an
 // official API, so a change on their side can stop it; then the import says so and nothing else is touched.
@@ -43,7 +43,7 @@ export interface LeetcodeSource {
 async function graphql<T>(query: string, variables: Record<string, unknown>): Promise<T> {
     const res = await fetch(ENDPOINT, {
         method: 'POST',
-        headers: { 'content-type': 'application/json', referer: 'https://leetcode.com/', 'user-agent': 'Mozilla/5.0 (compatible; Recollect)' },
+        headers: { 'content-type': 'application/json', referer: 'https://leetcode.com/', 'user-agent': 'Mozilla/5.0 (compatible; Kaaga)' },
         body: JSON.stringify({ query, variables }),
         signal: AbortSignal.timeout(10_000),
     });

@@ -1,6 +1,6 @@
 // The catalogue inside the backend (MANAGER_AND_DOCS_PLAN 3.4, the spike): the built MCP server
 // (mcp/dist/embedded.js, an ES module) loads into this CommonJS process, lists every tool with its
-// level, and its calls come back to this API as "Ask AI": logged like any agent's. Needs the MCP
+// level, and its calls come back to this API as "Ask Kaaga": logged like any agent's. Needs the MCP
 // package built (npm run build in mcp/).
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
@@ -21,7 +21,7 @@ beforeAll(async () => {
 afterAll(() => new Promise<void>((resolve) => server.close(() => resolve())));
 
 describe('the catalogue inside the backend', () => {
-    it('lists every tool with its level and acts through the API as "Ask AI"', async () => {
+    it('lists every tool with its level and acts through the API as "Ask Kaaga"', async () => {
         const user = await createTestUser();
         const catalogue = await openCatalogueFor(user.id, baseUrl);
         try {
@@ -34,7 +34,7 @@ describe('the catalogue inside the backend', () => {
             const made = await catalogue.call('create_doc', { title: 'From the manager', markdown: 'Hello from Ask AI.' });
             expect(made.isError).toBe(false);
             const edit = await prisma.agentEdit.findFirstOrThrow({ where: { userId: user.id, kind: 'doc_create' } });
-            expect(edit).toMatchObject({ agentName: 'Ask AI', summary: 'Created "From the manager"' });
+            expect(edit).toMatchObject({ agentName: 'Ask Kaaga', summary: 'Created "From the manager"' });
             const found = await catalogue.call('search_docs', { query: 'manager' });
             expect(found.text).toContain('From the manager');
             expect((await catalogue.call('trash_doc', { docId: 'not-a-doc' })).isError).toBe(true);

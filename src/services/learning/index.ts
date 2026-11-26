@@ -1,6 +1,6 @@
 /**
  * Learning engine: the pure domain logic of Revise's dashboard, ported for
- * Recollect (no database, no Express, no React). See each module's header for
+ * Kaaga (no database, no Express, no React). See each module's header for
  * the Revise source it mirrors and the bugs it fixes.
  *
  *   time          per-user time-zone days, 'HH:mm' helpers

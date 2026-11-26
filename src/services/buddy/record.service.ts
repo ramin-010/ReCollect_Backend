@@ -45,7 +45,7 @@ import { workForWebBrief, type WebWorkBrief } from './work';
 export interface RecordWriter {
     actor: AgentActor;
     source: BuddySource;
-    /** 'connector' (a signed-in app), 'agent' (a token), 'app' (the person in Recollect). */
+    /** 'connector' (a signed-in app), 'agent' (a token), 'app' (the person in Kaaga). */
     via: string | null;
     sessionKey?: string | null | undefined;
     project?: string | null | undefined;
@@ -116,7 +116,7 @@ export function appOf(m: Pick<Memory, 'source' | 'agentName'>): string {
         case 'app':
         case 'tell':
         case 'feedback':
-            return 'Recollect';
+            return 'Kaaga';
         case 'hook':
             return 'Claude Code';
         case 'buddy':
@@ -651,7 +651,7 @@ export async function buddyView(userId: string, now: Date = new Date()): Promise
         now: { day: ctx.today, weekday: part('weekday'), time: `${part('hour')}:${part('minute')}`, timezone: ctx.tz },
         who: state?.who ? cut(state.who, WHO_MAX) : null,
         inMotion,
-        savedLately: saved.map((o) => ({ text: cut(o.text, 120), day: fromDbDay(o.day), app: o.agentName ?? (o.source === 'app' ? 'Recollect' : 'an agent'), update: o.updateKind })),
+        savedLately: saved.map((o) => ({ text: cut(o.text, 120), day: fromDbDay(o.day), app: o.agentName ?? (o.source === 'app' ? 'Kaaga' : 'an agent'), update: o.updateKind })),
         asks: asks.slice(0, BRIEF_ASKS_MAX).map((a) => ({ _id: a._id, threadId: a.threadId ?? null, text: cut(a.text, 160), answers: a.answers.map((x) => x.label) })),
         howTo: work ? [...HOW_TO, WORK_HOW_TO] : HOW_TO,
         work,

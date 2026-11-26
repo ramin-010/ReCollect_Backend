@@ -309,9 +309,12 @@ describe('the buddy’s own reminders (stage 7, §4.7)', () => {
         const knee = await thread(user.id, 'Knee physio', { sensitive: true });
         const run = await thread(user.id, 'Run three mornings', { stage: 'committed' });
         const read = await thread(user.id, 'Read before bed');
-        const now = new Date('2026-11-23T08:30:00Z'); // 14:00 his time
+        // 14:00 his time tomorrow: the reminders land later than the real clock whenever this runs (11-26: on a fixed
+        // past day the list below, read on the real clock, came back empty; a real-clock time bomb).
+        const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date(Date.now() + 86_400_000));
+        const now = new Date(`${day}T08:30:00Z`);
         const revisions = new Map([guitar, noticed, knee, run, read].map((t) => [t.id, t.revision]));
-        const ctx = { now, tz: 'Asia/Kolkata', today: '2026-11-23' as const, revisions };
+        const ctx = { now, tz: 'Asia/Kolkata', today: day, revisions };
         const dropped = await withPersonLock(user.id, (tx) =>
             writeBuddyReminders(tx, user.id, null, [
                 { threadId: noticed.id, text: 'Look up pottery classes', at: '18:00' },

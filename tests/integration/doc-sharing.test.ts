@@ -268,7 +268,7 @@ describe('people', () => {
         await prisma.user.create({ data: { email: 'ghost@example.com', name: 'Ghost', isGhost: true } });
         const none = await as(owner).post(`/api/docs/${doc.id}/people`, { email: 'nobody@example.com' });
         expect(none.status).toBe(404);
-        expect(none.body).toMatchObject({ code: 'NO_ACCOUNT', message: 'No Recollect account uses that email. They need to sign up first.' });
+        expect(none.body).toMatchObject({ code: 'NO_ACCOUNT', message: 'No Kaaga account uses that email. They need to sign up first.' });
         expect((await as(owner).post(`/api/docs/${doc.id}/people`, { email: 'ghost@example.com' })).status).toBe(404);
         expect((await as(owner).post(`/api/docs/${doc.id}/people`, { email: owner.email })).status).toBe(400);
         expect((await as(owner).post(`/api/docs/${doc.id}/people`, { email: 'not an email' })).status).toBe(400);

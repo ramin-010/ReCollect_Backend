@@ -185,7 +185,7 @@ export function dayFromUtcMidnight(date: Date): DayString {
  * Reads a Revise day label (`getISTMidnight` output, i.e. UTC midnight of an
  * IST day) as a DayString. Also handles the legacy rows that export.actions
  * mentions, stored at 18:30Z of the previous UTC day (true IST midnight).
- * Use this in the Revise → Recollect import, never `dayFromUtcMidnight`.
+ * Use this in the Revise → Kaaga import, never `dayFromUtcMidnight`.
  */
 export function dayFromReviseLabel(label: Date): DayString {
   return dayOf(label, DEFAULT_TIMEZONE);

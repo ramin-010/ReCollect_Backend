@@ -49,7 +49,7 @@ import ErrorResponse from '../utils/errorResponse';
 import { aiNotAllowed } from '../config/aiAccess';
 import { handler, ok, param, parse } from './learning/common';
 import { LINE_KINDS, LINE_MORE_MAX, LOG_LINES_MAX, WORK_KINDS, WORK_VIEWS, changeLine, hideWorkLine, listWork, logLine, logWork, workPicture, type WorkDoor } from '../services/buddy/work';
-import { ASK_AI_AGENT } from '../services/actions/actions.service';
+import { isAskAiAgent } from '../services/actions/actions.service';
 import { approveImport, cancelImport, estimateImport, listImports } from '../services/buddy/import.service';
 import { THUMB_REASONS, endScreenRule, listScreenRules } from '../services/buddy/screens';
 
@@ -525,21 +525,21 @@ export const exportHandler = handler(async (req, res) => {
 });
 
 /**
- * Who reads the work log (stage 12): a work folder's chat (`work=1`: its own project), Recollect itself (the app,
- * Ask AI), or a connected chat (ChatGPT, Claude, Claude Code outside a work folder: a work folder's lines only while
+ * Who reads the work log (stage 12): a work folder's chat (`work=1`: its own project), Kaaga itself (the app,
+ * Ask Kaaga), or a connected chat (ChatGPT, Claude, Claude Code outside a work folder: a work folder's lines only while
  * the person shares them).
  */
 function workDoorOf(req: Parameters<typeof requireUser>[0], work: boolean, project: string | undefined): WorkDoor {
     if (work) return { folder: project ?? '' };
     if (!isTokenRequest(req)) return 'app';
-    return req.auth?.via === 'token' && req.auth.agentName === ASK_AI_AGENT ? 'app' : 'connected';
+    return req.auth?.via === 'token' && isAskAiAgent(req.auth.agentName) ? 'app' : 'connected';
 }
 
 const zWorkFlag = z.enum(['0', '1', 'true', 'false']).optional();
 const isOn = (v: string | undefined) => v === '1' || v === 'true';
 
 /**
- * GET /api/buddy/work?project=&from=&to=&q=&limit=&view=&work=1 (read: the app, agents, Ask AI): their work as one
+ * GET /api/buddy/work?project=&from=&to=&q=&limit=&view=&work=1 (read: the app, agents, Ask Kaaga): their work as one
  * picture, newest day first (B9, stage 12). `view`: all, done, decided, open. `work=1` is a work folder's question: one
  * project only, and it must be named.
  */

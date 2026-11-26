@@ -119,7 +119,7 @@ export async function morningLine(userId: string, now: Date = new Date()): Promi
     if (!nudge.items.length) return null;
     const next = nudge.items[0]?.title;
     const total = nudge.items.length + nudge.moreCount;
-    return { title: total === 1 ? 'One thing to revise today' : 'Today in Recollect', body: next ? `${lead} Next: ${next}.` : lead, url: '/' };
+    return { title: total === 1 ? 'One thing to revise today' : 'Today in Kaaga', body: next ? `${lead} Next: ${next}.` : lead, url: '/' };
 }
 
 export interface PushPassResult {

@@ -1,7 +1,7 @@
 // The manager's tools (MANAGER_AND_DOCS_PLAN §3.4, "the catalogue inside the backend"): the MCP
 // server itself (mcp/dist/embedded.js, an ES module) loaded into this CommonJS process with a native
 // dynamic import, driven over an in-memory transport. Its calls come back to this API over HTTP with
-// a token of the user's own, named "Ask AI", so the manager meets the same allowlist, levels, edit
+// a token of the user's own, named "Ask Kaaga", so the manager meets the same allowlist, levels, edit
 // log and Undo as every agent. One catalogue; nothing is written twice.
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -14,7 +14,9 @@ import { ASK_AI_AGENT } from '../actions/actions.service';
 export const MCP_EMBEDDED = process.env['RECOLLECT_MCP_EMBEDDED'] ?? path.resolve(__dirname, '..', '..', '..', '..', 'mcp', 'dist', 'embedded.js');
 
 /** The token's name in Settings → Agents (so he sees the manager has one, and can revoke it). */
-export const ASSISTANT_TOKEN_NAME = 'Ask AI (built in)';
+export const ASSISTANT_TOKEN_NAME = 'Ask Kaaga (built in)';
+/** The names it had before (KAAGA_REBRAND_PLAN): a token under one is the manager's too, revoked when a new one is made. */
+const OLD_TOKEN_NAMES = ['Ask AI (built in)'];
 
 export interface CatalogueTool {
     name: string;
@@ -72,17 +74,17 @@ function embedded(): Promise<EmbeddedModule> {
     return loaded;
 }
 
-/** userId → the plain token of the user's "Ask AI" token (kept in memory only; a restart makes a new one). */
+/** userId → the plain token of the user's "Ask Kaaga" token (kept in memory only; a restart makes a new one). */
 const tokens = new Map<string, string>();
 
-/** The user's "Ask AI" token: reused while it works; a new one revokes the ones before it. */
+/** The user's "Ask Kaaga" token: reused while it works; a new one revokes the ones before it. */
 export async function assistantToken(userId: string): Promise<string> {
     const known = tokens.get(userId);
     if (known) {
         const row = await findApiToken(known);
         if (row && !row.revokedAt && row.userId === userId) return known;
     }
-    const old = await prisma.apiToken.findMany({ where: { userId, name: ASSISTANT_TOKEN_NAME, revokedAt: null }, select: { id: true } });
+    const old = await prisma.apiToken.findMany({ where: { userId, name: { in: [ASSISTANT_TOKEN_NAME, ...OLD_TOKEN_NAMES] }, revokedAt: null }, select: { id: true } });
     for (const t of old) await revokeApiToken(userId, t.id);
     // Every scope but the phone app's own `ambient` (the manager reads the picture's data through `read`).
     const created = await createApiToken(userId, { name: ASSISTANT_TOKEN_NAME, scopes: API_SCOPES.filter((s): s is ApiScope => s !== 'ambient') });
@@ -90,7 +92,7 @@ export async function assistantToken(userId: string): Promise<string> {
     return created.token;
 }
 
-/** The catalogue for one user, calling the API at `baseUrl` (this server) as "Ask AI". */
+/** The catalogue for one user, calling the API at `baseUrl` (this server) as "Ask Kaaga". */
 export async function openCatalogueFor(userId: string, baseUrl: string): Promise<Catalogue> {
     const mod = await embedded();
     return mod.openCatalogue({ baseUrl, token: await assistantToken(userId), agentName: ASK_AI_AGENT });

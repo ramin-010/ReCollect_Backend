@@ -1,5 +1,5 @@
 // "Download everything" (ECOSYSTEM_V2_PLAN stage 11, §9.6 item 6): one JSON file with what this account keeps in
-// Recollect: its profile and settings, its docs as Markdown, tasks and reminders, the learning plan and record, Ask AI's
+// Kaaga: its profile and settings, its docs as Markdown, tasks and reminders, the learning plan and record, Ask Kaaga's
 // conversations, everything the buddy keeps (its own export), the AI it used and was given, the apps it connected
 // and what it sent the owner. Never a secret: no password, no token or its hash, no Claude key, no sign-in codes, no
 // push keys; nothing of anyone else's (a shared doc is exported by its owner).

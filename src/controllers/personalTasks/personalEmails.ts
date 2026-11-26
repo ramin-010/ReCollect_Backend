@@ -7,8 +7,8 @@ import { createMailTransport } from '../../utils/mailTransport';
 const createTransporter = () => createMailTransport();
 
 // ─── Design System (duplicated for isolation) ────────────────────────
-const LOGO_LIGHT_URL = 'https://res.cloudinary.com/dsfb3jjqx/image/upload/v1773391852/recollect-logo-1024px_3_yalexb.png'; 
-const LOGO_DARK_URL = 'https://res.cloudinary.com/dsfb3jjqx/image/upload/v1773391852/recollect-logo-1024px_4_crmydu.png'; 
+const LOGO_LIGHT_URL = 'https://kaaga.in/icons/icon-192.png'; 
+const LOGO_DARK_URL = 'https://kaaga.in/icons/icon-192.png'; 
 
 const BRAND_BLUE = '#2563eb';
 const TEXT_BLACK = '#37352f';
@@ -16,8 +16,8 @@ const TEXT_GRAY = '#787774';
 const BORDER_COLOR = '#e4e4e7';
 
 const logoBlock = (size: number = 24): string => `
-<img src="${LOGO_LIGHT_URL}" class="logo-light" alt="ReCollect" width="${size}" height="${size - 8} " style="display: block;" />
-<!--[if !mso]><!--><img src="${LOGO_DARK_URL}" class="logo-dark" alt="ReCollect" width="${size}" height="${size - 8}" style="display: none;" /><!--<![endif]-->`;
+<img src="${LOGO_LIGHT_URL}" class="logo-light" alt="Kaaga" width="${size}" height="${size - 8} " style="display: block;" />
+<!--[if !mso]><!--><img src="${LOGO_DARK_URL}" class="logo-dark" alt="Kaaga" width="${size}" height="${size - 8}" style="display: none;" /><!--<![endif]-->`;
 
 const avatarBlock = (name: string, size: number = 24): string => {
   const initial = name ? name.charAt(0).toUpperCase() : 'R';
@@ -55,10 +55,10 @@ const wrapEmail = (content: string, frontendUrl: string): string => `
                 <table role="presentation" cellspacing="0" cellpadding="0" border="0">
                   <tr>
                     <td style="padding-right: 12px;">
-                      ${avatarBlock('ReCollect', 24)}
+                      ${avatarBlock('Kaaga', 24)}
                     </td>
                     <td valign="middle">
-                      <span style="font-size: 16px; font-weight: 600; color: ${TEXT_GRAY}; letter-spacing: -0.01em;">ReCollect</span>
+                      <span style="font-size: 16px; font-weight: 600; color: ${TEXT_GRAY}; letter-spacing: -0.01em;">Kaaga</span>
                     </td>
                   </tr>
                 </table>
@@ -81,13 +81,13 @@ const wrapEmail = (content: string, frontendUrl: string): string => `
                       ${logoBlock(40)}
                     </td>
                     <td valign="top">
-                      <p style="margin: 0px; font-size: 20px; font-weight: 600; color: ${TEXT_BLACK}; line-height: 0.8;">ReCollect</p>
+                      <p style="margin: 0px; font-size: 20px; font-weight: 600; color: ${TEXT_BLACK}; line-height: 0.8;">Kaaga</p>
                       <p style="margin: 0; font-size: 13px; color: #a1a1aa; line-height: 1.4;">
-                        <a href="https://re-collect.in" style="color: #787774; border-bottom: 1px solid #d4d4d8;">Re-Collect.in</a>, the connected workspace<br />
+                        <a href="https://kaaga.in" style="color: #787774; border-bottom: 1px solid #d4d4d8;">kaaga.in</a>, one memory for all your AIs<br />
                         for docs, projects, and Teams.
                       </p>
                       <div style="margin-top: 12px;">
-                        <a href="https://re-collect.in/settings" style="color: #9ca3af; text-decoration: underline; font-size: 14px;">Update your email settings</a>
+                        <a href="https://kaaga.in/settings" style="color: #9ca3af; text-decoration: underline; font-size: 14px;">Update your email settings</a>
                       </div>
                     </td>
                   </tr>
@@ -176,7 +176,7 @@ export const sendPersonalTaskReminderEmail = async (
     `;
 
     await transporter.sendMail({
-      from: `"ReCollect" <${process.env.EMAIL_FROM || 'noreply@recollect.com'}>`,
+      from: `"Kaaga" <${process.env.EMAIL_FROM || 'noreply@recollect.com'}>`,
       to: user.email,
       subject: `Task Due: ${todo.title.substring(0, 50)}${todo.title.length > 50 ? '…' : ''}`,
       html: wrapEmail(emailContent, frontendUrl)

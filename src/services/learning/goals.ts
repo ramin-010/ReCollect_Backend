@@ -1,6 +1,6 @@
 /**
  * Weekly / monthly goal due-date rules (TASK captures with a goalType in
- * Revise; Recollect todos later).
+ * Revise; Kaaga todos later).
  *
  * Sources (revise/src/):
  *   - lib/date.ts                       getWeeklyGoalDueDate ("Weekend Rule"), getISTEndOfMonthLabel,

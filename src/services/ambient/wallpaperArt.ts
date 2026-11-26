@@ -627,7 +627,7 @@ function pickUpRows(item: NonNullable<WallpaperInput['pickUp']>, W: number, x: n
  * Stage 16, the home picture's Coming up: the next days' to-dos and events, three at most: the day (and time) in one
  * column, the words after it. The block's height counts its gap above (none when it is the first).
  */
-function comingUpRows(list: ReadonlyArray<{ at: string; text: string }>, W: number, x: number, usable: number, ink: Sky['ink'], first: boolean): Block {
+function comingUpRows(list: ReadonlyArray<{ at: string; text: string }>, W: number, x: number, usable: number, ink: Sky['ink'], first: boolean, maxLines = 3): Block {
     const rows = list.slice(0, 3);
     if (!rows.length) return { h: 0, draw: () => [] };
     const u = W / 100;
@@ -638,12 +638,13 @@ function comingUpRows(list: ReadonlyArray<{ at: string; text: string }>, W: numb
     const gap = first ? 0 : 8 * u;
     const rowsTop = label.h + 4 * u;
     const tx = x + atW + 2.6 * u;
-    // A long to-do wraps under itself, as the lock's rows do (the owner, 11-25), up to three lines; the rest ends in "…".
+    // A long to-do wraps under itself, as the lock's rows do (the owner, 11-25), up to three lines (fewer when the
+    // picture's band is full); the rest ends in "…".
     const rowW = x + usable - tx;
     const lh = size * 1.32;
     const rowLines = rows.map((r) => {
         const all = wrapText(r.text, size, 400, rowW, 99, 0, false);
-        return all.length <= 3 ? all : [...all.slice(0, 2), fit(all.slice(2).join(' '), size, 400, rowW)];
+        return all.length <= maxLines ? all : [...all.slice(0, maxLines - 1), fit(all.slice(maxLines - 1).join(' '), size, 400, rowW)];
     });
     const extra = rowLines.reduce((n, ls) => n + (ls.length - 1) * lh, 0);
     return {
@@ -680,11 +681,19 @@ export function drawWallpaper(input: WallpaperInput, width: number, height: numb
     const x = W * 0.08;
     const usable = W - 2 * x;
     const words: string[] = [...look.overlay];
-    const blocks: Block[] = [];
-    if (input.pickUp?.text.trim()) blocks.push(pickUpRows(input.pickUp, W, x, usable, ink, !blocks.length));
-    if (input.comingUp?.length) blocks.push(comingUpRows(input.comingUp, W, x, usable, ink, !blocks.length));
-    if ((input.insight ?? '').trim()) blocks.push(insightRows(input.insight ?? '', W, x, usable, ink, blocks.length > 0, !blocks.length));
-    const total = blocks.reduce((a, bl) => a + bl.h, 0);
+    // The blocks, with Coming up's to-dos on up to three lines each, two or one when the band (from 36 % to 74 % of the
+    // height) would overflow (a full day on a short phone).
+    const build = (lines: number): Block[] => {
+        const blocks: Block[] = [];
+        if (input.pickUp?.text.trim()) blocks.push(pickUpRows(input.pickUp, W, x, usable, ink, !blocks.length));
+        if (input.comingUp?.length) blocks.push(comingUpRows(input.comingUp, W, x, usable, ink, !blocks.length, lines));
+        if ((input.insight ?? '').trim()) blocks.push(insightRows(input.insight ?? '', W, x, usable, ink, blocks.length > 0, !blocks.length));
+        return blocks;
+    };
+    const sum = (bs: Block[]) => bs.reduce((a, bl) => a + bl.h, 0);
+    let blocks = build(3);
+    for (const lines of [2, 1]) if (sum(blocks) > H * (0.74 - 0.36)) blocks = build(lines);
+    const total = sum(blocks);
     // Never up into the clock and the search bar.
     let y = Math.max(H * 0.74 - total, H * 0.36);
     for (const bl of blocks) {
@@ -1300,16 +1309,24 @@ function drawHomeV2(input: WallpaperInput, width: number, height: number, theme:
     const pad = 5.2 * u;
     const radius = W * 0.062;
     const inner = cw - 2 * pad;
-    const parts: Block[] = [];
-    if (input.pickUp?.text.trim()) parts.push(pickUpRows(input.pickUp, W, x + pad, inner, ink, true));
-    if (input.comingUp?.length) parts.push(comingUpRows(input.comingUp, W, x + pad, inner, ink, true));
-    if ((input.insight ?? '').trim()) parts.push(insightRows(input.insight ?? '', W, x + pad, inner, ink, false, true));
+    const sep = 9 * u;
+    const gap = 2 * u;
+    // Coming up's to-dos on up to three lines each, two or one when the cards would rise past 30 % of the height.
+    const build = (lines: number): Block[] => {
+        const parts: Block[] = [];
+        if (input.pickUp?.text.trim()) parts.push(pickUpRows(input.pickUp, W, x + pad, inner, ink, true));
+        if (input.comingUp?.length) parts.push(comingUpRows(input.comingUp, W, x + pad, inner, ink, true, lines));
+        if ((input.insight ?? '').trim()) parts.push(insightRows(input.insight ?? '', W, x + pad, inner, ink, false, true));
+        return parts;
+    };
+    const heightOf = (parts: Block[]) =>
+        layout === 'glass' ? parts.reduce((a, p) => a + p.h, 0) + sep * (parts.length - 1) + 2 * pad : parts.reduce((a, p) => a + p.h + 2 * pad, 0) + gap * (parts.length - 1);
+    let parts = build(3);
+    for (const lines of [2, 1]) if (heightOf(parts) > H * (0.74 - 0.3)) parts = build(lines);
     const words: string[] = [...look.overlay];
     if (parts.length) {
-        const sep = 9 * u;
-        const gap = 2 * u;
         const heights = parts.map((p) => p.h + 2 * pad);
-        const total = layout === 'glass' ? parts.reduce((a, p) => a + p.h, 0) + sep * (parts.length - 1) + 2 * pad : heights.reduce((a, h) => a + h, 0) + gap * (parts.length - 1);
+        const total = heightOf(parts);
         // Never up into the clock and the search bar; its bottom where the classic picture's words end.
         let y = Math.max(H * 0.74 - total, H * 0.3);
         if (layout === 'glass') {

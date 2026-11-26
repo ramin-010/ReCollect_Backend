@@ -102,7 +102,7 @@ describe('planReviseImport', () => {
         ]);
         expect(plan.notes).toEqual([
             '1 revision(s) repeat a cycle of the same note: the newest of each cycle comes over',
-            "1 revision(s) have a status Recollect doesn't know: left out",
+            "1 revision(s) have a status Kaaga doesn't know: left out",
         ]);
     });
 

@@ -13,7 +13,7 @@ import { createInvite, inviteLink, inviteState, type InviteState } from './invit
 
 /** The meter's features in the owner's words (one line per group). */
 export const FEATURE_GROUPS: ReadonlyArray<{ label: string; features: readonly string[] }> = [
-    { label: 'Ask AI', features: ['assistant', 'doc_ask'] },
+    { label: 'Ask Kaaga', features: ['assistant', 'doc_ask'] },
     { label: 'The buddy', features: ['buddy_gate', 'buddy_digest', 'buddy_think', 'buddy_pulse', 'buddy_check', 'buddy_work'] },
     { label: 'Recall', features: ['recall_questions', 'recall_grade'] },
     { label: 'Notes and coach', features: ['practice_note', 'weekly_coach', 'task_parse'] },

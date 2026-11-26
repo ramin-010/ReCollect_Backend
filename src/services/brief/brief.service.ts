@@ -1,6 +1,6 @@
 // The brief (SYNC_SPINE_SPEC 1.3, ECOSYSTEM_PLAN change 3): the ONE picture of where the user stands,
 // composed on the server from the services that already own each part. Agents read it with
-// get_brief at the start of a chat (a Claude Code hook prints it); Home, the coach and Ask AI are to
+// get_brief at the start of a chat (a Claude Code hook prints it); Home, the coach and Ask Kaaga are to
 // read it too. No query logic of its own: Today's payload (goals, plan, focus, next up), the
 // sessions service (sessions, weak spots, projects), the coach's evidence (Recall's last 7 days).
 //

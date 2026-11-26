@@ -69,7 +69,7 @@ export function productionProblems(env: NodeJS.ProcessEnv = process.env): string
         problems.push(signup ? 'SIGNUP_MODE must be allowlist or closed' : 'SIGNUP_MODE is unset: signup would be open to anyone; set allowlist or closed');
     }
 
-    if (env['ASSISTANT_FAKE']?.trim()) problems.push("ASSISTANT_FAKE must be unset (it swaps Ask AI's model for a scripted stand-in)");
+    if (env['ASSISTANT_FAKE']?.trim()) problems.push("ASSISTANT_FAKE must be unset (it swaps Ask Kaaga's model for a scripted stand-in)");
 
     // Hosting review A8: TLS checks switched off for the whole process (the database, the AI, email).
     if (env['NODE_TLS_REJECT_UNAUTHORIZED']?.trim() === '0') problems.push('NODE_TLS_REJECT_UNAUTHORIZED=0 must be removed (it switches off every TLS check)');

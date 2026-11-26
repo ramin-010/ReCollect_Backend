@@ -11,7 +11,7 @@ import { aiCapReached } from './errors';
 import { aiModel, sourceOfMessage } from './client';
 import { costOfCall, roundUsd, type CallUsage, type UsageTotals } from './pricing';
 
-/** The owner, 2026-11-14 night: $50 a month (Recall and the Ask AI manager). */
+/** The owner, 2026-11-14 night: $50 a month (Recall and the Ask Kaaga manager). */
 export const DEFAULT_MONTHLY_CAP_USD = 50;
 // The bound on a self-set cap moved to src/config/aiAccess.ts (AI_MAX_CAP_USD, hosting P1-5).
 export { MAX_MONTHLY_CAP_USD } from '../../config/aiAccess';
@@ -111,7 +111,7 @@ export async function recordAiUsage(
             cacheWriteTokens: totals.cacheWriteTokens,
             batch,
             // Which key paid (ECOSYSTEM_V2_PLAN stage 2): the key callClaude used for this message (stage 11: a friend's
-            // allowance counts only the server's), else the caller's word, else the server's (batches, Ask AI's own calls).
+            // allowance counts only the server's), else the caller's word, else the server's (batches, Ask Kaaga's own calls).
             source: opts.source ?? sourceOfMessage(message) ?? 'house',
             costUsd: roundUsd(totals.costUsd).toFixed(6),
         },

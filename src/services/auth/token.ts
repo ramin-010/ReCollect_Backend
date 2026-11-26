@@ -22,25 +22,38 @@ export function signAuthToken(userId: string): string {
 /**
  * The cookies' flags (hosting P1-6). COOKIE_SAMESITE (lax, strict or none) sets SameSite; unset,
  * today's: none in production (an API on another site), lax in dev. Production on one site
- * (re-collect.in and api.re-collect.in) sets lax. No Domain unless COOKIE_DOMAIN is set, and only
- * in production (as before): the cookie stays on the API's own host.
+ * (kaaga.in and api.kaaga.in) sets lax. No Domain unless COOKIE_DOMAIN is set, and only in production (as before):
+ * the cookie stays on the API's own host. COOKIE_DOMAIN may list several (".kaaga.in,.re-collect.in", while the old
+ * address still serves): the one the request's host belongs to is used, none when it belongs to none (a browser
+ * refuses a cookie for another site, which would sign no one in).
  */
-function cookieEnv() {
+export function cookieDomainFor(list: string | undefined, host: string | undefined): string | undefined {
+    const domains = (list ?? '').split(',').map((d) => d.trim()).filter(Boolean);
+    if (!domains.length) return undefined;
+    if (!host) return domains[0];
+    const h = host.toLowerCase();
+    return domains.find((d) => {
+        const bare = d.replace(/^\./, '').toLowerCase();
+        return h === bare || h.endsWith(`.${bare}`);
+    });
+}
+
+function cookieEnv(host?: string) {
     const isProduction = process.env.NODE_ENV === 'production';
-    const cookieDomain = isProduction ? process.env.COOKIE_DOMAIN || undefined : undefined;
+    const cookieDomain = isProduction ? cookieDomainFor(process.env.COOKIE_DOMAIN, host) : undefined;
     const set = process.env.COOKIE_SAMESITE?.trim().toLowerCase();
     const sameSite: 'lax' | 'strict' | 'none' = set === 'lax' || set === 'strict' || set === 'none' ? set : isProduction ? 'none' : 'lax';
     return { isProduction, cookieDomain, sameSite };
 }
 
 /** Options for the `token` and `auth_hint` cookies (JWT_COOKIE_EXPIRE is in days). */
-export function authCookieOptions(now: number = Date.now()): { token: CookieOptions; hint: CookieOptions } {
+export function authCookieOptions(now: number = Date.now(), host?: string): { token: CookieOptions; hint: CookieOptions } {
     if (!process.env.JWT_COOKIE_EXPIRE) {
         throw new ErrorResponse(400, 'JWT_COOKIE_EXPIRE is undefined');
     }
     const days = parseInt(process.env.JWT_COOKIE_EXPIRE);
     const maxAge = days * 24 * 60 * 60 * 1000;
-    const { isProduction, cookieDomain, sameSite } = cookieEnv();
+    const { isProduction, cookieDomain, sameSite } = cookieEnv(host);
 
     return {
         token: {
@@ -63,7 +76,7 @@ export function authCookieOptions(now: number = Date.now()): { token: CookieOpti
 /** Sign a token for the user, set both cookies and send `{ success: true, data: <user> }`. */
 export function sendTokenResponse(user: SafeUserRow, statusCode: number, res: Response): void {
     const token = signAuthToken(user.id);
-    const options = authCookieOptions();
+    const options = authCookieOptions(Date.now(), res.req?.hostname);
 
     res.status(statusCode)
         .cookie(AUTH_COOKIE_NAME, token, options.token)
@@ -76,7 +89,7 @@ export function sendTokenResponse(user: SafeUserRow, statusCode: number, res: Re
 
 /** Expire both auth cookies (logout). */
 export function clearAuthCookies(res: Response): void {
-    const { isProduction, cookieDomain, sameSite } = cookieEnv();
+    const { isProduction, cookieDomain, sameSite } = cookieEnv(res.req?.hostname);
 
     res.cookie(AUTH_COOKIE_NAME, '', {
         httpOnly: true,

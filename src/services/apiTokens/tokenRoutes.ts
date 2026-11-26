@@ -170,7 +170,7 @@ export const TOKEN_ROUTES: readonly TokenRoute[] = [
     route('GET', '/api/buddy/chapters', 'read'),
     // Stage 3 of the loop: what is going on in his life (threads), for recall_memory.
     route('GET', '/api/buddy/threads', 'read'),
-    // B9: his work log, for get_work_log and Ask AI (removing a line is the app's alone).
+    // B9: his work log, for get_work_log and Ask Kaaga (removing a line is the app's alone).
     route('GET', '/api/buddy/work', 'read'),
     // Stage 12: what a writer is shown before it logs (Claude Code's log_work).
     route('GET', '/api/buddy/work/picture', 'read'),

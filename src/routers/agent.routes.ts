@@ -1,4 +1,4 @@
-// /api/agent: the API the MCP server ("Recollect for agents", HOME_DOCS_AGENT_PLAN §3) calls with a
+// /api/agent: the API the MCP server ("Kaaga for agents", HOME_DOCS_AGENT_PLAN §3) calls with a
 // personal access token, plus the agent edit log Home shows. Cookie sessions work too (all scopes).
 //
 // Token access per route is decided by authMiddleware (src/services/apiTokens/tokenRoutes.ts);

@@ -9,8 +9,8 @@ const createTransporter = () => createMailTransport();
 // ─── Minimalist Design System ────────────────────────────────────────
 // Pure white background, left-aligned, high contrast, clean typography.
 
-const LOGO_LIGHT_URL = 'https://res.cloudinary.com/dsfb3jjqx/image/upload/v1773391852/recollect-logo-1024px_3_yalexb.png'; 
-const LOGO_DARK_URL = 'https://res.cloudinary.com/dsfb3jjqx/image/upload/v1773391852/recollect-logo-1024px_4_crmydu.png'; 
+const LOGO_LIGHT_URL = 'https://kaaga.in/icons/icon-192.png'; 
+const LOGO_DARK_URL = 'https://kaaga.in/icons/icon-192.png'; 
 
 const BRAND_BLUE = '#2563eb';
 const TEXT_BLACK = '#37352f';
@@ -19,8 +19,8 @@ const BORDER_COLOR = '#e4e4e7';
 
 // ─── Responsive Logo Block ───────────────────────────────────────────
 const logoBlock = (size: number = 24): string => `
-<img src="${LOGO_LIGHT_URL}" class="logo-light" alt="ReCollect" width="${size}" height="${size - 8} " style="display: block;" />
-<!--[if !mso]><!--><img src="${LOGO_DARK_URL}" class="logo-dark" alt="ReCollect" width="${size}" height="${size - 8}" style="display: none;" /><!--<![endif]-->`;
+<img src="${LOGO_LIGHT_URL}" class="logo-light" alt="Kaaga" width="${size}" height="${size - 8} " style="display: block;" />
+<!--[if !mso]><!--><img src="${LOGO_DARK_URL}" class="logo-dark" alt="Kaaga" width="${size}" height="${size - 8}" style="display: none;" /><!--<![endif]-->`;
 
 // ─── Header Avatar Block ─────────────────────────────────────────────
 const avatarBlock = (name: string, size: number = 24): string => {
@@ -61,10 +61,10 @@ const wrapEmail = (content: string, frontendUrl: string, headerLabel?: string): 
                 <table role="presentation" cellspacing="0" cellpadding="0" border="0">
                   <tr>
                     <td style="padding-right: 12px;">
-                      ${avatarBlock(headerLabel || 'ReCollect', 24)}
+                      ${avatarBlock(headerLabel || 'Kaaga', 24)}
                     </td>
                     <td valign="middle">
-                      <span style="font-size: 16px; font-weight: 600; color: ${TEXT_GRAY}; letter-spacing: -0.01em;">${headerLabel || 'ReCollect'}</span>
+                      <span style="font-size: 16px; font-weight: 600; color: ${TEXT_GRAY}; letter-spacing: -0.01em;">${headerLabel || 'Kaaga'}</span>
                     </td>
                   </tr>
                 </table>
@@ -87,13 +87,13 @@ const wrapEmail = (content: string, frontendUrl: string, headerLabel?: string): 
                       ${logoBlock(40)}
                     </td>
                     <td valign="top">
-                      <p style="margin: 0px; font-size: 20px; font-weight: 600; color: ${TEXT_BLACK}; line-height: 0.8;">ReCollect</p>
+                      <p style="margin: 0px; font-size: 20px; font-weight: 600; color: ${TEXT_BLACK}; line-height: 0.8;">Kaaga</p>
                       <p style="margin: 0; font-size: 13px; color: #a1a1aa; line-height: 1.4;">
-                        <a href="https://re-collect.in" style="color: #787774; border-bottom: 1px solid #d4d4d8;">Re-Collect.in</a>, the connected workspace<br />
+                        <a href="https://kaaga.in" style="color: #787774; border-bottom: 1px solid #d4d4d8;">kaaga.in</a>, one memory for all your AIs<br />
                         for docs, projects, and Teams.
                       </p>
                       <div style="margin-top: 12px;">
-                        <a href="https://re-collect.in/settings" style="color: #9ca3af; text-decoration: underline; font-size: 14px;">Update your email settings</a>
+                        <a href="https://kaaga.in/settings" style="color: #9ca3af; text-decoration: underline; font-size: 14px;">Update your email settings</a>
                       </div>
                     </td>
                   </tr>
@@ -155,20 +155,20 @@ export const sendWelcomeEmail = async (user: any): Promise<boolean> => {
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
 
     const emailContent = `
-      ${uiHeading('Welcome to ReCollect')}
+      ${uiHeading('Welcome to Kaaga')}
       ${uiBody(`Hi ${user.name}, your workspace is ready. You can now start creating dashboards, capturing notes, and collaborating with your team.`)}
       
       <div style="margin: 0 0 32px;">
-        ${uiButton(`${frontendUrl}/dashboard`, 'Open ReCollect')}
+        ${uiButton(`${frontendUrl}/dashboard`, 'Open Kaaga')}
       </div>
       
       ${uiQuote('Create your first dashboard and add a few notes. Use tasks to track action items, and share documents when you need team input.', 'Getting started')}
     `;
 
     await transporter.sendMail({
-      from: `"ReCollect" <${process.env.EMAIL_FROM || 'noreply@recollect.com'}>`,
+      from: `"Kaaga" <${process.env.EMAIL_FROM || 'noreply@recollect.com'}>`,
       to: user.email,
-      subject: 'Welcome to ReCollect',
+      subject: 'Welcome to Kaaga',
       html: wrapEmail(emailContent, frontendUrl)
     });
     return true;
@@ -182,7 +182,7 @@ export const sendWelcomeEmail = async (user: any): Promise<boolean> => {
 // The task reminder emails moved to controllers/workspace/workspaceEmails.ts and
 // controllers/personalTasks/personalEmails.ts. Callers skip undeliverable addresses (isDeliverableEmail).
 
-const RECOLLECT_FROM = () => `"Recollect" <${process.env.EMAIL_FROM || 'noreply@recollect.com'}>`;
+const RECOLLECT_FROM = () => `"Kaaga" <${process.env.EMAIL_FROM || 'noreply@recollect.com'}>`;
 
 /** To the owner: someone reading his published doc asks to edit it; he answers in the Share menu. */
 export const sendDocRequestEmail = async (
@@ -322,7 +322,7 @@ export function morningNudgeText(nudge: MorningNudgeEmail, appUrl: string): stri
     lines.push('', 'Goals');
     for (const g of nudge.goals) lines.push(`- ${g.title}: ${g.when}`);
   }
-  lines.push('', `Open Recollect: ${appUrl}`);
+  lines.push('', `Open Kaaga: ${appUrl}`);
   return lines.join('\n');
 }
 
@@ -338,12 +338,12 @@ export const sendMorningNudgeEmail = async (to: { name: string; email: string },
       ${nudge.moreCount > 0 ? uiBody(`+ ${nudge.moreCount} more in today's plan.`) : ''}
       ${nudge.goals.length > 0 ? uiGoals(nudge.goals) : ''}
       <div style="margin: 24px 0 8px;">
-        ${uiButton(frontendUrl, 'Open Recollect')}
+        ${uiButton(frontendUrl, 'Open Kaaga')}
       </div>
     `;
 
     await transporter.sendMail({
-      from: `"ReCollect" <${process.env.EMAIL_FROM || 'noreply@recollect.com'}>`,
+      from: `"Kaaga" <${process.env.EMAIL_FROM || 'noreply@recollect.com'}>`,
       to: to.email,
       subject: nudge.subject,
       html: wrapEmail(emailContent, frontendUrl),
@@ -370,8 +370,8 @@ export interface AwakeAlertEmail {
 /** The subject and plain text of an awake-time alert (to OWNER_EMAIL). */
 export function awakeAlertText(info: AwakeAlertEmail): { subject: string; text: string } {
   const subject = info.alert === 'pace'
-    ? `Recollect's database: on pace for ${info.projectedHours} of ${info.allowanceHours} free hours this month`
-    : `Recollect's database: ${info.alert}% of this month's free hours used`;
+    ? `Kaaga's database: on pace for ${info.projectedHours} of ${info.allowanceHours} free hours this month`
+    : `Kaaga's database: ${info.alert}% of this month's free hours used`;
   const text = [
     `${info.month}: the database has been awake about ${info.hours} h of the ${info.allowanceHours} h the free plan allows (${info.percent}%).`,
     `At this pace the month ends near ${info.projectedHours} h. When the hours run out, Neon suspends the database until next month.`,
@@ -385,7 +385,7 @@ export const sendAwakeAlertEmail = async (to: string, info: AwakeAlertEmail): Pr
     const transporter = createTransporter();
     const { subject, text } = awakeAlertText(info);
     await transporter.sendMail({
-      from: `"ReCollect" <${process.env.EMAIL_FROM || 'noreply@recollect.com'}>`,
+      from: `"Kaaga" <${process.env.EMAIL_FROM || 'noreply@recollect.com'}>`,
       to,
       subject,
       text,

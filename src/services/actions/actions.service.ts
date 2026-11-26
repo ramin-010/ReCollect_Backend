@@ -140,15 +140,18 @@ export async function requestAction(userId: string, agentName: string, body: Act
             text,
             reason: body.reason ? body.reason.slice(0, 200) : null,
             payload: { action: body.action, input } as Prisma.InputJsonValue,
-            proposedBy: agentName === ASK_AI_AGENT ? 'ask_ai' : 'agent',
+            proposedBy: isAskAiAgent(agentName) ? 'ask_ai' : 'agent',
             agentName,
             expiresDay: toDbDay(expires),
         },
     });
 }
 
-/** The manager's agent name (its writes and actions carry it). */
-export const ASK_AI_AGENT = 'Ask AI';
+/** The manager's agent name (its writes and actions carry it): Ask Kaaga since 11-26 (KAAGA_REBRAND_PLAN). */
+export const ASK_AI_AGENT = 'Ask Kaaga';
+/** Its names, old and new: writes made before the rename still count as the manager's. */
+export const ASK_AI_AGENTS: readonly string[] = [ASK_AI_AGENT, 'Ask AI'];
+export const isAskAiAgent = (name: string | null | undefined): boolean => !!name && ASK_AI_AGENTS.includes(name);
 
 /** Accepting an action suggestion (his tap): run the call it holds, checked again. */
 export async function runAction(userId: string, payload: Record<string, unknown>): Promise<string> {

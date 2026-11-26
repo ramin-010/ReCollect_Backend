@@ -1,4 +1,4 @@
-// Learning (Revise's dashboard inside Recollect): LEARNING_SPEC §2 endpoints #1–33, plus the daily
+// Learning (Revise's dashboard inside Kaaga): LEARNING_SPEC §2 endpoints #1–33, plus the daily
 // loop v2 (LOOP_V2_SPEC): settings GET, focus lines, goals + milestones, fresh start.
 // Mounted with app.use('/api', …) after userRoutes. Every route is behind authMiddleware and
 // scoped to the logged-in user (another user's ids are 404 `Not found`).

@@ -1,4 +1,4 @@
-// Sign-in for MCP clients (ALWAYS_ON_SPEC 6.5 and its build notes): Recollect is its own OAuth 2.1
+// Sign-in for MCP clients (ALWAYS_ON_SPEC 6.5 and its build notes): Kaaga is its own OAuth 2.1
 // authorization server for its remote MCP server (/mcp), so claude.ai's connector and Claude Code can
 // sign in with the user's consent instead of a pasted token. Checked against the MCP authorization spec
 // 2026-07-28 and Claude's connector docs.
@@ -32,7 +32,7 @@ export const selfUrl = (): string => (process.env['RECOLLECT_SELF_URL'] || `http
 export const mcpResource = (): string => `${selfUrl()}/mcp`;
 
 /**
- * Where this server calls itself (hosting P1-9: /mcp's tools and Ask AI run on the same API), on
+ * Where this server calls itself (hosting P1-9: /mcp's tools and Ask Kaaga run on the same API), on
  * the port the request came in on. RECOLLECT_SELF_URL is only for the metadata, the issuer and links.
  * With HOST set (production: 127.0.0.1) the loopback address it listens on; without it, localhost:
  * the dev server listens on every interface and on his Windows PC answers localhost (IPv6), not
@@ -66,7 +66,7 @@ export function protectedResourceMetadata() {
         authorization_servers: [selfUrl()],
         scopes_supported: [...API_SCOPES],
         bearer_methods_supported: ['header'],
-        resource_name: 'Recollect',
+        resource_name: 'Kaaga',
     };
 }
 
