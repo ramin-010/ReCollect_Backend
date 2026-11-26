@@ -19,12 +19,12 @@ const BORDER_COLOR = '#e4e4e7';
 
 // ─── Responsive Logo Block ───────────────────────────────────────────
 const logoBlock = (size: number = 24): string => `
-<img src="${LOGO_LIGHT_URL}" class="logo-light" alt="Kaaga" width="${size}" height="${size - 8} " style="display: block;" />
-<!--[if !mso]><!--><img src="${LOGO_DARK_URL}" class="logo-dark" alt="Kaaga" width="${size}" height="${size - 8}" style="display: none;" /><!--<![endif]-->`;
+<img src="${LOGO_LIGHT_URL}" class="logo-light" alt="Kaaga" width="${size}" height="${size}" style="display: block;" />
+<!--[if !mso]><!--><img src="${LOGO_DARK_URL}" class="logo-dark" alt="Kaaga" width="${size}" height="${size}" style="display: none;" /><!--<![endif]-->`;
 
 // ─── Header Avatar Block ─────────────────────────────────────────────
 const avatarBlock = (name: string, size: number = 24): string => {
-  const initial = name ? name.charAt(0).toUpperCase() : 'R';
+  const initial = name ? name.charAt(0).toUpperCase() : 'K';
   return `<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="width: ${size}px; height: ${size}px; background-color: #ededed; border-radius: 4px; border: 1px solid #e1e1e1;"><tr><td align="center" valign="middle" style="font-size: ${Math.floor(size * 0.6)}px; font-weight: 600; color: #37352f; line-height: 1; padding-bottom: 2px;">${initial}</td></tr></table>`;
 };
 
