@@ -43,6 +43,7 @@ function route(method: Method, pattern: string, scope: ApiScope, also?: ApiScope
 export const TOKEN_ROUTES: readonly TokenRoute[] = [
     // Agent API (src/routers/agent.routes.ts)
     route('GET', '/api/agent/docs', 'read'),
+    route('GET', '/api/agent/docs/tree', 'read'),
     route('GET', '/api/agent/docs/:id', 'read'),
     route('POST', '/api/agent/docs', 'docs:write'),
     route('PATCH', '/api/agent/docs/:id', 'docs:write'),

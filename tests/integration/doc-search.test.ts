@@ -106,7 +106,7 @@ describe('GET /api/docs/search', () => {
         const res = await request(app).get('/api/docs/search').query({ q: 'ring nodes' }).set('Cookie', authCookie(user));
         expect(res.status).toBe(200);
         expect(res.body.data).toEqual([
-            { _id: doc.id, title: 'Consistent hashing', updatedAt: expect.any(String), snippet: 'Keys move to the next node on the ring', marks: [[22, 26], [34, 38]] },
+            { _id: doc.id, title: 'Consistent hashing', updatedAt: expect.any(String), snippet: 'Keys move to the next node on the ring', marks: [[22, 26], [34, 38]], path: [] },
         ]);
         expect((await request(app).get('/api/docs/search').query({ q: 'ring' })).status).toBe(401);
         expect((await request(app).get('/api/docs/search').query({ q: 'ring', limit: 0 }).set('Cookie', authCookie(user))).status).toBe(400);

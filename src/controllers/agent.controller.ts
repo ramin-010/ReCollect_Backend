@@ -20,6 +20,7 @@ import {
     searchDocsForAgent,
     trashDocForAgent,
     updateDocForAgent,
+    docTreeForAgent,
 } from '../services/agent/agentDocs.service';
 import { EDITS_LIMIT_MAX, listAgentEdits, markAgentEditsSeen, undoAgentEdit } from '../services/agent/agentEdits.service';
 import { previewCanvasForAgent, updateCanvasForAgent } from '../services/agent/agentCanvas.service';
@@ -53,6 +54,18 @@ export const restoreDoc = handler(async (req, res) => {
     ok(res, await restoreDocForAgent(agentActor(req), param(req, 'id')));
 });
 
+const treeSchema = z.object({
+    docId: zId.optional(),
+    depth: z.coerce.number().int().min(1).max(64).optional(),
+    content: z.enum(['1', 'true', '0', 'false']).optional(),
+});
+
+/** GET /api/agent/docs/tree ?docId= &depth= &content=1 → { root, nodes, left } (DOC_PAGES_PLAN §3.4) */
+export const docTree = handler(async (req, res) => {
+    const { docId, depth, content } = parse(treeSchema, req.query);
+    ok(res, await docTreeForAgent(requireUser(req).id, { docId, depth, content: content === '1' || content === 'true' }));
+});
+
 /** GET /api/agent/docs/:id → { id, title, markdown, subject, topicId, updatedAt, canEdit } */
 export const readDoc = handler(async (req, res) => {
     ok(res, await readDocForAgent(requireUser(req).id, param(req, 'id')));
@@ -79,9 +92,14 @@ const updateDocSchema = z
         title: z.string().trim().min(1, 'title cannot be empty').max(AGENT_TITLE_MAX).optional(),
         subjectId: zId.optional(),
         topicId: zId.optional(),
+        // DOC_PAGES_PLAN §3.4: move it inside a doc (null: the top level), after one of its pages or at the 'start'.
+        parentId: zId.nullable().optional(),
+        after: z.union([z.literal('start'), zId]).optional(),
     })
     .strict()
-    .refine((v) => v.title !== undefined || v.subjectId !== undefined || v.topicId !== undefined, { message: 'Send title, subjectId or topicId' });
+    .refine((v) => v.title !== undefined || v.subjectId !== undefined || v.topicId !== undefined || v.parentId !== undefined || v.after !== undefined, {
+        message: 'Send title, subjectId, topicId, parentId or after',
+    });
 
 /** PATCH /api/agent/docs/:id {title?, subjectId?, topicId?} → { id, title, subject, topicId, changes, editId } (editId null: nothing changed) */
 export const updateDoc = handler(async (req, res) => {

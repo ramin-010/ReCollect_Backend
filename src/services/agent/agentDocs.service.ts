@@ -12,7 +12,9 @@
 // the ```canvas fence), writes lay out the diagrams of the text form first (../docs/diagram), then
 // absorb each board into the doc's canvas maps in the same transaction as the blocks, so Undo
 // takes both back. A write that makes canvases answers with a report per canvas (`canvases`).
-import { assertParentForNewPage, nextPosition, pagesOf, trailFor } from '../docs/docTree.service';
+import { assertParentForNewPage, lessonOf, moveDoc, nextPosition, pagesInside, pagesOf, placeAt, trailFor, type MoveResult } from '../docs/docTree.service';
+import { accessibleDocWhere } from '../docs/docPermissions';
+import { searchTextOf } from '../docs/docSearch.service';
 import type { AgentEdit, Prisma } from '@prisma/client';
 import { hasRevisionCard } from './docCard';
 import type { JSONContent } from '@tiptap/core';
@@ -64,6 +66,8 @@ export interface AgentDocListItem {
     subject: string | null;
     updatedAt: Date;
     snippet: string;
+    /** DOC_PAGES_PLAN §3.4: the titles of the docs above it, root first. */
+    path: string[];
 }
 
 /**
@@ -80,6 +84,7 @@ export async function searchDocsForAgent(userId: string, options: { query?: stri
         subject: subjects.get(hit.id)?.name ?? null,
         updatedAt: hit.updatedAt,
         snippet: hit.snippet,
+        path: hit.path,
     }));
 }
 
@@ -110,7 +115,9 @@ export async function readDocForAgent(userId: string, docId: string) {
     const subject = (await subjectsOf(userId, [doc.id])).get(doc.id) ?? null;
     const topic = await prisma.topic.findUnique({ where: { userId_docId: { userId, docId: doc.id } }, select: { id: true } });
     // STUDY_FLOW_PLAN: whether it has a revision card, and how many notes and links its lesson holds.
-    const notes = topic ? await prisma.capture.count({ where: { userId, topicId: topic.id } }) : 0;
+    // DOC_PAGES_PLAN §3.4 (D5): a page inside a lesson is revised with it; its notes are the lesson's.
+    const lesson = topic ? null : await lessonOf(doc.id, userId);
+    const notes = topic || lesson ? await prisma.capture.count({ where: { userId, topicId: topic?.id ?? lesson!.topicId } }) : 0;
     // DOC_PAGES_PLAN §3.4: where it sits (the docs above it they can open) and the pages inside it.
     const [path, pages] = await Promise.all([trailFor(doc.id, userId), pagesOf(doc.id, userId)]);
     return {
@@ -118,6 +125,7 @@ export async function readDocForAgent(userId: string, docId: string) {
         title,
         path,
         pages: pages.map((p) => ({ id: p.id, title: p.title, pages: p.pages })),
+        lesson: lesson ? { docId: lesson.docId, title: lesson.title } : null,
         markdown: docJsonToMarkdown(json),
         subject,
         topicId: topic?.id ?? null,
@@ -180,6 +188,11 @@ export async function createDocFromMarkdown(userId: string, input: CreateAgentDo
     const title = normalizeDocTitle(input.title);
     if (title.length > AGENT_TITLE_MAX) throw new ErrorResponse(400, `A title is at most ${AGENT_TITLE_MAX} characters`);
     if (input.revise && !input.subjectId && !input.topicId) throw new ErrorResponse(400, 'revise needs a subjectId (the subject to revise it under) or a topicId');
+    // DOC_PAGES_PLAN §3.4 (D5): a page inside a lesson has no schedule of its own.
+    if (input.parentId && (input.subjectId || input.topicId || input.revise)) {
+        const lesson = await lessonOf(input.parentId, userId);
+        if (lesson) throw new ErrorResponse(400, `A page inside the lesson ${quoted(lesson.title)} is revised with it: leave out subject, topicId and revise.`);
+    }
     const subject = input.subjectId
         ? await prisma.subject.findFirst({ where: { id: input.subjectId, userId }, select: { id: true, name: true } })
         : null;
@@ -272,6 +285,10 @@ export interface UpdateAgentDocInput {
     subjectId?: string | undefined;
     /** Make it the note of this planned topic (see attachDocToTopic). */
     topicId?: string | undefined;
+    /** DOC_PAGES_PLAN §3.4: move it inside this doc (null: the top level). */
+    parentId?: string | null | undefined;
+    /** A page of the parent to go after, or 'start'. */
+    after?: string | undefined;
 }
 
 /** What Undo of a doc_update puts back. */
@@ -284,6 +301,8 @@ interface DocUpdateUndo {
     moved?: { topicId: string; subjectId: string; sortOrder: number | null };
     /** A planned topic the doc became the note of. */
     attached?: TopicBeforeAttach;
+    /** A move (DOC_PAGES_PLAN §3.4): Undo puts it back while it is still where the move put it. */
+    parent?: { from: { parentId: string | null; position: number }; to: { parentId: string | null } };
 }
 
 /** The doc's title, live: an open editor shows it at once; the store copies it to the row. */
@@ -318,30 +337,53 @@ export async function updateDocForAgent(actor: AgentActor, docId: string, input:
     const undo: DocUpdateUndo = {};
     const parts: string[] = [];
     const finalTitle = title ?? current;
-    if (input.topicId && !existing) {
-        const attached = await attachDocToTopic(userId, { topicId: input.topicId, docId, title: finalTitle, revise: false, subjectId: subject?.id });
-        undo.attached = attached.before;
-        parts.push(`made it a topic of the ${attached.subject.name} path`);
-    } else if (subject && !input.topicId) {
-        if (!existing) {
-            const created = await createTopic(userId, { docId, subjectId: subject.id, startRevisions: false });
-            undo.createdTopic = created.topic._id;
-            parts.push(`filed it under ${subject.name}`);
-        } else if (existing.subjectId !== subject.id) {
-            await prisma.topic.update({ where: { id: existing.id }, data: { subjectId: subject.id, sortOrder: null }, select: { id: true } });
-            undo.moved = { topicId: existing.id, subjectId: existing.subjectId, sortOrder: existing.sortOrder };
-            parts.push(`moved it from ${existing.subject.name} to ${subject.name}`);
-        }
+    // DOC_PAGES_PLAN §3.4: the move first (its checks refuse most often), taken back if what follows fails.
+    let moved: MoveResult | null = null;
+    if (input.parentId !== undefined || input.after !== undefined) {
+        const row = await prisma.doc.findUniqueOrThrow({ where: { id: docId }, select: { parentId: true } });
+        const parentId = input.parentId !== undefined ? input.parentId : row.parentId;
+        if (input.parentId === undefined && !parentId) throw new ErrorResponse(400, '`after` orders the pages inside a doc, and this one is at the top level: give parentId too');
+        moved = await moveDoc(userId, docId, { parentId, ...(input.after !== undefined ? { after: input.after } : {}) });
+        undo.parent = { from: moved.before, to: { parentId: moved.after.parentId } };
+        const into = quoted(moved.parentTitle?.trim() || 'Untitled');
+        parts.push(!moved.after.parentId ? 'moved it to the top level' : moved.before.parentId === moved.after.parentId ? `moved it to a new place among the pages of ${into}` : `moved it inside ${into}`);
     }
-    if (title !== undefined && title !== current) {
-        await setDocTitle(docId, actor.agentName, title);
-        undo.title = { from: current, to: title };
-        parts.unshift(`renamed it ${quoted(title)}`);
+    try {
+        if (input.topicId && !existing) {
+            const attached = await attachDocToTopic(userId, { topicId: input.topicId, docId, title: finalTitle, revise: false, subjectId: subject?.id });
+            undo.attached = attached.before;
+            parts.push(`made it a topic of the ${attached.subject.name} path`);
+        } else if (subject && !input.topicId) {
+            if (!existing) {
+                const created = await createTopic(userId, { docId, subjectId: subject.id, startRevisions: false });
+                undo.createdTopic = created.topic._id;
+                parts.push(`filed it under ${subject.name}`);
+            } else if (existing.subjectId !== subject.id) {
+                await prisma.topic.update({ where: { id: existing.id }, data: { subjectId: subject.id, sortOrder: null }, select: { id: true } });
+                undo.moved = { topicId: existing.id, subjectId: existing.subjectId, sortOrder: existing.sortOrder };
+                parts.push(`moved it from ${existing.subject.name} to ${subject.name}`);
+            }
+        }
+        if (title !== undefined && title !== current) {
+            await setDocTitle(docId, actor.agentName, title);
+            undo.title = { from: current, to: title };
+            parts.unshift(`renamed it ${quoted(title)}`);
+        }
+    } catch (err) {
+        if (moved) await placeAt(docId, moved.before).catch(() => {});
+        throw err;
     }
 
     const after = (await subjectsOf(userId, [docId])).get(docId) ?? null;
     const topic = await prisma.topic.findUnique({ where: { userId_docId: { userId, docId } }, select: { id: true } });
-    const result = { id: docId, title: finalTitle, subject: after, topicId: topic?.id ?? null, changes: parts };
+    const result = {
+        id: docId,
+        title: finalTitle,
+        subject: after,
+        topicId: topic?.id ?? null,
+        changes: parts,
+        ...(moved ? { parent: moved.after.parentId ? { id: moved.after.parentId, title: moved.parentTitle } : null } : {}),
+    };
     if (parts.length === 0) return { ...result, editId: null };
     const editId = await recordAgentEdit(actor, {
         kind: 'doc_update',
@@ -375,6 +417,19 @@ export async function undoDocUpdate(userId: string, edit: Pick<AgentEdit, 'docId
             });
         }
     }
+    // A move goes back while the doc is still where it put it; with its old parent gone or in the trash, to the top.
+    const parent = data['parent'] as { from?: { parentId?: unknown; position?: unknown }; to?: { parentId?: unknown } } | undefined;
+    if (parent?.from && parent.to) {
+        const to = typeof parent.to.parentId === 'string' ? parent.to.parentId : null;
+        const from = typeof parent.from.parentId === 'string' ? parent.from.parentId : null;
+        const row = await prisma.doc.findUnique({ where: { id: edit.docId }, select: { parentId: true, userId: true, trashedAt: true } });
+        if (row && row.userId === userId && !row.trashedAt && row.parentId === to) {
+            const old = from ? await prisma.doc.findUnique({ where: { id: from }, select: { trashedAt: true } }) : null;
+            const back = old && !old.trashedAt ? from : null;
+            await moveDoc(userId, edit.docId, { parentId: back });
+            if (back && typeof parent.from.position === 'number') await placeAt(edit.docId, { parentId: back, position: parent.from.position });
+        }
+    }
     const title = data['title'] as { from?: unknown; to?: unknown } | undefined;
     if (title && typeof title.from === 'string' && typeof title.to === 'string') {
         const doc = await findAccessibleDoc(edit.docId, userId);
@@ -388,15 +443,121 @@ export async function undoDocUpdate(userId: string, edit: Pick<AgentEdit, 'docId
 /** POST /api/agent/docs/:id/trash: the doc goes to the trash for 30 days (Undo takes it out). */
 export async function trashDocForAgent(actor: AgentActor, docId: string) {
     const state = await trashDoc(actor.userId, docId);
-    const editId = state.changed ? await recordAgentEdit(actor, { kind: 'doc_trash', summary: `Moved ${quoted(state.title)} to the trash`, docId, entityId: docId }) : null;
-    return { id: docId, title: state.title, trashedAt: state.trashedAt, editId };
+    // DOC_PAGES_PLAN §3.4: the pages inside it go with it.
+    const withPages = state.pages > 0 ? ` and the ${plural(state.pages, 'page')} inside it` : '';
+    const editId = state.changed ? await recordAgentEdit(actor, { kind: 'doc_trash', summary: `Moved ${quoted(state.title)}${withPages} to the trash`, docId, entityId: docId }) : null;
+    return { id: docId, title: state.title, trashedAt: state.trashedAt, pages: state.pages, editId };
 }
 
 /** POST /api/agent/docs/:id/restore: the doc comes out of the trash (Undo puts it back). */
 export async function restoreDocForAgent(actor: AgentActor, docId: string) {
     const state = await restoreDoc(actor.userId, docId);
-    const editId = state.changed ? await recordAgentEdit(actor, { kind: 'doc_restore', summary: `Took ${quoted(state.title)} out of the trash`, docId, entityId: docId }) : null;
-    return { id: docId, title: state.title, trashedAt: state.trashedAt, editId };
+    const withPages = state.pages > 0 ? ` with the ${plural(state.pages, 'page')} inside it` : '';
+    const top = state.detached ? ' (back at the top level: the doc it was in is still in the trash)' : '';
+    const editId = state.changed ? await recordAgentEdit(actor, { kind: 'doc_restore', summary: `Took ${quoted(state.title)} out of the trash${withPages}${top}`, docId, entityId: docId }) : null;
+    return { id: docId, title: state.title, trashedAt: state.trashedAt, pages: state.pages, detached: state.detached, editId };
+}
+
+// ─── The tree (DOC_PAGES_PLAN §3.4) ───────────────────────────────────
+
+/** With content: the pages' Markdown, in tree order, up to this many characters; the rest are named. */
+export const TREE_CONTENT_MAX = 60_000;
+/** Without a doc: at most this many top-level docs. */
+export const TREE_TOP_MAX = 200;
+
+export interface AgentTreeNode {
+    id: string;
+    parentId: string | null;
+    depth: number;
+    title: string;
+    /** How many pages it holds (that this user reaches). */
+    pages: number;
+    /** About how long its text is (characters). */
+    chars: number;
+    updatedAt: Date;
+    /** Filed under a subject (a lesson with its own reviews). */
+    lesson: boolean;
+    markdown?: string;
+}
+
+/** Sizes and update times of these docs (one query; a doc whose search words are not written yet is measured now). */
+async function sizesOf(ids: readonly string[]): Promise<Map<string, { chars: number; updatedAt: Date }>> {
+    if (!ids.length) return new Map();
+    const rows = await prisma.$queryRaw<Array<{ id: string; updatedAt: Date; chars: number | null }>>`
+        SELECT "id", "updatedAt", length("searchText") AS "chars" FROM "Doc" WHERE "id" = ANY(${[...ids]}::text[])`;
+    const missing = rows.filter((r) => r.chars === null).map((r) => r.id);
+    const measured = new Map<string, number>();
+    if (missing.length) {
+        for (const d of await prisma.doc.findMany({ where: { id: { in: missing } }, select: { id: true, yjsState: true } })) measured.set(d.id, searchTextOf(d.yjsState).length);
+    }
+    return new Map(rows.map((r) => [r.id, { chars: r.chars ?? measured.get(r.id) ?? 0, updatedAt: r.updatedAt }]));
+}
+
+/**
+ * GET /api/agent/docs/tree ?docId= &depth= &content=1 → { root, nodes, left }. With docId: that doc (depth 0) and the
+ * pages inside it this user reaches, depth-first, at most `depth` levels down; `content` adds each one's Markdown in
+ * tree order until TREE_CONTENT_MAX characters are used (the rest named in `left`). Without docId: their top-level docs
+ * (and docs whose parent they can't open), most recently updated first, no content.
+ */
+export async function docTreeForAgent(userId: string, input: { docId?: string | undefined; depth?: number | undefined; content?: boolean | undefined }) {
+    if (!input.docId) {
+        const tops = await prisma.doc.findMany({
+            where: {
+                trashedAt: null,
+                AND: [accessibleDocWhere(userId), { OR: [{ parentId: null }, { parentId: { not: null }, parent: { isNot: accessibleDocWhere(userId) } }] }],
+            },
+            select: { id: true, title: true, _count: { select: { pages: { where: { trashedAt: null } } } } },
+            orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
+            take: TREE_TOP_MAX,
+        });
+        const sizes = await sizesOf(tops.map((t) => t.id));
+        const lessons = new Set((await prisma.topic.findMany({ where: { userId, docId: { in: tops.map((t) => t.id) } }, select: { docId: true } })).map((t) => t.docId));
+        const nodes: AgentTreeNode[] = tops.map((t) => ({
+            id: t.id,
+            parentId: null,
+            depth: 0,
+            title: t.title,
+            pages: t._count.pages,
+            chars: sizes.get(t.id)?.chars ?? 0,
+            updatedAt: sizes.get(t.id)?.updatedAt ?? new Date(0),
+            lesson: lessons.has(t.id),
+        }));
+        return { root: null, nodes, left: [] as Array<{ id: string; title: string; chars: number }> };
+    }
+    const doc = await findAccessibleDoc(input.docId, userId);
+    if (!doc) throw new ErrorResponse(404, 'Doc not found');
+    const path = await trailFor(doc.id, userId);
+    const reached = await pagesInside(doc.id, userId);
+    const kids = new Map<string, number>();
+    for (const r of reached) if (r.parentId) kids.set(r.parentId, (kids.get(r.parentId) ?? 0) + 1);
+    const shown = reached.filter((r) => !input.depth || r.depth <= input.depth);
+    const ids = [doc.id, ...shown.map((r) => r.id)];
+    const sizes = await sizesOf(ids);
+    const lessons = new Set((await prisma.topic.findMany({ where: { userId, docId: { in: ids } }, select: { docId: true } })).map((t) => t.docId));
+    const title = currentContent(doc).title;
+    const nodes: AgentTreeNode[] = [
+        { id: doc.id, parentId: null, depth: 0, title },
+        ...shown.map((r) => ({ id: r.id, parentId: r.parentId, depth: r.depth, title: r.title })),
+    ].map((n) => ({ ...n, pages: kids.get(n.id) ?? 0, chars: sizes.get(n.id)?.chars ?? 0, updatedAt: sizes.get(n.id)?.updatedAt ?? doc.updatedAt, lesson: lessons.has(n.id) }));
+    const left: Array<{ id: string; title: string; chars: number }> = [];
+    if (input.content) {
+        const rows = new Map((await prisma.doc.findMany({ where: { id: { in: ids } }, select: { id: true, title: true, yjsState: true } })).map((d) => [d.id, d]));
+        let used = 0;
+        let full = false;
+        for (const n of nodes) {
+            const row = rows.get(n.id);
+            const markdown = row ? docJsonToMarkdown(currentContent(row).json) : '';
+            if (!full && used + markdown.length <= TREE_CONTENT_MAX) {
+                n.markdown = markdown;
+                n.chars = markdown.length;
+                used += markdown.length;
+            } else {
+                full = true;
+                left.push({ id: n.id, title: n.title, chars: markdown.length || n.chars });
+            }
+        }
+    }
+    return { root: { id: doc.id, title, path }, nodes, left };
 }
 
 // ─── Append / replace a section ───────────────────────────────────────

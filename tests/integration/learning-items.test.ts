@@ -125,7 +125,7 @@ describe('topics', () => {
         const doc = await prisma.doc.create({ data: { userId: user.id, title: 'Heaps' } });
 
         const before = await api(user).get(`/api/topics/by-doc/${doc.id}`);
-        expect(before.body.data).toEqual({ topic: null, chain: [], nextAction: { kind: 'start' }, hasCard: false });
+        expect(before.body.data).toEqual({ topic: null, chain: [], nextAction: { kind: 'start' }, hasCard: false, lesson: null });
 
         const created = await api(user).post('/api/topics', { docId: doc.id, subjectId: s.id, tags: ['heap', ' heap ', 'pq'] });
         expect(created.status).toBe(201);

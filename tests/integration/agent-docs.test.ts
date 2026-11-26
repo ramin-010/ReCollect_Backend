@@ -127,9 +127,10 @@ describe('GET /api/agent/docs and /:id', () => {
         expect(res.body.data).toEqual({
             id: doc.id,
             title: 'Heaps',
-            // DOC_PAGES_PLAN: a top-level doc with no pages inside.
+            // DOC_PAGES_PLAN: a top-level doc with no pages inside, a lesson itself (no lesson above it).
             path: [],
             pages: [],
+            lesson: null,
             markdown: '## Idea\n\nA **heap** keeps the min on top.',
             subject: { id: subject.id, name: 'DSA' },
             topicId: topic.id,
@@ -165,7 +166,7 @@ describe('GET /api/agent/docs and /:id', () => {
         const ids = res.body.data.map((d: { id: string }) => d.id);
         // Best match first: in the title and the text, then in the title alone, then in the text.
         expect(ids).toEqual([locks.id, shared.id, mvcc.id]);
-        expect(res.body.data[0]).toEqual({ id: locks.id, title: 'Postgres locks', subject: 'Databases', updatedAt: expect.any(String), snippet: 'Row locks block writers, not readers' });
+        expect(res.body.data[0]).toEqual({ id: locks.id, title: 'Postgres locks', subject: 'Databases', updatedAt: expect.any(String), snippet: 'Row locks block writers, not readers', path: [] });
         expect(res.body.data[2].snippet).toContain('block on row locks');
 
         expect((await agent.get('/api/agent/docs?query=row%20readers')).body.data.map((d: { id: string }) => d.id).sort()).toEqual([locks.id, mvcc.id].sort());

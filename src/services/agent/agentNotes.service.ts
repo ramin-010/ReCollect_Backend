@@ -13,6 +13,7 @@ import type { Capture, CaptureType, Prisma, Revision } from '@prisma/client';
 import { prisma } from '../../db/prisma';
 import ErrorResponse from '../../utils/errorResponse';
 import { findAccessibleDoc } from '../docs/docs.service';
+import { lessonOf } from '../docs/docTree.service';
 import { quoted, recordAgentEdit, type AgentActor } from './agentEditLog';
 import { fileList } from './agentNoteFiles.service';
 
@@ -26,8 +27,13 @@ interface Place {
     subjectId: string;
     subjectName: string;
     topicId: string | null;
+    /** The lesson's doc. */
     docId: string | null;
     lessonTitle: string | null;
+    /** DOC_PAGES_PLAN D4: the page it goes on (the lesson's doc or a page inside it); null on a subject. */
+    pageId: string | null;
+    /** The page's title when it is a page inside the lesson (not the lesson's doc itself). */
+    pageTitle: string | null;
 }
 
 const placeName = (p: Place): string => quoted(p.lessonTitle ?? p.subjectName, 80);
@@ -35,11 +41,12 @@ const placeName = (p: Place): string => quoted(p.lessonTitle ?? p.subjectName, 8
 /** A lesson by its doc, or a subject by its name (case aside). */
 async function placeOf(userId: string, where: { docId?: string | undefined; subject?: string | undefined }): Promise<Place> {
     if (where.docId) {
-        const topic = await prisma.topic.findFirst({
-            where: { userId, docId: where.docId },
-            select: { id: true, title: true, subjectId: true, subject: { select: { name: true } }, doc: { select: { title: true } } },
-        });
-        if (topic) return { subjectId: topic.subjectId, subjectName: topic.subject.name, topicId: topic.id, docId: where.docId, lessonTitle: topic.doc?.title || topic.title };
+        // DOC_PAGES_PLAN D4: a page inside a lesson is that lesson's place; the note remembers the page.
+        const lesson = await lessonOf(where.docId, userId);
+        if (lesson) {
+            const pageTitle = lesson.docId === where.docId ? null : (await prisma.doc.findUnique({ where: { id: where.docId }, select: { title: true } }))?.title?.trim() || 'Untitled';
+            return { subjectId: lesson.subjectId, subjectName: lesson.subjectName, topicId: lesson.topicId, docId: lesson.docId, lessonTitle: lesson.title, pageId: where.docId, pageTitle };
+        }
         if (!(await findAccessibleDoc(where.docId, userId))) throw new ErrorResponse(404, 'Doc not found');
         throw new ErrorResponse(409, "This doc isn't on a subject's path yet: file it under a subject first (update_doc), or save the note on the subject.");
     }
@@ -50,8 +57,11 @@ async function placeOf(userId: string, where: { docId?: string | undefined; subj
         const all = await prisma.subject.findMany({ where: { userId }, select: { name: true }, orderBy: { name: 'asc' }, take: 30 });
         throw new ErrorResponse(404, `No subject named ${quoted(name, 80)}.${all.length ? ` Their subjects: ${all.map((s) => s.name).join(', ')}.` : ' They have no subjects yet.'}`);
     }
-    return { subjectId: subject.id, subjectName: subject.name, topicId: null, docId: null, lessonTitle: null };
+    return { subjectId: subject.id, subjectName: subject.name, topicId: null, docId: null, lessonTitle: null, pageId: null, pageTitle: null };
 }
+
+/** " (on its page "X")" for a note on a page inside its lesson. */
+const onPage = (p: Pick<Place, 'pageTitle'>): string => (p.pageTitle ? ` (on its page ${quoted(p.pageTitle, 60)})` : '');
 
 /** A note an agent may touch: theirs, and attached to a lesson or a subject. */
 const attached = (userId: string): Prisma.CaptureWhereInput => ({ userId, OR: [{ subjectId: { not: null } }, { topicId: { not: null } }] });
@@ -59,6 +69,7 @@ const attached = (userId: string): Prisma.CaptureWhereInput => ({ userId, OR: [{
 const noteInclude = {
     subject: { select: { name: true } },
     topic: { select: { title: true, docId: true, doc: { select: { title: true } } } },
+    doc: { select: { title: true } },
 } satisfies Prisma.CaptureInclude;
 
 type NoteRow = Prisma.CaptureGetPayload<{ include: typeof noteInclude }>;
@@ -85,6 +96,8 @@ export function noteJson(c: NoteRow) {
         day: c.createdAt.toISOString(),
         by: c.createdBy === 'agent' ? c.agentName || 'an app' : 'the user',
         lesson: c.topic ? { docId: c.topic.docId, title: c.topic.doc?.title || c.topic.title } : null,
+        // DOC_PAGES_PLAN D4: the page inside its lesson it was written on (null: the lesson's own doc, or none).
+        page: c.docId && c.doc && c.docId !== c.topic?.docId ? { docId: c.docId, title: c.doc.title } : null,
         subject: c.subject?.name ?? null,
         // TOOL_ACCESS_PLAN §11.3: its files (attach_file adds one, read_note_file reads one by its number).
         files: fileList(c.attachments),
@@ -133,28 +146,29 @@ export async function addNoteForAgent(actor: AgentActor, input: AddNoteInput) {
     const here = await prisma.capture.findMany({ where: { userId: actor.userId, subjectId: place.subjectId, topicId: place.topicId }, select: { id: true, title: true, content: true, url: true } });
     const same = here.find((c) => (url && c.url && normUrl(c.url) === normUrl(url)) || (norm(c.title) === norm(title) && norm(c.content) === norm(content) && normUrl(c.url) === normUrl(url)));
     const lesson = place.docId ? { docId: place.docId, title: place.lessonTitle } : null;
-    if (same) return { id: same.id, kind: url && !content ? 'link' : 'note', title: titleOf(same), lesson, subject: place.subjectName, already: true as const, editId: null };
+    const page = place.pageTitle ? { docId: place.pageId, title: place.pageTitle } : null;
+    if (same) return { id: same.id, kind: url && !content ? 'link' : 'note', title: titleOf(same), lesson, page, subject: place.subjectName, already: true as const, editId: null };
 
     const type = kindOf(url, content);
     const { id, editId } = await prisma.$transaction(async (tx) => {
         const row = await tx.capture.create({
-            data: { userId: actor.userId, type, title, content, url, subjectId: place.subjectId, topicId: place.topicId, createdBy: 'agent', agentName: actor.agentName },
+            data: { userId: actor.userId, type, title, content, url, subjectId: place.subjectId, topicId: place.topicId, docId: place.pageId, createdBy: 'agent', agentName: actor.agentName },
             select: { id: true },
         });
         const editId = await recordAgentEdit(
             actor,
             {
                 kind: 'pocket_add',
-                summary: type === 'LINK' ? `Saved a link on ${placeName(place)}: ${quoted(title, 60)}` : `Added a note to ${placeName(place)}: ${quoted(title, 60)}`,
+                summary: type === 'LINK' ? `Saved a link on ${placeName(place)}${onPage(place)}: ${quoted(title, 60)}` : `Added a note to ${placeName(place)}${onPage(place)}: ${quoted(title, 60)}`,
                 entityId: row.id,
-                docId: place.docId,
+                docId: place.pageId ?? place.docId,
                 undoData: { note: { op: 'add' } },
             },
             tx
         );
         return { id: row.id, editId };
     });
-    return { id, kind: type === 'LINK' ? 'link' : 'note', title, lesson, subject: place.subjectName, editId };
+    return { id, kind: type === 'LINK' ? 'link' : 'note', title, lesson, page, subject: place.subjectName, editId };
 }
 
 export interface ListNotesInput {
@@ -169,7 +183,8 @@ export interface ListNotesInput {
 /** GET /api/agent/notes → { place, notes, more } (more: the cursor for the rest, or null). */
 export async function listNotesForAgent(userId: string, input: ListNotesInput) {
     let where: Prisma.CaptureWhereInput;
-    let place: { lesson: { docId: string; title: string | null } | null; subject: string | null } | null = null;
+    let place: { lesson: { docId: string; title: string | null } | null; page?: { docId: string; title: string } | null; subject: string | null } | null = null;
+    let pageFirst: string | null = null;
     if (input.ids?.length) {
         where = { id: { in: [...input.ids] }, ...attached(userId) };
     } else {
@@ -181,11 +196,19 @@ export async function listNotesForAgent(userId: string, input: ListNotesInput) {
             if (err instanceof ErrorResponse && err.statusCode === 409) return { place: null, notes: [], more: null };
             throw err;
         }
-        place = { lesson: p.docId ? { docId: p.docId, title: p.lessonTitle } : null, subject: p.subjectName };
+        place = { lesson: p.docId ? { docId: p.docId, title: p.lessonTitle } : null, page: p.pageTitle && p.pageId ? { docId: p.pageId, title: p.pageTitle } : null, subject: p.subjectName };
         where = p.topicId ? { userId, topicId: p.topicId } : { userId, subjectId: p.subjectId, ...(input.lessons ? {} : { topicId: null }) };
+        // DOC_PAGES_PLAN §3.4: on a page inside a lesson, the whole lesson's notes, this page's first.
+        if (p.topicId && p.pageTitle && p.pageId) pageFirst = p.pageId;
     }
     const skip = Math.max(0, input.cursor ?? 0);
-    const rows = await prisma.capture.findMany({ where, include: noteInclude, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip, take: 201 });
+    const order = [{ createdAt: 'desc' as const }, { id: 'desc' as const }];
+    const rows = pageFirst
+        ? [
+              ...(await prisma.capture.findMany({ where: { AND: [where, { docId: pageFirst }] }, include: noteInclude, orderBy: order, take: skip + 201 })),
+              ...(await prisma.capture.findMany({ where: { AND: [where, { OR: [{ docId: null }, { docId: { not: pageFirst } }] }] }, include: noteInclude, orderBy: order, take: skip + 201 })),
+          ].slice(skip, skip + 201)
+        : await prisma.capture.findMany({ where, include: noteInclude, orderBy: order, skip, take: 201 });
     const notes: ReturnType<typeof noteJson>[] = [];
     let used = 0;
     for (const row of rows.slice(0, 200)) {
@@ -208,7 +231,7 @@ export interface UpdateNoteInput {
 }
 
 /** The fields Undo puts back after a change. */
-const beforeOf = (c: Capture) => ({ title: c.title, content: c.content, url: c.url, type: c.type, subjectId: c.subjectId, topicId: c.topicId });
+const beforeOf = (c: Capture) => ({ title: c.title, content: c.content, url: c.url, type: c.type, subjectId: c.subjectId, topicId: c.topicId, docId: c.docId });
 
 /** PATCH /api/agent/notes/:id → the note as agents read it, with editId. */
 export async function updateNoteForAgent(actor: AgentActor, id: string, input: UpdateNoteInput) {
@@ -221,6 +244,7 @@ export async function updateNoteForAgent(actor: AgentActor, id: string, input: U
     if (move) {
         data.subjectId = move.subjectId;
         data.topicId = move.topicId;
+        data.docId = move.pageId;
     }
     if (!Object.keys(data).length) throw new ErrorResponse(400, 'Nothing to change: send title, markdown, url, or where it goes (docId or subject).');
     const content = data.content !== undefined ? (data.content as string | null) : row.content;
@@ -229,10 +253,10 @@ export async function updateNoteForAgent(actor: AgentActor, id: string, input: U
     data.type = kindOf(url, content);
 
     const name = quoted(titleOf(row), 60);
-    const summary = move && (move.topicId !== row.topicId || move.subjectId !== row.subjectId) ? `Moved the note ${name} to ${placeName(move)}` : `Changed the note ${name}`;
+    const summary = move && (move.topicId !== row.topicId || move.subjectId !== row.subjectId || move.pageId !== row.docId) ? `Moved the note ${name} to ${placeName(move)}${onPage(move)}` : `Changed the note ${name}`;
     const editId = await prisma.$transaction(async (tx) => {
         await tx.capture.update({ where: { id }, data, select: { id: true } });
-        return recordAgentEdit(actor, { kind: 'pocket_add', summary, entityId: id, docId: move?.docId ?? row.topic?.docId ?? null, undoData: { note: { op: 'update', before: beforeOf(row) } } }, tx);
+        return recordAgentEdit(actor, { kind: 'pocket_add', summary, entityId: id, docId: move?.pageId ?? move?.docId ?? row.docId ?? row.topic?.docId ?? null, undoData: { note: { op: 'update', before: beforeOf(row) } } }, tx);
     });
     return { ...noteJson(await attachedNote(actor.userId, id)), editId };
 }
@@ -247,7 +271,7 @@ export async function removeNoteForAgent(actor: AgentActor, id: string, input: {
     }
     const revisions = await prisma.revision.findMany({ where: { captureId: id } });
     // Everything Undo needs to bring it back with its id, its place and its reviews (its files stay in storage).
-    const { subject: _s, topic: _t, ...plain } = row;
+    const { subject: _s, topic: _t, doc: _d, ...plain } = row;
     const before = { ...plain, revisions } as unknown as Prisma.InputJsonValue;
     const summary = into ? `Merged the note ${quoted(titleOf(row), 60)} into ${quoted(titleOf(into), 60)}` : `Removed the note ${quoted(titleOf(row), 60)}`;
     const editId = await prisma.$transaction(async (tx) => {
@@ -264,6 +288,12 @@ const str = (v: unknown): string | null => (typeof v === 'string' ? v : null);
 const date = (v: unknown): Date | undefined => (typeof v === 'string' ? new Date(v) : undefined);
 /** `{ createdAt }` when the stored row had one (exact optional types: never `undefined`). */
 const createdAtOf = (v: unknown): { createdAt: Date } | Record<string, never> => (typeof v === 'string' ? { createdAt: new Date(v) } : {});
+
+/** The page a note was on, while it still exists (DOC_PAGES_PLAN D4). */
+async function pageStillThere(docId: string | null): Promise<string | null> {
+    if (!docId) return null;
+    return (await prisma.doc.findUnique({ where: { id: docId }, select: { id: true } }))?.id ?? null;
+}
 
 async function placeStillThere(userId: string, subjectId: string | null, topicId: string | null) {
     const [subject, topic] = await Promise.all([
@@ -293,6 +323,7 @@ export async function undoNoteEdit(userId: string, id: string, note: Json): Prom
                 // A lesson or subject deleted since: the note stays where it is now.
                 ...(place.subjectId || !b['subjectId'] ? { subjectId: place.subjectId } : {}),
                 ...(place.topicId || !b['topicId'] ? { topicId: place.topicId } : {}),
+                ...(b['docId'] !== undefined ? { docId: await pageStillThere(str(b['docId'])) } : {}),
             },
         });
         return;
@@ -316,6 +347,7 @@ export async function undoNoteEdit(userId: string, id: string, note: Json): Prom
                 isPinned: b['isPinned'] === true,
                 subjectId: place.subjectId,
                 topicId: place.topicId,
+                docId: await pageStillThere(str(b['docId'])),
                 attachments: (Array.isArray(b['attachments']) ? b['attachments'] : []) as Prisma.InputJsonValue,
                 createdBy: b['createdBy'] === 'agent' ? 'agent' : 'user',
                 agentName: str(b['agentName']),

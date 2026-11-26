@@ -226,7 +226,7 @@ describe('notes and links on a lesson or a subject (STUDY_FLOW_PLAN §4.3)', () 
 
         const byLesson = await chat.get(`/api/agent/notes?docId=${doc.id}`);
         expect(byLesson.body.data.notes.map((n: { title: string }) => n.title)).toEqual(['Why DNS uses UDP']);
-        expect(byLesson.body.data.place).toEqual({ lesson: { docId: doc.id, title: 'How DNS works' }, subject: 'Networking' });
+        expect(byLesson.body.data.place).toEqual({ lesson: { docId: doc.id, title: 'How DNS works' }, page: null, subject: 'Networking' });
         const bySubject = await chat.get('/api/agent/notes?subject=Networking');
         expect(bySubject.body.data.notes.map((n: { title: string }) => n.title)).toEqual(['DNS explained in 10 minutes']);
         const withLessons = await chat.get('/api/agent/notes?subject=Networking&lessons=1');

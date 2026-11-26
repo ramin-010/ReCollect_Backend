@@ -26,6 +26,7 @@ import {
     undoEdit,
     updateCanvas,
     updateDoc,
+    docTree,
 } from '../controllers/agent.controller';
 import { deleteBlocks, getOutline, insertBlocks, moveBlocks, readBlocks, updateBlock } from '../controllers/agentBlocks.controller';
 import { addNote, listNotes, putCard, removeNote, updateNote } from '../controllers/agentNotes.controller';
@@ -37,6 +38,8 @@ const router = express.Router();
 router.use(authOnce);
 
 router.get('/docs', requireScope('read'), searchDocs);
+// DOC_PAGES_PLAN §3.4: a doc's pages as a tree (before '/docs/:id').
+router.get('/docs/tree', requireScope('read'), docTree);
 router.get('/docs/:id', requireScope('read'), readDoc);
 router.post('/docs', requireScope('docs:write'), idempotency, createDoc);
 // Rename a doc, file it under a subject, or make it a planned topic's note (update_doc).
