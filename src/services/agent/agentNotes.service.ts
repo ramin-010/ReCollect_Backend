@@ -14,6 +14,7 @@ import { prisma } from '../../db/prisma';
 import ErrorResponse from '../../utils/errorResponse';
 import { findAccessibleDoc } from '../docs/docs.service';
 import { quoted, recordAgentEdit, type AgentActor } from './agentEditLog';
+import { fileList } from './agentNoteFiles.service';
 
 export const NOTE_TITLE_MAX = 120;
 export const NOTE_TEXT_MAX = 8000;
@@ -62,7 +63,7 @@ const noteInclude = {
 
 type NoteRow = Prisma.CaptureGetPayload<{ include: typeof noteInclude }>;
 
-async function attachedNote(userId: string, id: string, label = 'note'): Promise<NoteRow> {
+export async function attachedNote(userId: string, id: string, label = 'note'): Promise<NoteRow> {
     const row = await prisma.capture.findFirst({ where: { id, ...attached(userId) }, include: noteInclude });
     if (!row) throw new ErrorResponse(404, `No ${label} with the id ${id} on a lesson or a subject (list_notes shows them).`);
     return row;
@@ -85,6 +86,8 @@ export function noteJson(c: NoteRow) {
         by: c.createdBy === 'agent' ? c.agentName || 'an app' : 'the user',
         lesson: c.topic ? { docId: c.topic.docId, title: c.topic.doc?.title || c.topic.title } : null,
         subject: c.subject?.name ?? null,
+        // TOOL_ACCESS_PLAN §11.3: its files (attach_file adds one, read_note_file reads one by its number).
+        files: fileList(c.attachments),
     };
 }
 

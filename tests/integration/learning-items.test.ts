@@ -244,7 +244,9 @@ describe('captures', () => {
         expect((await api(stranger).patch(`/api/captures/${c.id}`, { title: 'x' })).status).toBe(404);
         expect((await api(user).delete(`/api/captures/${c.id}`)).body.data).toEqual({ deleted: true });
         expect(await prisma.revision.count({ where: { captureId: c.id } })).toBe(0);
-        expect(vi.mocked(batchDeleteFromCloud)).toHaveBeenCalledWith(['recollect-learning/a', 'legacy/one']);
+        // Each file is deleted as its own storage type (TOOL_ACCESS_PLAN §11.2); the old single file on its own.
+        expect(vi.mocked(batchDeleteFromCloud)).toHaveBeenCalledWith(['recollect-learning/a']);
+        expect(vi.mocked(batchDeleteFromCloud)).toHaveBeenCalledWith(['legacy/one']);
     });
 
     it('GET /api/captures: Find searches every capture by each word (title, text, link); ?inbox=1 lists the inbox; owner only', async () => {
@@ -290,15 +292,17 @@ describe('POST /api/learning/uploads', () => {
         });
     });
 
-    it('400 without a file, 413 over 20 MB, 401 without a cookie', async () => {
+    it('400 without a file, 413 over 10 MB (TOOL_ACCESS_PLAN §11.2), 400 for a video, 401 without a cookie', async () => {
         const user = await createLearner();
         const none = await request(app).post('/api/learning/uploads').set('Cookie', authCookie(user)).field('x', '1');
         expect([none.status, none.body.code]).toEqual([400, 'NO_FILE']);
         const big = await request(app)
             .post('/api/learning/uploads')
             .set('Cookie', authCookie(user))
-            .attach('file', Buffer.alloc(20 * 1024 * 1024 + 1), { filename: 'big.bin', contentType: 'application/octet-stream' });
-        expect([big.status, big.body.code]).toEqual([413, 'FILE_TOO_LARGE']);
+            .attach('file', Buffer.alloc(10 * 1024 * 1024 + 1), { filename: 'big.bin', contentType: 'application/octet-stream' });
+        expect([big.status, big.body.code, big.body.message]).toEqual([413, 'FILE_TOO_LARGE', 'Files can be at most 10 MB']);
+        const video = await request(app).post('/api/learning/uploads').set('Cookie', authCookie(user)).attach('file', Buffer.from('x'), { filename: 'clip.mov', contentType: 'text/plain' });
+        expect([video.status, video.body.code, video.body.message]).toEqual([400, 'VIDEO_NOT_ALLOWED', "Videos can't be attached. Save the link instead."]);
         expect((await request(app).post('/api/learning/uploads')).status).toBe(401);
     });
 });

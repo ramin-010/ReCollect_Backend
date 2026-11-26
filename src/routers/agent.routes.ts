@@ -29,6 +29,8 @@ import {
 } from '../controllers/agent.controller';
 import { deleteBlocks, getOutline, insertBlocks, moveBlocks, readBlocks, updateBlock } from '../controllers/agentBlocks.controller';
 import { addNote, listNotes, putCard, removeNote, updateNote } from '../controllers/agentNotes.controller';
+import { deletePocket, deleteSubject, listPocket, updatePocket, updateSubject } from '../controllers/agentPocket.controller';
+import { attachFile, noteFileBody, readFile, removeFile } from '../controllers/agentNoteFiles.controller';
 
 const router = express.Router();
 
@@ -59,6 +61,17 @@ router.get('/notes', requireScope('read'), listNotes);
 router.post('/notes', requireScope('learning:write'), idempotency, addNote);
 router.patch('/notes/:id', requireScope('learning:write'), idempotency, updateNote);
 router.post('/notes/:id/remove', requireScope('learning:write'), idempotency, removeNote);
+// TOOL_ACCESS_PLAN §11 (11-27): files on a note: attach (a file from disk, or its text or base64), remove, read.
+router.post('/notes/:id/files', requireScope('learning:write'), noteFileBody, idempotency, attachFile);
+router.post('/notes/:id/files/remove', requireScope('learning:write'), idempotency, removeFile);
+router.get('/notes/:id/files/:n', requireScope('read'), readFile);
+// TOOL_ACCESS_PLAN §4.7 (11-27): their pocket notes, only while they allow chats at them (403 POCKET_PRIVATE until then).
+router.get('/pocket', requireScope('read'), listPocket);
+router.patch('/pocket/:id', requireScope('learning:write'), idempotency, updatePocket);
+router.post('/pocket/:id/delete', requireScope('learning:write'), idempotency, deletePocket);
+// A subject renamed or described; deleted at once when it holds nothing, else a card that waits for their tap.
+router.patch('/subjects/:id', requireScope('learning:write'), idempotency, updateSubject);
+router.post('/subjects/:id/delete', requireScope('learning:write'), idempotency, deleteSubject);
 // Who can see a doc of his (get_sharing, read only): published or not, the people, the requests.
 router.get('/docs/:id/sharing', requireScope('read'), handler(async (req, res) => ok(res, await docSharingForAgent(requireUser(req).id, param(req, 'id')))));
 

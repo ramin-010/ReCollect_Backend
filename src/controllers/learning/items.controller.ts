@@ -118,6 +118,8 @@ const capturePatchSchema = z.object({
     category: optText(64),
     isPinned: z.boolean().optional(),
     subjectId: zId.nullable().optional(),
+    // TOOL_ACCESS_PLAN §11.3: the whole new list of files (one dropped from it leaves storage after the save).
+    attachments: z.array(zAttachment).max(20).optional(),
 });
 
 const flag = z.enum(['1', '0', 'true', 'false']).optional();

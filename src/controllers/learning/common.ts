@@ -39,4 +39,7 @@ export const zAttachment = z.object({
     publicId: z.string().max(512),
     fileName: z.string().max(512),
     fileType: z.string().max(256),
+    /** TOOL_ACCESS_PLAN §11.2: bytes, and the storage's resource type (older attachments have neither). */
+    size: z.number().int().min(0).optional(),
+    resourceType: z.string().max(16).optional(),
 });

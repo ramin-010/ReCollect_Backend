@@ -64,6 +64,15 @@ export const TOKEN_ROUTES: readonly TokenRoute[] = [
     route('POST', '/api/agent/notes', 'learning:write'),
     route('PATCH', '/api/agent/notes/:id', 'learning:write'),
     route('POST', '/api/agent/notes/:id/remove', 'learning:write'),
+    // TOOL_ACCESS_PLAN §4.7 (11-27): pocket notes (only while the person allows it) and subjects.
+    route('POST', '/api/agent/notes/:id/files', 'learning:write'),
+    route('POST', '/api/agent/notes/:id/files/remove', 'learning:write'),
+    route('GET', '/api/agent/notes/:id/files/:n', 'read'),
+    route('GET', '/api/agent/pocket', 'read'),
+    route('PATCH', '/api/agent/pocket/:id', 'learning:write'),
+    route('POST', '/api/agent/pocket/:id/delete', 'learning:write'),
+    route('PATCH', '/api/agent/subjects/:id', 'learning:write'),
+    route('POST', '/api/agent/subjects/:id/delete', 'learning:write'),
     route('GET', '/api/agent/edits', 'read'),
 
     // Canvas tools: stateless layout and drawing of a board (src/routers/canvas.routes.ts)
@@ -204,6 +213,13 @@ export const LOGGED: Readonly<Record<string, AgentEditKind>> = {
     'POST /api/agent/notes': 'pocket_add',
     'PATCH /api/agent/notes/:id': 'pocket_add',
     'POST /api/agent/notes/:id/remove': 'pocket_add',
+    // TOOL_ACCESS_PLAN §4.7: a subject that holds something only asks (a pending action, its own record).
+    'POST /api/agent/notes/:id/files': 'note_file_add',
+    'POST /api/agent/notes/:id/files/remove': 'note_file_remove',
+    'PATCH /api/agent/pocket/:id': 'pocket_update',
+    'POST /api/agent/pocket/:id/delete': 'pocket_delete',
+    'PATCH /api/agent/subjects/:id': 'subject_update',
+    'POST /api/agent/subjects/:id/delete': 'subject_delete',
     'POST /api/subjects': 'subject_create',
     'POST /api/topics': 'revision_schedule',
     'POST /api/revisions/start': 'revision_schedule',

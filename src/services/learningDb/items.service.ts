@@ -20,6 +20,7 @@ import {
 } from '../../db/serializers/learning';
 import { loadLearningContext, toEngineRevision } from './common';
 import { createRevisionChain, loadChain, rethrowAlreadyStarted } from './revisions.service';
+import { deleteStoredFiles } from './uploads.service';
 
 /** Revise's default subject colour. */
 export const DEFAULT_SUBJECT_COLOR = '#007acc';
@@ -391,6 +392,8 @@ export interface UpdateCaptureInput {
     isPinned?: boolean | undefined;
     /** null = move to the Inbox */
     subjectId?: string | null | undefined;
+    /** TOOL_ACCESS_PLAN §11.3: the whole new list of files. */
+    attachments?: Array<{ url: string; publicId: string; fileName: string; fileType: string; size?: number | undefined; resourceType?: string | undefined }> | undefined;
 }
 
 /** #19 */
@@ -405,7 +408,14 @@ export async function updateCapture(userId: string, captureId: string, input: Up
     if (input.category !== undefined) data.category = normalizeCategory(input.category);
     if (input.isPinned !== undefined) data.isPinned = input.isPinned;
     if (input.subjectId !== undefined) data.subjectId = input.subjectId;
+    // TOOL_ACCESS_PLAN §11.3: the whole new list of files; one dropped from it leaves storage after the save.
+    const before = input.attachments !== undefined ? await prisma.capture.findUniqueOrThrow({ where: { id: captureId }, select: { attachments: true } }) : null;
+    if (input.attachments !== undefined) data.attachments = input.attachments as unknown as Prisma.InputJsonValue;
     await prisma.capture.update({ where: { id: captureId }, data, select: { id: true } });
+    if (before && input.attachments) {
+        const kept = new Set(input.attachments.map((f) => f.publicId));
+        deleteStoredFiles((Array.isArray(before.attachments) ? (before.attachments as Array<{ publicId?: unknown; resourceType?: unknown; fileType?: unknown }>) : []).filter((f) => typeof f?.publicId === 'string' && !kept.has(f.publicId)));
+    }
     return loadCaptureJson(captureId);
 }
 
@@ -415,7 +425,8 @@ export async function deleteCapture(userId: string, captureId: string): Promise<
     if (!row) throw notFound();
     const { count } = await prisma.capture.deleteMany({ where: { id: captureId, userId } });
     if (count === 0) throw notFound();
-    cleanupCloud([...publicIdsOf(row.attachments), ...(row.cloudPublicId ? [row.cloudPublicId] : [])]);
+    deleteStoredFiles(Array.isArray(row.attachments) ? (row.attachments as Array<{ publicId?: unknown; resourceType?: unknown; fileType?: unknown }>) : []);
+    cleanupCloud(row.cloudPublicId ? [row.cloudPublicId] : []);
     return { deleted: true };
 }
 
@@ -474,6 +485,6 @@ export async function deleteQuickNote(userId: string, id: string): Promise<{ del
     const row = await prisma.quickNote.findFirst({ where: { id, userId }, select: { attachments: true } });
     if (!row) throw notFound();
     await prisma.quickNote.deleteMany({ where: { id, userId } });
-    cleanupCloud(publicIdsOf(row.attachments));
+    deleteStoredFiles(Array.isArray(row.attachments) ? (row.attachments as Array<{ publicId?: unknown; resourceType?: unknown; fileType?: unknown }>) : []);
     return { deleted: true };
 }

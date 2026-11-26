@@ -287,8 +287,11 @@ export function serializeLearningSettings(u: {
     progressIncludesWork?: boolean;
     progressIncludesBuilding?: boolean;
     newFolders?: NewFolders;
+    pocketForAgents?: boolean;
 }) {
     return {
+        /** TOOL_ACCESS_PLAN §4.7: chats may read and change their pocket notes (off by default; the app only). */
+        pocketForAgents: u.pocketForAgents === true,
         agentProfile: u.agentProfile ?? null,
         /** PERSONAL_OFFICE_PLAN: work counts as progress too (off: personal only). */
         progressIncludesWork: u.progressIncludesWork === true,

@@ -17,6 +17,9 @@
 // A row someone already deleted counts as undone. Each edit can be undone once.
 import type { AgentEdit, AgentEditKind, GoalStatus } from '@prisma/client';
 import { prisma } from '../../db/prisma';
+import { undoPocketDelete, undoPocketUpdate } from './agentPocket.service';
+import { undoSubjectDelete, undoSubjectUpdate } from './agentSubjects.service';
+import { undoNoteFileAdd, undoNoteFileRemove } from './agentNoteFiles.service';
 import ErrorResponse from '../../utils/errorResponse';
 import { GOAL_ACTIVE_LIMIT } from '../learningDb/goals.service';
 import { fromDbDay, loadLearningContext, toDbDay } from '../learningDb/common';
@@ -290,6 +293,15 @@ const UNDO: Record<AgentEditKind, (ctx: UndoContext) => Promise<void>> = {
     // The buddy: an agent's forget is undone by making the memory active again (409 if he changed it).
     // A correction (MCP_MEMORY_PLAN §4.3) is a close with `replacedBy`: its Undo also takes the new version away.
     memory_close: ({ userId, id, data }) => undoMemoryClose(userId, id, (data['before'] ?? {}) as UndoData, data),
+    // TOOL_ACCESS_PLAN §4.7: a pocket note's text and pin go back, a deleted one comes back with its id; a subject's
+    // name and description go back, a deleted (empty) one comes back through the app's own undo.
+    pocket_update: ({ userId, id, data }) => undoPocketUpdate(userId, id, (data['before'] ?? {}) as UndoData),
+    pocket_delete: ({ userId, id, data }) => undoPocketDelete(userId, id, (data['before'] ?? {}) as UndoData),
+    subject_update: ({ userId, id, data }) => undoSubjectUpdate(userId, id, (data['before'] ?? {}) as UndoData),
+    subject_delete: ({ userId, data }) => undoSubjectDelete(userId, data),
+    // TOOL_ACCESS_PLAN §11: a file on a note.
+    note_file_add: ({ userId, id, data }) => undoNoteFileAdd(userId, id, data),
+    note_file_remove: ({ userId, id, data }) => undoNoteFileRemove(userId, id, data),
 };
 
 async function performUndo(userId: string, edit: AgentEdit, now: Date): Promise<void> {

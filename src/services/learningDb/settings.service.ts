@@ -24,6 +24,7 @@ const settingsSelect = {
     progressIncludesWork: true,
     progressIncludesBuilding: true,
     newFolders: true,
+    pocketForAgents: true,
 } as const;
 
 export async function getLearningSettings(userId: string): Promise<LearningSettingsJson> {
@@ -48,6 +49,8 @@ export interface LearningSettingsInput {
     progressIncludesBuilding?: boolean | undefined;
     /** EASY_SETUP_PLAN: what a folder the server has never seen is (the app only). */
     newFolders?: NewFolders | undefined;
+    /** TOOL_ACCESS_PLAN §4.7: chats may read and change their pocket notes (the app only: agents may not change it). */
+    pocketForAgents?: boolean | undefined;
 }
 
 /**
@@ -74,6 +77,7 @@ export async function updateLearningSettings(userId: string, input: LearningSett
                 ...(input.progressIncludesWork !== undefined ? { progressIncludesWork: input.progressIncludesWork } : {}),
                 ...(input.progressIncludesBuilding !== undefined ? { progressIncludesBuilding: input.progressIncludesBuilding } : {}),
                 ...(input.newFolders !== undefined ? { newFolders: input.newFolders } : {}),
+                ...(input.pocketForAgents !== undefined ? { pocketForAgents: input.pocketForAgents } : {}),
             },
             select: settingsSelect,
         });

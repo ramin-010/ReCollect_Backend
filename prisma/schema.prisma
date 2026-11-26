@@ -113,6 +113,9 @@ model User {
   /// EASY_SETUP_PLAN (11-23): what a folder the server has never seen is (Settings › Tracking): ask (the agent asks
   /// them once), a kind, or off (not logged).
   newFolders               NewFolders @default(ask)
+  /// TOOL_ACCESS_PLAN §4.7 (11-27): chats may read, change and delete their pocket notes (Settings › Agents). Off by
+  /// default: agents add pocket notes, never read them, until the person allows it.
+  pocketForAgents          Boolean    @default(false)
   /// Time blocks / timeline / Day Manager / triage / debrief / catch-up. Off: GET /api/today
   /// returns schedule/triage/todayDebrief null and the rollover creates no slots.
   routineEnabled           Boolean    @default(false)
@@ -1153,6 +1156,37 @@ enum AgentEditKind {
   revisions_spread
   /// A memory about the user an agent closed (forget; Undo makes it active again).
   memory_close
+  /// TOOL_ACCESS_PLAN §4.7: a pocket note an agent changed (Undo puts its text and pin back) or deleted (Undo brings
+  /// it back with its id), only while the person lets chats at their pocket.
+  pocket_update
+  pocket_delete
+  /// A subject an agent renamed or described (Undo puts the old values back), or deleted (Undo is the app's own week
+  /// of undo for a deleted subject).
+  subject_update
+  subject_delete
+  /// TOOL_ACCESS_PLAN §11: a file an agent attached to a note (Undo takes it off, and out of storage) or took off one
+  /// (Undo puts it back while the stored file is kept).
+  note_file_add
+  note_file_remove
+}
+
+/// TOOL_ACCESS_PLAN §6.5: tool calls on the MCP doors, counted per day. No user, no arguments, no text: the product's
+/// view of which tools are used, which fail on their inputs, and what models look for and don't find.
+model McpToolStat {
+  /// YYYY-MM-DD (UTC).
+  day     String @db.VarChar(10)
+  door    String @db.VarChar(12)
+  /// The token's name: "ChatGPT", "Claude", "Claude Code"…
+  app     String @db.VarChar(60)
+  tool    String @db.VarChar(60)
+  /// direct, use_tool or use_read_tool.
+  via     String @db.VarChar(16)
+  /// ok, tool_error, bad_args, unknown_tool, not_reachable, no_match or limited.
+  outcome String @db.VarChar(16)
+  count   Int    @default(0)
+  msTotal Int    @default(0)
+
+  @@id([day, door, app, tool, via, outcome])
 }
 
 /// A personal access token (Settings → Tokens): `Authorization: Bearer rcl_…`. Only the SHA-256 of

@@ -12,6 +12,7 @@ import { loadLearningContext, toDbDay } from '../learningDb/common';
 import { emptyTrash, trashedDocs } from '../docs/trash.service';
 import { freshStart, type FreshStartResult } from '../learningDb/plan.service';
 import { describeShareAction, runShareAction } from '../docs/docSharing.service';
+import { UNDO_DAYS, deleteSubjectWithUndo, deletionPreview } from '../learningDb/subjectDeletion.service';
 
 /** Pending actions a caller may have waiting at once. */
 export const ACTIONS_PENDING_MAX = 10;
@@ -69,6 +70,19 @@ const ACTIONS = {
         describe: (userId: string, input: ShareDocInput) => describeShareAction(userId, { kind: 'person', ...input }),
         run: (userId: string, input: ShareDocInput) => runShareAction(userId, { kind: 'person', ...input }),
     } satisfies ActionDef<ShareDocInput>,
+    // TOOL_ACCESS_PLAN §4.7: a subject that holds topics, notes or docs is deleted only on their tap (the app's week of
+    // undo follows, from the subjects list).
+    delete_subject: {
+        input: z.object({ subjectId: z.string().trim().min(1).max(64) }).strict(),
+        async describe(userId: string, input: { subjectId: string }) {
+            const { name, counts } = await deletionPreview(userId, input.subjectId);
+            return `Delete the subject "${name}" with ${plural(counts.topics, 'topic')}, ${plural(counts.docs, 'doc')} and ${plural(counts.notes, 'note')} (undo for ${UNDO_DAYS} days)`;
+        },
+        async run(userId: string, input: { subjectId: string }) {
+            const d = await deleteSubjectWithUndo(userId, input.subjectId);
+            return `Deleted the subject "${d.name}": it can come back for ${UNDO_DAYS} days`;
+        },
+    } satisfies ActionDef<{ subjectId: string }>,
 } as const;
 
 type ShareDocInput = { docId: string; email: string; role: 'viewer' | 'editor' | 'remove' };

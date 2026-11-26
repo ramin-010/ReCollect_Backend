@@ -35,6 +35,8 @@ const settingsSchema = z.object({
     progressIncludesBuilding: z.boolean().optional(),
     /** EASY_SETUP_PLAN: what a folder the server has never seen is. */
     newFolders: z.enum(NEW_FOLDERS).optional(),
+    /** TOOL_ACCESS_PLAN §4.7: chats may read and change their pocket notes (agents may not change it: AGENT_SETTINGS). */
+    pocketForAgents: z.boolean().optional(),
 });
 
 export const getSettingsHandler = handler(async (req, res) => {
