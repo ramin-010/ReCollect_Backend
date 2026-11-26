@@ -53,7 +53,8 @@ const has = (name: string) => process.argv.includes(name);
 
 /** TOOL_ACCESS_PLAN §7.3: the everyday-set candidate "Daily" (19); "Wide" is WEB_TOOLS. */
 export const DAILY = ['get_brief', 'remember', 'update_memory', 'recall_memory', 'forget', 'add_task', 'list_tasks', 'update_task', 'set_reminder', 'add_pocket_note', 'get_today', 'list_due', 'search_docs', 'read_doc', 'create_doc', 'append_to_doc', 'checkpoint', 'log_work', 'get_work_log'];
-const MAX_STEPS = 4;
+// Real hosts allow many steps; a found tool takes get_brief, a search, find_tools, then the call (stage 5: 4 cut runs short).
+const MAX_STEPS = 6;
 const REACHED = '__EVAL_REACHED__';
 const UNDO = 'Undo: the user can undo this from Home → From your agent.';
 
@@ -199,9 +200,16 @@ interface Graded {
     wrong: string[];
     problems: string[];
 }
+/** A subject, goal or project may be named by its name instead of its id (the tools take either). */
+const ALIASES: Readonly<Record<string, readonly string[]>> = { sub_dsa: ['DSA'], sub_sd: ['System Design'], goal_offer: ['offer'], erp: ['ERP'] };
+const names = (args: unknown, id: string) => {
+    const text = JSON.stringify(args).toLowerCase();
+    return [id, ...(ALIASES[id] ?? [])].some((x) => text.includes(x.toLowerCase()));
+};
+
 export function grade(c: Case, calls: readonly Call[]): Graded {
     const problems: string[] = [];
-    const ok = (call: Call) => call.valid && c.expect.includes(call.name) && (!c.ids?.length || c.ids.some((id) => JSON.stringify(call.args).includes(id)));
+    const ok = (call: Call) => call.valid && c.expect.includes(call.name) && (!c.ids?.length || c.ids.some((id) => names(call.args, id)));
     const reached = c.expect.length === 0 ? true : calls.some(ok);
     if (!reached) problems.push(calls.some((x) => c.expect.includes(x.name)) ? `reached ${c.expect.join(' or ')} without valid inputs${c.ids?.length ? ' / the right id' : ''}` : `did not reach ${c.expect.join(' or ')}`);
     const allowed = new Set([...c.expect, ...c.allowed]);
@@ -275,7 +283,33 @@ async function fakeCase(door: Door, c: Case, turn: Turn): Promise<Turn> {
 
 // ─── Main ─────────────────────────────────────────────────────────────────────────────────────────
 
+/** --regrade <results.json>: the saved calls graded again with today's grader (no model, no spend). */
+async function regrade(file: string): Promise<void> {
+    const dist = path.resolve(arg('--dist') ?? path.join(__dirname, '..', '..', 'mcp', 'dist'));
+    const levels = ((await importEsm(pathToFileURL(path.join(dist, 'server.js')).href)) as { TOOL_LEVELS: Record<string, number> }).TOOL_LEVELS;
+    const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'evals', 'tools.json'), 'utf8')) as Fixture;
+    const saved = JSON.parse(fs.readFileSync(file, 'utf8')) as { results: Array<{ id: string; calls: Call[]; kind: string }> };
+    let passed = 0;
+    let wrong = 0;
+    const by: Record<string, [number, number]> = {};
+    for (const r of saved.results) {
+        const c = fixture.cases.find((x) => x.id === r.id);
+        if (!c) continue;
+        const g = grade(c, r.calls.map((x) => ({ ...x, level: x.level ?? levels[x.name] ?? 2 })));
+        if (g.passed) passed += 1;
+        if (g.wrong.length) wrong += 1;
+        const k = (by[r.kind] ??= [0, 0]);
+        k[1] += 1;
+        if (g.passed) k[0] += 1;
+    }
+    console.log(JSON.stringify({ regraded: file, passed: `${passed}/${saved.results.length}`, byKind: by, wrongPicks: wrong }));
+}
+
 async function main(): Promise<void> {
+    if (arg('--regrade')) {
+        await regrade(arg('--regrade')!);
+        return;
+    }
     const fake = has('--fake');
     if (!fake && !has('--yes')) throw new Error('A real run costs money: pass --yes (or --fake for the stand-in).');
     const model = arg('--model') ?? 'claude-sonnet-5-5';
@@ -319,7 +353,7 @@ async function main(): Promise<void> {
         const g = grade(c, turn.calls);
         const path_ = turn.calls.map((x) => `${x.via === 'direct' || x.via === 'find' ? '' : `${x.via}:`}${x.name}${x.valid ? '' : '✗'}`).join(' → ');
         console.log(`${g.passed ? 'pass' : 'FAIL'} ${c.id} ${(turn.costUsd * 100).toFixed(1).padStart(5)}¢  ${path_ || '(no tools)'}${g.problems.length ? `\n     ${g.problems.join('; ')}` : ''}`);
-        results.push({ id: c.id, kind: c.kind, user: c.user, passed: g.passed, reached: g.reached, wrong: g.wrong, problems: g.problems, calls: turn.calls.map((x) => ({ name: x.name, via: x.via, valid: x.valid, args: x.args })), text: turn.text, rounds: turn.rounds, costUsd: turn.costUsd });
+        results.push({ id: c.id, kind: c.kind, user: c.user, passed: g.passed, reached: g.reached, wrong: g.wrong, problems: g.problems, calls: turn.calls.map((x) => ({ name: x.name, via: x.via, valid: x.valid, level: x.level, args: x.args })), text: turn.text, rounds: turn.rounds, costUsd: turn.costUsd });
     }
     await door.close();
     const by = (k: string) => results.filter((r) => r['kind'] === k);
