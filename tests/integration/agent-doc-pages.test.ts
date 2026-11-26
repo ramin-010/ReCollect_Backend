@@ -28,7 +28,9 @@ describe('pages inside docs, for agents (DOC_PAGES_PLAN stage 2)', () => {
         const refused = await agent.post('/api/agent/docs', { title: 'Practice', markdown: 'Q1', parentId: lesson, subjectId: s.id, revise: true });
         expect(refused.status).toBe(400);
         expect(refused.body.message).toContain('A page inside the lesson "Indexes" is revised with it');
-        const page = await make('Practice', 'Q1', lesson);
+        const made = await agent.post('/api/agent/docs', { title: 'Practice', markdown: 'Q1', parentId: lesson });
+        expect(made.body.data.parent).toEqual({ id: lesson, title: 'Indexes' });
+        const page = made.body.data.id as string;
         const read = await agent.get(`/api/agent/docs/${page}`);
         expect(read.body.data).toMatchObject({ lesson: { docId: lesson, title: 'Indexes' }, topicId: null, path: [{ id: lesson, title: 'Indexes' }] });
     });

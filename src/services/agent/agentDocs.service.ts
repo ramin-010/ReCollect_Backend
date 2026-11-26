@@ -266,15 +266,18 @@ export async function createDocFromMarkdown(userId: string, input: CreateAgentDo
 /** POST /api/agent/docs: createDocFromMarkdown plus the agent edit log line (Undo archives it). */
 export async function createDocForAgent(actor: AgentActor, input: CreateAgentDocInput) {
     let editId = '';
+    let parentTitle: string | null = null;
     // Agents always get the Mermaid check, whatever the request carried.
     const { attached: _undoOnly, ...doc } = await createDocFromMarkdown(actor.userId, { ...input, checkMermaid: true }, async (made) => {
         const onPath = made.attached ? ' as a topic of its path' : '';
         const inside = input.parentId ? (await prisma.doc.findUnique({ where: { id: input.parentId }, select: { title: true } }))?.title : null;
+        parentTitle = inside ?? null;
         const summary = `Created ${quoted(made.title)}${inside ? ` inside ${quoted(inside, 60)}` : ''}${made.subject ? ` in ${made.subject.name}` : ''}${onPath}${input.revise ? ' and scheduled it for revision' : ''}`;
         const undoData = made.attached ? { topicId: made.topicId, attached: { ...made.attached } } : { topicId: made.topicId };
         editId = await recordAgentEdit(actor, { kind: 'doc_create', summary, docId: made.id, entityId: made.id, undoData });
     });
-    return { ...doc, editId };
+    // DOC_PAGES_PLAN §6.2: the doc it went inside, so the answer can name it.
+    return { ...doc, editId, ...(input.parentId ? { parent: { id: input.parentId, title: parentTitle } } : {}) };
 }
 
 // ─── Update: title, subject, topic (update_doc) ───────────────────────
