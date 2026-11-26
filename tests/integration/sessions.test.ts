@@ -149,6 +149,35 @@ describe('kinds, minutes and links when a write leaves them out (LOOP_COMPLETE_S
         expect((await chat.put(`/api/sessions/by-key/${key}`, { title: 'Long chat' })).body.data.session.minutes).toBe(85);
     });
 
+    it('a chat that goes on into a new day writes that day its own row, carrying what the chat is (11-26)', async () => {
+        const user = await createTestUser();
+        const sys = await createSubjectRow(user.id, 'System Design');
+        const [web] = await planned(user, sys.id, ['How the web works']);
+        const chat = asAgent((await createTestToken(user)).token, 'study-chat');
+        const key = newSessionKey(new Date(Date.now() - 30 * 60_000));
+        const first = (await chat.put(`/api/sessions/by-key/${key}`, { topicId: web!._id, title: 'DNS and TCP' })).body.data.session;
+        // Yesterday's chat, last written an hour ago, marked work by the user (to see that it carries).
+        await prisma.$executeRaw`UPDATE "WorkSession" SET "day" = "day" - 1, "updatedAt" = now() - interval '1 hour', "area" = 'work', "kindSetBy" = 'chat' WHERE "key" = ${key}`;
+        const before = await prisma.workSession.findUniqueOrThrow({ where: { id: first._id } });
+
+        const today = (await chat.put(`/api/sessions/by-key/${key}`, { nextStep: 'Traceroute in your own words' })).body.data.session;
+        expect(today.key).toMatch(new RegExp(`^${key}:d\\d{8}$`));
+        expect(today._id).not.toBe(first._id);
+        expect(today).toMatchObject({ kind: 'study', title: 'DNS and TCP', topic: { _id: web!._id }, subject: { _id: sys.id } });
+        expect(today.minutes).toBeGreaterThanOrEqual(1);
+        expect(today.minutes).toBeLessThanOrEqual(45);
+        const row = await prisma.workSession.findUniqueOrThrow({ where: { id: today._id } });
+        expect(row).toMatchObject({ area: 'work', kindSetBy: 'chat' });
+        // Yesterday's row is left as it was.
+        expect(await prisma.workSession.findUniqueOrThrow({ where: { id: first._id } })).toMatchObject({ minutes: before.minutes, day: before.day });
+
+        // The chat goes on with its own key (or the day's): both write today's row.
+        await prisma.$executeRaw`UPDATE "WorkSession" SET "updatedAt" = now() - interval '10 minutes' WHERE "id" = ${today._id}`;
+        expect((await chat.put(`/api/sessions/by-key/${key}`, { title: 'DNS and TCP' })).body.data.session).toMatchObject({ _id: today._id, minutes: today.minutes + 10 });
+        expect((await chat.put(`/api/sessions/by-key/${today.key}`, { title: 'DNS and TCP' })).body.data.session._id).toBe(today._id);
+        expect(await prisma.workSession.count({ where: { userId: user.id } })).toBe(2);
+    });
+
     it('a url must be http or https', async () => {
         const user = await createTestUser();
         const chat = asAgent((await createTestToken(user)).token);

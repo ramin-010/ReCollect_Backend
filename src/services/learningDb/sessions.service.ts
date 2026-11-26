@@ -29,7 +29,7 @@
 import { randomInt } from 'node:crypto';
 import { Prisma, type FolderTracking, type KindSetBy, type NewFolders, type PracticeOutcome, type ProjectKind, type SessionArea, type SessionKind, type SessionSource, type TopicStatus, type WeakSpotSource } from '@prisma/client';
 import { prisma, type DbClient } from '../../db/prisma';
-import { addDays, dayOf, type DayString } from '../learning';
+import { addDays, dayOf, startOfDay, type DayString } from '../learning';
 import { LearningHttpError, badRequest, notFound } from '../learning/http';
 import { fromDbDay, loadLearningContext, toDbDay } from './common';
 import { pathPlaces, readPath, updateTopicOnPath, type PathTopicJson } from './path.service';
@@ -76,6 +76,15 @@ export function keyStartedAt(key: string, now: Date): Date | null {
     const at = new Date(parseInt(m[1]!, 36) * 1000);
     const age = now.getTime() - at.getTime();
     return age >= -5 * 60_000 && age <= 24 * 3600_000 ? at : null;
+}
+
+/**
+ * A chat's row for a later day (11-26): `<key>:dYYYYMMDD`. A key that is already a day's row is taken back to the chat's
+ * own key first, and the chat's part is cut so the whole stays within the 80 characters a key may have.
+ */
+export function dayKey(key: string, day: DayString): string {
+    const chat = key.replace(/:d\d{8}$/, '');
+    return `${chat.slice(0, 80 - 10)}:d${day.replace(/-/g, '')}`;
 }
 
 /** lower case, single spaces: one weak spot per text and topic. */
@@ -403,22 +412,35 @@ export async function upsertSessionByKey(writer: SessionWriter, key: string, inp
     if (input.url && !URL_RE.test(input.url.trim())) throw badRequest('url must start with http:// or https://');
     if (input.learned && input.learned.length > LEARNED_PER_WRITE) throw badRequest(`At most ${LEARNED_PER_WRITE} learned notes at once`);
 
-    const existing = await prisma.workSession.findUnique({ where: { userId_key: { userId, key } } });
-    const topicId = input.topicId === undefined ? existing?.topicId ?? null : filing.topic?.id ?? null;
-    const subjectId = filing.subjectId === undefined ? existing?.subjectId ?? null : filing.subjectId ?? null;
+    const source: SessionSource = writer.actor ? (input.source === 'hook' ? 'hook' : 'agent') : 'user';
+    // A chat that goes on into a new day (11-26 bug: Wednesday's study counted on Tuesday, the day its key began):
+    // a checkpoint on a later day writes that day's own row, `<key>:dYYYYMMDD`, carrying what the chat is.
+    let writeKey = key;
+    let existing = await prisma.workSession.findUnique({ where: { userId_key: { userId, key } } });
+    let carried: typeof existing = null;
+    let rollStart: Date | null = null;
+    if (existing && source === 'agent' && fromDbDay(existing.day) !== ctx.today) {
+        writeKey = dayKey(key, ctx.today);
+        carried = existing;
+        existing = await prisma.workSession.findUnique({ where: { userId_key: { userId, key: writeKey } } });
+        // Today's part starts at midnight, or at the chat's last write when that was later (a write just after midnight).
+        if (!existing) rollStart = new Date(Math.max(startOfDay(ctx.today, ctx.tz).getTime(), carried.updatedAt.getTime()));
+    }
+    const base = existing ?? carried;
+    const topicId = input.topicId === undefined ? base?.topicId ?? null : filing.topic?.id ?? null;
+    const subjectId = filing.subjectId === undefined ? base?.subjectId ?? null : filing.subjectId ?? null;
     if ((input.weakSpots?.length || input.cleared?.length) && !topicId && !subjectId) throw badRequest('weakSpots and cleared need a topicId or a subject');
     if (input.topicStatus && !topicId) throw badRequest('topicStatus needs a topicId');
 
     const project = input.project === undefined ? undefined : input.project === null ? null : await findOrMakeProject(prisma, userId, input.project, input.projectKind);
     // The folder this session is in: the one named now, else the one it was already in.
     const folder: ProjectRef | null =
-        project !== undefined ? project : existing?.projectId ? await prisma.project.findUnique({ where: { id: existing.projectId }, select: PROJECT_FIELDS }) : null;
+        project !== undefined ? project : base?.projectId ? await prisma.project.findUnique({ where: { id: base.projectId }, select: PROJECT_FIELDS }) : null;
     const work = folder?.kind === 'work';
-    const source: SessionSource = writer.actor ? (input.source === 'hook' ? 'hook' : 'agent') : 'user';
-    const startedAt = existing?.startedAt ?? validDate(input.startedAt) ?? keyStartedAt(key, now) ?? now;
+    const startedAt = existing?.startedAt ?? rollStart ?? validDate(input.startedAt) ?? keyStartedAt(key, now) ?? now;
     // A study folder's coding sessions are study, not build (PERSONAL_OFFICE_PLAN §2.1).
     const kindIfNew: SessionKind | undefined = folder?.kind === 'study' && (input.kindIfNew === undefined || input.kindIfNew === 'build') ? 'study' : input.kindIfNew;
-    const kind: SessionKind = input.kind ?? existing?.kind ?? kindIfNew ?? (folder?.kind === 'study' ? 'study' : inferKind(key, { ...input, topicId, subjectId }));
+    const kind: SessionKind = input.kind ?? base?.kind ?? kindIfNew ?? (folder?.kind === 'study' ? 'study' : inferKind(key, { ...input, topicId, subjectId }));
     // A chat's checkpoint without minutes gets an estimate; the hook sends active minutes.
     const minutes = input.minutes !== undefined ? input.minutes : source === 'agent' ? estimateMinutes(existing, startedAt, now) : undefined;
     const endedAt = input.endedAt !== undefined ? validDate(input.endedAt) : source === 'agent' ? now : undefined;
@@ -435,22 +457,24 @@ export async function upsertSessionByKey(writer: SessionWriter, key: string, inp
     const title =
         input.title !== undefined
             ? cleanText(input.title, SESSION_TITLE_MAX)
-            : existing
-              ? placeholder(existing.title) && better
+            : base
+              ? placeholder(base.title) && better
                   ? better
-                  : existing.title
+                  : base.title
               : better || (project ? `Worked on ${project.name}` : topicTitle ? topicTitle.doc?.title || topicTitle.title : 'Session');
     if (!title) throw badRequest('title cannot be empty');
 
     // What the chat is: its folder's area while it follows its folder; a chat someone marked keeps its own; a marking
     // sent now wins when it weighs as much as the one before (EASY_SETUP_PLAN §7).
-    const followsFolder = !existing || existing.kindSetBy === 'folder';
-    const marked = input.chatKind && input.kindBy && mayReset(input.kindBy, existing?.kindSetBy) ? chatKindData(input.chatKind, kind) : null;
+    const followsFolder = !base || base.kindSetBy === 'folder';
+    const marked = input.chatKind && input.kindBy && mayReset(input.kindBy, base?.kindSetBy) ? chatKindData(input.chatKind, kind) : null;
     const data = {
         kind: marked?.kind ?? kind,
         title,
         subjectId,
         topicId,
+        // A new day's row of a chat is what the chat was (its folder, its area, who said so), until this write says otherwise.
+        ...(carried && !existing ? { projectId: carried.projectId, area: carried.area, kindSetBy: carried.kindSetBy } : {}),
         ...(project !== undefined ? { projectId: project?.id ?? null, ...(followsFolder ? { area: areaOfKind(project?.kind) } : {}) } : {}),
         ...(marked ? { area: marked.area, kindSetBy: input.kindBy! } : {}),
         ...(minutes !== undefined ? { minutes } : {}),
@@ -474,11 +498,11 @@ export async function upsertSessionByKey(writer: SessionWriter, key: string, inp
     try {
         row = existing
             ? await prisma.workSession.update({ where: { id: existing.id }, data, select: ROW })
-            : await prisma.workSession.create({ data: { userId, key, startedAt, day: toDbDay(dayOf(startedAt, ctx.tz)), ...data }, select: ROW });
+            : await prisma.workSession.create({ data: { userId, key: writeKey, startedAt, day: toDbDay(dayOf(startedAt, ctx.tz)), ...data }, select: ROW });
     } catch (err) {
         // Two first checkpoints at once: the other made the row; write over it.
         if (!existing && err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-            row = await prisma.workSession.update({ where: { userId_key: { userId, key } }, data, select: ROW });
+            row = await prisma.workSession.update({ where: { userId_key: { userId, key: writeKey } }, data, select: ROW });
         } else {
             throw err;
         }
