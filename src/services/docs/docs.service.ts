@@ -6,6 +6,7 @@
 //   - collaborators[]                    → DocCollaborator rows (unique per doc+user)
 //   - $push / $pull on cloudImages       → atomic SQL on the Json column (appendDocCloudImage, removeDocCloudImages)
 // Permission rules live in ./docPermissions.ts.
+import { assertParentForNewPage, nextPosition } from './docTree.service';
 import type { Prisma } from '@prisma/client';
 import type { StateBytes } from './docState';
 import { prisma, type DbClient } from '../../db/prisma';
@@ -100,6 +101,8 @@ export interface CreateDocInput {
     title?: string | null | undefined;
     /** A template's content (the app's TipTap JSON): the doc starts with it, as blocks (the new editor). */
     content?: unknown;
+    /** DOC_PAGES_PLAN: a page inside this doc (the user's own, not in the trash). */
+    parentId?: string | null | undefined;
 }
 
 /**
@@ -117,16 +120,21 @@ export async function createDoc(userId: string, input: CreateDocInput, db: DbCli
             throw new ErrorResponse(400, `Invalid doc content: ${err instanceof Error ? err.message : String(err)}`);
         }
     }
+    // DOC_PAGES_PLAN §3.2: a page inside a doc of theirs goes after its last page, shared with the same people (D6).
+    const parent = input.parentId ? await assertParentForNewPage(userId, input.parentId, db) : null;
     const created = await db.doc.create({
         data: {
             userId,
             title,
             cloudImages: [],
             ...(yjsState ? { yjsState, previewState: generatePreviewState(yjsState) } : {}),
+            ...(parent ? { parentId: parent.id, position: await nextPosition(parent.id, db) } : {}),
         },
     });
-    // A new doc has no collaborators yet.
-    return { ...created, collaborators: [] };
+    if (!parent) return { ...created, collaborators: [] };
+    const people = await db.docCollaborator.findMany({ where: { docId: parent.id }, select: { userId: true, role: true } });
+    if (people.length) await db.docCollaborator.createMany({ data: people.map((p) => ({ docId: created.id, userId: p.userId, role: p.role })), skipDuplicates: true });
+    return loadDocRow(created.id, db);
 }
 
 export interface UpdateDocMetaInput {
