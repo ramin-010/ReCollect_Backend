@@ -3,6 +3,7 @@
 // dynamic import, driven over an in-memory transport. Its calls come back to this API over HTTP with
 // a token of the user's own, named "Ask Kaaga", so the manager meets the same allowlist, levels, edit
 // log and Undo as every agent. One catalogue; nothing is written twice.
+import { recordToolCall } from '../mcp/doorStats';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { prisma } from '../../db/prisma';
@@ -34,7 +35,7 @@ export interface Catalogue {
 
 interface EmbeddedModule {
     openCatalogue(options: { baseUrl: string; token: string; agentName: string; timeoutMs?: number }): Promise<Catalogue>;
-    handleMcpHttp(req: unknown, res: unknown, options: { baseUrl: string; token: string; agentName: string; timeoutMs?: number; trace?: (call: { tool: string; args: unknown; answer?: string }) => void }): Promise<void>;
+    handleMcpHttp(req: unknown, res: unknown, options: { baseUrl: string; token: string; agentName: string; timeoutMs?: number; trace?: (call: { tool: string; args: unknown; answer?: string }) => void; onCall?: (call: { tool: string; via: string; outcome: string; ms: number }) => void }): Promise<void>;
 }
 
 /** Remote MCP (ALWAYS_ON_SPEC 6.5): one Streamable HTTP request served by the same catalogue, on the caller's token. */
@@ -48,7 +49,9 @@ export async function serveMcpHttp(req: unknown, res: unknown, options: { baseUr
               void import('node:fs').then((fs) => fs.promises.appendFile(file, `${JSON.stringify({ at: new Date().toISOString(), app: options.agentName, ...call })}\n`)).catch(() => {});
           }
         : undefined;
-    await mod.handleMcpHttp(req, res, { ...options, ...(trace ? { trace } : {}) });
+    // TOOL_ACCESS_PLAN §6.5: each call counted by tool, path and outcome (no user, no arguments, no text).
+    const onCall = (c: { tool: string; via: string; outcome: string; ms: number }) => recordToolCall({ door: 'web', app: options.agentName, ...c });
+    await mod.handleMcpHttp(req, res, { ...options, ...(trace ? { trace } : {}), onCall });
 }
 
 // TypeScript turns `import()` into `require()` for CommonJS output; an ES module needs the real one.

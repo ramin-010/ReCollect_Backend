@@ -15,6 +15,7 @@ import { disconnectPrisma } from './db/prisma';
 import { installShutdown } from './lifecycle/shutdown';
 import { emailDeliveryOff } from './utils/mailTransport';
 import { isAiConfigured } from './services/claude/client';
+import { flushToolStats, startToolStats } from './services/mcp/doorStats';
 
 // All data lives in Postgres (Prisma). It connects lazily on the first query; see src/db/prisma.ts.
 if (!process.env.DATABASE_URL) {
@@ -57,6 +58,7 @@ const onListening = () => {
     startCollaborationServer();
 };
 const server = HOST ? app.listen(PORT, HOST, onListening) : app.listen(PORT, onListening);
+startToolStats();
 if (collabAttached()) attachCollaborationServer(server);
 
 // Hosting P1-2: SIGTERM / SIGINT stop accepting, end the jobs, store the live documents, close the pool.
@@ -64,6 +66,10 @@ installShutdown({
     server,
     stopJobs: stopBackgroundJobs,
     storeDocuments: () => hocuspocusServer.destroy(),
-    flushState: flushAwakeMeter,
+    // TOOL_ACCESS_PLAN §6.5: the door's counts are written with the awake meter, before the database closes.
+    flushState: () => {
+        flushAwakeMeter();
+        void flushToolStats();
+    },
     closeDatabase: disconnectPrisma,
 });

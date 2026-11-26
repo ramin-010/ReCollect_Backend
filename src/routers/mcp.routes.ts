@@ -8,6 +8,7 @@ import { findApiToken, isApiTokenFormat } from '../services/apiTokens/apiTokens.
 import { serveMcpHttp } from '../services/assistant/catalogue';
 import { internalUrl, wwwAuthenticate } from '../services/oauth/oauth.service';
 import { doorLimit } from '../middlwares/rateLimit';
+import { recordToolCall, takeCall } from '../services/mcp/doorStats';
 
 const router = express.Router();
 
@@ -33,6 +34,17 @@ router.post('/mcp', express.json({ limit: '2mb' }), async (req: Request, res: Re
     const row = await findApiToken(token);
     if (!row || row.revokedAt) return refuse('This token is not valid any more. Make a new one in Settings → Agents.', true);
     if (row.expiresAt && row.expiresAt.getTime() <= Date.now()) return refuse('This token has expired: refresh it, or sign in again.', true);
+    // TOOL_ACCESS_PLAN §6.3: a call over the token's limit is answered as a tool result the model reads (a 429 would
+    // show in the host as a broken connector); lists, initialize and notifications are not counted.
+    const call = req.body as { jsonrpc?: unknown; id?: unknown; method?: unknown; params?: { name?: unknown } } | undefined;
+    if (call && !Array.isArray(call) && call.method === 'tools/call' && (typeof call.id === 'string' || typeof call.id === 'number')) {
+        const over = takeCall(token);
+        if (over) {
+            recordToolCall({ door: 'web', app: row.name || 'Remote MCP', tool: String(call.params?.name ?? '?').slice(0, 60), via: 'direct', outcome: 'limited', ms: 0 });
+            res.status(200).json({ result: { content: [{ type: 'text', text: over }], isError: true }, jsonrpc: '2.0', id: call.id });
+            return;
+        }
+    }
     try {
         // The tools call this server on the address it listens on, never the public one (hosting P1-9).
         await serveMcpHttp(req, res, { baseUrl: internalUrl(req.socket.localPort), token, agentName: row.name || 'Remote MCP' });
