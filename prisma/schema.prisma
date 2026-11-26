@@ -292,11 +292,23 @@ model Doc {
   recallSets       RecallSet[]
   /// Ask AI asked from inside this doc (DOCS_EDITOR_V2_PLAN phase 5).
   assistantThreads AssistantThread[]
+  /// DOC_PAGES_PLAN (11-27): the doc this page is inside (null = top level). SET NULL: deleting a parent for good
+  /// never deletes a child by cascade.
+  parentId         String?
+  parent           Doc?              @relation("DocPages", fields: [parentId], references: [id], onDelete: SetNull)
+  pages            Doc[]             @relation("DocPages")
+  /// Order among the pages of one parent, ascending (unused at the top level).
+  position         Float             @default(0)
+  /// In the trash because this doc's ancestor was trashed: restoring that one brings this back. Null = trashed itself.
+  trashedWithId    String?
+  /// DOC_PAGES_PLAN D4: the notes written on this page (each keeps its lesson's topic).
+  pageNotes        Capture[]
 
   @@index([userId])
   @@index([userId, updatedAt(sort: Desc)])
   @@index([searchVector], type: Gin)
   @@index([trashedAt])
+  @@index([parentId, position])
 }
 
 /// Doc.collaborators[] in Mongo (queried as 'collaborators.user' 23 times).
@@ -829,10 +841,16 @@ model Capture {
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
 
+  /// DOC_PAGES_PLAN D4 (11-27): the page the note was written on. Its lesson stays topicId. SET NULL: the note outlives
+  /// the page.
+  docId         String?
+  doc           Doc?        @relation(fields: [docId], references: [id], onDelete: SetNull)
+
   revisions Revision[]
 
   @@index([userId, subjectId, createdAt(sort: Desc)])
   @@index([topicId])
+  @@index([docId])
 }
 
 model Revision {
