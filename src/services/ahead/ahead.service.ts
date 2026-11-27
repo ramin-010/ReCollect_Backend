@@ -138,7 +138,7 @@ async function weekSessions(userId: string, now: Date, tz: string): Promise<Sess
     const from = addDays(dayOf(now, tz), -(LEFT_OFF_DAYS - 1));
     const rows = await prisma.workSession.findMany({
         where: { userId, kind: { in: ['practice', 'study'] }, day: { gte: toDbDay(from) }, ...(await countedSessions(userId)) },
-        select: { id: true, kind: true, problem: true, outcome: true, topicId: true, nextStep: true, url: true, day: true, startedAt: true, updatedAt: true, topic: { select: { title: true, status: true, docId: true, nextStep: true } } },
+        select: { id: true, kind: true, problem: true, outcome: true, topicId: true, nextStep: true, url: true, day: true, startedAt: true, updatedAt: true, topic: { select: { title: true, status: true, docId: true } } },
         orderBy: { startedAt: 'desc' },
         take: 60,
     });
@@ -150,7 +150,9 @@ async function weekSessions(userId: string, now: Date, tz: string): Promise<Sess
         topicId: s.topicId,
         topicTitle: s.topic?.title ?? null,
         topicDone: s.topic?.status === 'done' || s.topic?.status === 'skipped',
-        nextStep: s.nextStep ?? s.topic?.nextStep ?? null,
+        // TOOL_ACCESS_PLAN §13.1: only the session's own step. The topic's could be an earlier session's, and showed as
+        // this one's (a Pick up stayed days after that part was studied).
+        nextStep: s.nextStep,
         url: s.url,
         docId: s.topic?.docId ?? null,
         day: fromDbDay(s.day),

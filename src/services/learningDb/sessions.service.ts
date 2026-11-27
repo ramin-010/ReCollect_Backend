@@ -335,6 +335,11 @@ export interface SessionWriteResult {
      * its minutes. Null on the chat's first day.
      */
     dayPart: { day: DayString; began: DayString; beganMinutes: number | null } | null;
+    /**
+     * TOOL_ACCESS_PLAN §13.1: the topic's next step an earlier session set, when this write sent none (the agent is asked
+     * to send the new one, or "" when it is done). Null otherwise.
+     */
+    staleStep: string | null;
 }
 
 function checkScore(score: SessionInput['score']): { scoreDone: number | null; scoreTotal: number | null } | undefined {
@@ -585,7 +590,10 @@ export async function upsertSessionByKey(writer: SessionWriter, key: string, inp
         };
     }
     const dayPart = carried ? { day: ctx.today, began: fromDbDay(carried.day), beganMinutes: carried.minutes } : null;
-    return { session: serializeSession(fresh), topic, weakSpots: open, topicEditId, learned, dayPart };
+    // §13.1: a step left by an earlier session outlives this one unless the agent replaces or clears it: say so.
+    const step = topic && topic.status !== 'done' && topic.status !== 'skipped' ? topic.nextStep : null;
+    const staleStep = input.nextStep === undefined && step && step !== fresh.nextStep ? step : null;
+    return { session: serializeSession(fresh), topic, weakSpots: open, topicEditId, learned, dayPart, staleStep };
 }
 
 /** POST /api/sessions: a manual entry (no key), by the app. */

@@ -7,7 +7,9 @@ import { prisma } from '../../src/db/prisma';
 import { getAmbient, wallpaperSvg } from '../../src/services/ambient/ambient.service';
 import { aheadFor } from '../../src/services/ahead/ahead.service';
 import { createTestUser } from '../helpers/auth';
-import { api } from '../helpers/learning';
+import { api, createSubjectRow } from '../helpers/learning';
+import { asAgent, createTestToken } from '../helpers/agent';
+import { newSessionKey } from '../../src/services/learningDb/sessions.service';
 
 const TZ = 'Asia/Kolkata';
 /** Friday 20 Nov 2026 at hh:mm in Kolkata. */
@@ -79,6 +81,36 @@ describe('what is ahead on the phone (stage 16)', () => {
         // Later on the gift (stage 19's row): off Coming up until its time.
         await prisma.buddyReminder.create({ data: { userId: user.id, text: 'Get a gift for my sister', at: at(20, 30), refKind: 'tk', refId: gift.id, origin: 'later' } });
         expect((await aheadFor(user.id, now, { aheadMax: 9 })).comingUp.map((r) => r.text)).not.toContain('Get a gift for my sister');
+    });
+
+    it('Pick up shows only the newest session’s own step: a later session on the topic replaces or ends it (TOOL_ACCESS_PLAN §13.1)', async () => {
+        const user = await createTestUser();
+        const net = await createSubjectRow(user.id, 'Networks');
+        const [web] = (await api(user).post(`/api/subjects/${net.id}/path`, { titles: ['How the web works'] })).body.data.path.topics as Array<{ _id: string }>;
+        const { token } = await createTestToken(user);
+        const chat = asAgent(token, 'study-chat');
+        const later = new Date(Date.now() + 2 * 3600_000);
+        const pickUp = async () => (await aheadFor(user.id, later)).leftOff.map((r) => [r.text, r.detail]);
+
+        const first = newSessionKey(new Date(Date.now() - 2 * 3600_000));
+        const stopped = await chat.put(`/api/sessions/by-key/${first}`, { topicId: web!._id, title: 'DNS and routing', topicStatus: 'in_progress', nextStep: 'Open questions on telecom circles' });
+        expect(stopped.body.data.staleStep).toBeNull();
+        expect(await pickUp()).toEqual([['How the web works', 'Open questions on telecom circles']]);
+
+        // The next session studies that part and sends no step: the old words are not its own, so no Pick up; the answer asks.
+        const second = newSessionKey(new Date(Date.now() - 60 * 60_000));
+        const again = await chat.put(`/api/sessions/by-key/${second}`, { topicId: web!._id, title: 'Telecom circles, then peering' });
+        expect(again.body.data.staleStep).toBe('Open questions on telecom circles');
+        expect(await pickUp()).toEqual([]);
+
+        // A new step: that one shows, nothing is stale; "" clears it, and the topic's step with it.
+        const step = await chat.put(`/api/sessions/by-key/${second}`, { nextStep: 'Peering and undersea cables' });
+        expect(step.body.data.staleStep).toBeNull();
+        expect(await pickUp()).toEqual([['How the web works', 'Peering and undersea cables']]);
+        const cleared = await chat.put(`/api/sessions/by-key/${second}`, { nextStep: '' });
+        expect(cleared.body.data.topic).toMatchObject({ nextStep: null });
+        expect(cleared.body.data.staleStep).toBeNull();
+        expect(await pickUp()).toEqual([]);
     });
 
     it('the picture’s key changes when a row passes its time, and not otherwise', async () => {
