@@ -18,7 +18,7 @@ import { API_SCOPES as ALL_SCOPES, type ApiScope } from '../../types/auth';
 
 /** What an app signing in may ask for: every scope but the phone app's own `ambient` (Settings → Phone app makes that one). */
 const API_SCOPES = ALL_SCOPES.filter((s): s is Exclude<ApiScope, 'ambient'> => s !== 'ambient');
-import { generateApiToken, hashApiToken } from '../apiTokens/apiTokens.service';
+import { forgetCachedApiTokens, generateApiToken, hashApiToken } from '../apiTokens/apiTokens.service';
 import { CimdError, clientFromMetadataUrl, isMetadataUrl } from './cimd';
 
 export const ACCESS_TTL_S = 3_600;
@@ -307,6 +307,7 @@ async function exchangeCode(str: (k: string) => string, now: Date): Promise<Toke
     if (row.usedAt) {
         // A code used twice: whatever it gave is revoked (OAuth 2.1 §4.1.3).
         if (row.apiTokenId) await prisma.apiToken.updateMany({ where: { id: row.apiTokenId, revokedAt: null }, data: { revokedAt: now } });
+        forgetCachedApiTokens();
         throw new OAuthError('invalid_grant', 'This code was already used');
     }
     if (row.expiresAt <= now) throw new OAuthError('invalid_grant', 'This code has expired');
@@ -334,6 +335,7 @@ async function refreshToken(str: (k: string) => string, now: Date): Promise<Toke
     if (row.usedAt) {
         // A refresh token used twice: someone else may hold it, so the connection ends.
         await prisma.apiToken.updateMany({ where: { id: conn.id, revokedAt: null }, data: { revokedAt: now } });
+        forgetCachedApiTokens();
         throw new OAuthError('invalid_grant', 'This refresh token was already used; the connection was ended');
     }
     if (row.expiresAt <= now || conn.revokedAt) throw new OAuthError('invalid_grant', 'This connection has ended. Sign in again.');
@@ -344,6 +346,8 @@ async function refreshToken(str: (k: string) => string, now: Date): Promise<Toke
     // The same row, a new secret: one connection stays one row in Settings → Agents.
     const { token: access, tokenHash, prefix } = generateApiToken();
     await prisma.apiToken.update({ where: { id: conn.id }, data: { tokenHash, prefix, expiresAt: new Date(now.getTime() + ACCESS_TTL_S * 1000) } });
+    // The old access token stops at once here too (not only when its cached row runs out).
+    forgetCachedApiTokens();
     return response(access, await issueRefresh(conn.id, now), conn.scopes);
 }
 
@@ -355,6 +359,7 @@ export async function revoke(body: Record<string, unknown>, now: Date = new Date
     const refresh = await prisma.oAuthRefreshToken.findUnique({ where: { tokenHash: hash }, select: { apiTokenId: true } });
     const id = refresh?.apiTokenId ?? (await prisma.apiToken.findUnique({ where: { tokenHash: hash }, select: { id: true, oauthClientId: true } }))?.id;
     if (id) await prisma.apiToken.updateMany({ where: { id, revokedAt: null, oauthClientId: { not: null } }, data: { revokedAt: now } });
+    forgetCachedApiTokens();
 }
 
 /** The hourly job: codes past their time and spent or expired refresh tokens go. */

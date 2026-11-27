@@ -108,13 +108,45 @@ export async function revokeApiToken(userId: string, tokenId: string, now: Date 
     if (!row) throw new ErrorResponse(404, 'Token not found');
     if (row.revokedAt) return serializeApiToken(row);
     const revoked = await db.apiToken.update({ where: { id: row.id }, data: { revokedAt: now } });
+    forgetCachedApiTokens();
     return serializeApiToken(revoked);
 }
 
+/**
+ * TOOL_ACCESS_PLAN §6.6 (2): a token's row is kept 10 seconds in this process. A web tool call checks its token twice
+ * (at /mcp, then at every API call the tool makes), and each check was a database read. Only rows that exist are
+ * kept (a stranger's guesses never fill it); every revoke, refresh or end of a connection clears it (this process at
+ * once; another process within the 10 seconds). Off in tests, where rows change behind the service's back, unless a
+ * test turns it on.
+ */
+export const TOKEN_CACHE_MS = 10_000;
+const TOKEN_CACHE_MAX = 5_000;
+const tokenCache = new Map<string, { row: ApiToken; until: number }>();
+
+const tokenCacheOn = (): boolean => process.env['NODE_ENV'] !== 'test' || process.env['TOKEN_CACHE_IN_TESTS'] === '1';
+
+/** Every cached token row goes (a token was revoked, refreshed or its connection ended). */
+export function forgetCachedApiTokens(): void {
+    tokenCache.clear();
+}
+
 /** The token row for a plain token, or null (unknown or malformed). Revoked rows are returned. */
-export async function findApiToken(token: string, db: DbClient = prisma): Promise<ApiToken | null> {
+export async function findApiToken(token: string, db: DbClient = prisma, now: number = Date.now()): Promise<ApiToken | null> {
     if (!isApiTokenFormat(token)) return null;
-    return db.apiToken.findUnique({ where: { tokenHash: hashApiToken(token) } });
+    const hash = hashApiToken(token);
+    // Only reads outside a transaction use the cache (a transaction sees its own writes).
+    const cached = db === prisma && tokenCacheOn();
+    if (cached) {
+        const hit = tokenCache.get(hash);
+        if (hit && hit.until > now) return hit.row;
+        if (hit) tokenCache.delete(hash);
+    }
+    const row = await db.apiToken.findUnique({ where: { tokenHash: hash } });
+    if (row && cached) {
+        if (tokenCache.size >= TOKEN_CACHE_MAX) tokenCache.delete(tokenCache.keys().next().value!);
+        tokenCache.set(hash, { row, until: now + TOKEN_CACHE_MS });
+    }
+    return row;
 }
 
 /** lastUsedAt = now, at most once a minute (one conditional UPDATE, no read-modify-write race). */
@@ -125,4 +157,6 @@ export async function touchApiToken(row: Pick<ApiToken, 'id' | 'lastUsedAt'>, no
         where: { id: row.id, OR: [{ lastUsedAt: null }, { lastUsedAt: { lt: threshold } }] },
         data: { lastUsedAt: now },
     });
+    // The cached row (the same object) knows it was just used: the next calls within a minute write nothing.
+    (row as { lastUsedAt: Date | null }).lastUsedAt = now;
 }
