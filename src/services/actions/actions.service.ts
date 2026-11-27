@@ -58,14 +58,20 @@ const ACTIONS = {
     } satisfies ActionDef<Record<string, never>>,
     // Sharing leaves the app (MANAGER_AND_DOCS_PLAN §2): publishing, unpublishing (its link dies) and
     // adding, changing or removing a person each wait for his tap.
+    // DOC_PAGES_PLAN §7: `withPages` does the same to the owner's pages inside (the app's "Also the N pages inside").
     publish_doc: {
-        input: z.object({ docId: z.string().trim().min(1).max(64), on: z.boolean() }).strict(),
-        describe: (userId: string, input: { docId: string; on: boolean }) => describeShareAction(userId, { kind: 'publish', ...input }),
-        run: (userId: string, input: { docId: string; on: boolean }) => runShareAction(userId, { kind: 'publish', ...input }),
-    } satisfies ActionDef<{ docId: string; on: boolean }>,
+        input: z.object({ docId: z.string().trim().min(1).max(64), on: z.boolean(), withPages: z.boolean().optional() }).strict(),
+        describe: (userId: string, input: PublishDocInput) => describeShareAction(userId, { kind: 'publish', ...input }),
+        run: (userId: string, input: PublishDocInput) => runShareAction(userId, { kind: 'publish', ...input }),
+    } satisfies ActionDef<PublishDocInput>,
     share_doc: {
         input: z
-            .object({ docId: z.string().trim().min(1).max(64), email: z.string().trim().email().max(200), role: z.enum(['viewer', 'editor', 'remove']) })
+            .object({
+                docId: z.string().trim().min(1).max(64),
+                email: z.string().trim().email().max(200),
+                role: z.enum(['viewer', 'editor', 'remove']),
+                withPages: z.boolean().optional(),
+            })
             .strict(),
         describe: (userId: string, input: ShareDocInput) => describeShareAction(userId, { kind: 'person', ...input }),
         run: (userId: string, input: ShareDocInput) => runShareAction(userId, { kind: 'person', ...input }),
@@ -85,7 +91,8 @@ const ACTIONS = {
     } satisfies ActionDef<{ subjectId: string }>,
 } as const;
 
-type ShareDocInput = { docId: string; email: string; role: 'viewer' | 'editor' | 'remove' };
+type ShareDocInput = { docId: string; email: string; role: 'viewer' | 'editor' | 'remove'; withPages?: boolean | undefined };
+type PublishDocInput = { docId: string; on: boolean; withPages?: boolean | undefined };
 
 /** An agent spreads at most this many overdue reviews at once; more only asks (his tap). */
 export const SPREAD_TAP_OVER = 20;

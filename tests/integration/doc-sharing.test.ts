@@ -387,6 +387,55 @@ describe('pages inside (DOC_PAGES_PLAN stage 6, D6)', () => {
         expect((await as(friend).get(`/api/docs/${p1}`)).status).toBe(404);
     });
 
+    it('an agent asks with the pages inside: the card says so (or what stays out); his tap shares, takes back and publishes every page (§7)', async () => {
+        const [owner, friend] = await Promise.all([person('Owner'), person('Friend')]);
+        const doc = await ownedDoc(owner, 'Course');
+        const p1 = await pageIn(owner, doc.id, 'One');
+        const p2 = await pageIn(owner, p1, 'Two');
+        const agent = asAgent((await createTestToken(owner)).token);
+        const ask = async (action: string, input: object) => {
+            const res = await agent.post('/api/actions', { action, input });
+            expect(res.status).toBe(201);
+            return res.body.data as { _id: string; text: string };
+        };
+        const tap = async (card: { _id: string }) => expect((await as(owner).post(`/api/suggestions/${card._id}/accept`)).status).toBe(200);
+
+        expect((await ask('share_doc', { docId: doc.id, email: friend.email, role: 'viewer' })).text).toBe(
+            `Share "Course" with Friend (${friend.email}): they can view (not the 2 pages inside)`
+        );
+        const share = await ask('share_doc', { docId: doc.id, email: friend.email, role: 'viewer', withPages: true });
+        expect(share.text).toBe(`Share "Course" and the 2 pages inside with Friend (${friend.email}): they can view`);
+        await tap(share);
+        for (const id of [doc.id, p1, p2]) expect((await as(friend).get(`/api/docs/${id}`)).body.role).toBe('viewer');
+        expect(mailsTo(friend.email)).toHaveLength(1);
+
+        expect((await ask('share_doc', { docId: doc.id, email: friend.email, role: 'remove' })).text).toBe('Remove Friend from "Course" (they stay on the 2 pages inside)');
+        const remove = await ask('share_doc', { docId: doc.id, email: friend.email, role: 'remove', withPages: true });
+        expect(remove.text).toBe('Remove Friend from "Course" and the 2 pages inside');
+        await tap(remove);
+        for (const id of [doc.id, p1, p2]) expect((await as(friend).get(`/api/docs/${id}`)).status).toBe(404);
+
+        const pub = await ask('publish_doc', { docId: doc.id, on: true, withPages: true });
+        expect(pub.text).toBe('Publish "Course" and the 2 pages inside to the web: anyone with a link can read them (never edit)');
+        await tap(pub);
+        expect(await prisma.doc.count({ where: { id: { in: [doc.id, p1, p2] }, publicSlug: { not: null } } })).toBe(3);
+        expect((await ask('publish_doc', { docId: doc.id, on: true, withPages: true })).text).toBe('"Course" and the 2 pages inside are published already');
+        const off = await ask('publish_doc', { docId: doc.id, on: false, withPages: true });
+        expect(off.text).toBe('Stop publishing "Course" and the 2 pages inside: their links stop working');
+        await tap(off);
+        expect(await prisma.doc.count({ where: { id: { in: [doc.id, p1, p2] }, publicSlug: { not: null } } })).toBe(0);
+        expect((await agent.post('/api/actions', { action: 'publish_doc', input: { docId: doc.id, on: false, withPages: true } })).body.code).toBe('NOTHING_TO_DO');
+    });
+
+    it('a trashed doc published with its pages refuses before any page gets a link', async () => {
+        const owner = await person('Owner');
+        const doc = await ownedDoc(owner, 'Gone soon');
+        const p1 = await pageIn(owner, doc.id, 'Inside');
+        await prisma.doc.update({ where: { id: doc.id }, data: { trashedAt: new Date() } });
+        expect((await as(owner).put(`/api/docs/${doc.id}/publish`, { on: true, withPages: true })).status).toBe(409);
+        expect((await prisma.doc.findUniqueOrThrow({ where: { id: p1 } })).publicSlug).toBeNull();
+    });
+
     it("publishing with the pages inside gives each its own address; a published doc never shows an unpublished page's title", async () => {
         const owner = await person('Owner');
         const doc = await ownedDoc(owner, 'Handbook');

@@ -118,6 +118,8 @@ async function ownPagesInside(docId: string, ownerId: string): Promise<string[]>
  */
 export async function setDocPublished(ownerId: string, docId: string, on: boolean, now: Date = new Date(), withPages = false): Promise<PublishedJson | null> {
     const doc = await ownedDoc(docId, ownerId);
+    // Checked before any page inside gets a link (a refused publish changes nothing).
+    if (on && doc.trashedAt) throw new ErrorResponse(409, 'This doc is in the trash. Restore it to publish it.');
     // D6: "also the pages inside": each page gets its own link, or loses it.
     if (withPages) {
         for (const id of await ownPagesInside(docId, ownerId)) {
@@ -132,7 +134,6 @@ export async function setDocPublished(ownerId: string, docId: string, on: boolea
         if (doc.publicSlug) await prisma.$executeRaw`UPDATE "Doc" SET "publicSlug" = NULL, "publishedAt" = NULL WHERE "id" = ${docId}`;
         return null;
     }
-    if (doc.trashedAt) throw new ErrorResponse(409, 'This doc is in the trash. Restore it to publish it.');
     if (doc.publicSlug) return published(doc);
     const slug = newPublicSlug(titleOf(doc));
     await prisma.$executeRaw`UPDATE "Doc" SET "publicSlug" = ${slug}, "publishedAt" = ${now} WHERE "id" = ${docId} AND "publicSlug" IS NULL`;
@@ -504,40 +505,65 @@ export async function docSharingForAgent(userId: string, docId: string): Promise
 }
 
 /** The words of a level-3 card (MANAGER_AND_DOCS_PLAN §3.2), checked now: what "Do it" will do. */
-export async function describeShareAction(
-    userId: string,
-    input: { docId: string } & ({ kind: 'publish'; on: boolean } | { kind: 'person'; email: string; role: ShareRole | 'remove' })
-): Promise<string> {
+/** A share or publish an agent asks for; `withPages` does the same to the owner's pages inside (D6, as the app's tick). */
+export type ShareActionInput = { docId: string; withPages?: boolean | undefined } & (
+    | { kind: 'publish'; on: boolean }
+    | { kind: 'person'; email: string; role: ShareRole | 'remove' }
+);
+
+const pagesWord = (n: number) => `${n} ${n === 1 ? 'page' : 'pages'}`;
+
+export async function describeShareAction(userId: string, input: ShareActionInput): Promise<string> {
     const doc = await ownedDoc(input.docId, userId);
     const title = `"${titleOf(doc)}"`;
+    // DOC_PAGES_PLAN §7: the card says whether the pages inside go with it.
+    const pages = await ownPagesInside(input.docId, userId);
+    const withPages = !!input.withPages && pages.length > 0;
     if (input.kind === 'publish') {
         if (input.on && doc.trashedAt) throw new ErrorResponse(409, 'This doc is in the trash. Restore it to publish it.');
-        if (input.on) return doc.publicSlug ? `${title} is published already` : `Publish ${title} to the web: anyone with the link can read it (never edit)`;
+        if (withPages) {
+            const live = await prisma.doc.count({ where: { id: { in: pages }, publicSlug: { not: null } } });
+            if (input.on) {
+                if (doc.publicSlug && live === pages.length) return `${title} and the ${pagesWord(pages.length)} inside are published already`;
+                return `Publish ${title} and the ${pagesWord(pages.length)} inside to the web: anyone with a link can read them (never edit)`;
+            }
+            if (!doc.publicSlug && live === 0) throw new LearningHttpError(400, 'NOTHING_TO_DO', `${title} and the pages inside are not published`);
+            return `Stop publishing ${title} and the ${pagesWord(pages.length)} inside: their links stop working`;
+        }
+        const rest = pages.length ? ` (not the ${pagesWord(pages.length)} inside)` : '';
+        if (input.on) return doc.publicSlug ? `${title} is published already` : `Publish ${title} to the web: anyone with the link can read it (never edit)${rest}`;
         if (!doc.publicSlug) throw new LearningHttpError(400, 'NOTHING_TO_DO', `${title} is not published`);
-        return `Stop publishing ${title}: its link stops working`;
+        return `Stop publishing ${title}: its link stops working${rest}`;
     }
     const person = await prisma.user.findFirst({ where: { email: { equals: input.email.trim(), mode: 'insensitive' }, isGhost: false }, select: { id: true, name: true } });
     if (!person) throw new LearningHttpError(404, 'NO_ACCOUNT', 'No Kaaga account uses that email. They need to sign up first.');
     if (person.id === userId) throw new ErrorResponse(400, 'That is him: he owns this doc');
-    if (input.role === 'remove') return `Remove ${person.name} from ${title}`;
-    return `Share ${title} with ${person.name} (${input.email.trim()}): they ${ROLE_WORDS[input.role]}`;
+    if (input.role === 'remove') {
+        // Only the pages they are on count here.
+        const on = pages.length ? await prisma.docCollaborator.count({ where: { docId: { in: pages }, userId: person.id } }) : 0;
+        if (!on) return `Remove ${person.name} from ${title}`;
+        return input.withPages ? `Remove ${person.name} from ${title} and the ${pagesWord(on)} inside` : `Remove ${person.name} from ${title} (they stay on the ${pagesWord(on)} inside)`;
+    }
+    const where = withPages ? `${title} and the ${pagesWord(pages.length)} inside` : title;
+    const rest = !withPages && pages.length ? ` (not the ${pagesWord(pages.length)} inside)` : '';
+    return `Share ${where} with ${person.name} (${input.email.trim()}): they ${ROLE_WORDS[input.role]}${rest}`;
 }
 
 /** Runs a share action on his tap; says what happened. */
-export async function runShareAction(
-    userId: string,
-    input: { docId: string } & ({ kind: 'publish'; on: boolean } | { kind: 'person'; email: string; role: ShareRole | 'remove' })
-): Promise<string> {
+export async function runShareAction(userId: string, input: ShareActionInput): Promise<string> {
+    const withPages = !!input.withPages;
     if (input.kind === 'publish') {
-        const link = await setDocPublished(userId, input.docId, input.on);
-        return link ? `Published: ${link.url}` : 'Not published any more';
+        const link = await setDocPublished(userId, input.docId, input.on, new Date(), withPages);
+        const also = withPages ? ' with the pages inside' : '';
+        return link ? `Published${also}: ${link.url}` : `Not published any more${also}`;
     }
     if (input.role === 'remove') {
         const person = await prisma.user.findFirst({ where: { email: { equals: input.email.trim(), mode: 'insensitive' } }, select: { id: true, name: true } });
         if (!person) throw new ErrorResponse(404, 'No Kaaga account uses that email');
-        await removeDocPerson(userId, input.docId, person.id);
-        return `Removed ${person.name}`;
+        await removeDocPerson(userId, input.docId, person.id, withPages);
+        return `Removed ${person.name}${withPages ? ' from it and the pages inside' : ''}`;
     }
-    const { name, already } = await addDocPerson(userId, input.docId, { email: input.email, role: input.role });
-    return already ? `${name} ${ROLE_WORDS[input.role]} now` : `Shared with ${name}: they ${ROLE_WORDS[input.role]}`;
+    const { name, already } = await addDocPerson(userId, input.docId, { email: input.email, role: input.role, withPages });
+    const also = withPages ? ' (and the pages inside)' : '';
+    return already ? `${name} ${ROLE_WORDS[input.role]} now${also}` : `Shared with ${name}: they ${ROLE_WORDS[input.role]}${also}`;
 }
