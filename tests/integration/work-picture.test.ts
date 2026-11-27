@@ -400,7 +400,8 @@ describe('the person’s choices, and one picture on every surface', () => {
         const askAi = asAgent((await createTestToken(user, ['read'], 'Ask AI (built in)')).token, 'Ask AI');
         expect(JSON.stringify((await askAi.get(`/api/buddy/work?from=${today}&to=${today}`)).body.data)).toContain('vendor invoice');
         expect(JSON.stringify((await api(user).get('/api/buddy/work?view=open')).body.data)).toContain('Tax report');
-        expect(JSON.stringify((await chat.get('/api/buddy/work?work=1&project=erp')).body.data)).toContain('vendor invoice');
+        // The day asked for (the default is the last 7 days by the real clock, and AT is a fixed day: this line failed from 11-27).
+        expect(JSON.stringify((await chat.get(`/api/buddy/work?work=1&project=erp&from=${today}&to=${today}`)).body.data)).toContain('vendor invoice');
         // Shared again: the connected chats see them.
         await api(user).patch('/api/buddy/settings', { shareOfficeWork: true });
         expect(JSON.stringify((await chat.get(`/api/buddy/work?from=${today}&to=${today}`)).body.data)).toContain('vendor invoice');

@@ -36,6 +36,7 @@ const userRow = {
     lastPushDay: null,
     lastSeenDay: null,
     agentProfile: null,
+    pocketForAgents: false,
     prevSeenDay: null,
     plan: 'free',
     accessEndedAt: null,
