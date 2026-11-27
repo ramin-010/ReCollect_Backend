@@ -4,7 +4,7 @@
 import sharp from 'sharp';
 import os from 'node:os';
 import fs from 'node:fs';
-import { phoneApkPath } from '../routers/phone.routes';
+import { phoneApkPath, phoneRelease } from '../services/ambient/phoneRelease';
 import { requireUser } from '../middlwares/auth';
 import { dayBreakdown, dayNumbers, getAmbient, markPhoneHeld, upcomingAlarms, wallpaperPngWithSlot, type Ambient } from '../services/ambient/ambient.service';
 import { setLater } from '../services/ahead/later';
@@ -35,16 +35,20 @@ export const ambientAddressesHandler = handler(async (req, res) => {
 
 /**
  * Settings → Phone app: whether this server holds the app's file (GET /phone/kaaga.apk serves it), its size and
- * when it was built, so the page can offer a download button (the owner, 11-23 night).
+ * when it was built, so the page can offer a download button (the owner, 11-23 night); with its sidecar
+ * (PHONE_UPDATE_PLAN §2) also its version and SHA-256.
  */
 export const ambientAppHandler = handler(async (_req, res) => {
     try {
         const stat = fs.statSync(phoneApkPath());
-        if (stat.isFile()) return ok(res, { available: true, size: stat.size, builtAt: stat.mtime.toISOString() });
+        if (stat.isFile()) {
+            const release = await phoneRelease('app');
+            return ok(res, { available: true, size: stat.size, builtAt: stat.mtime.toISOString(), version: release?.version ?? null, versionCode: release?.versionCode ?? null, sha256: release?.sha256 ?? null });
+        }
     } catch {
         /* no file on this server */
     }
-    ok(res, { available: false, size: null, builtAt: null });
+    ok(res, { available: false, size: null, builtAt: null, version: null, versionCode: null, sha256: null });
 });
 
 /** `?titles=0`: the phone app's "Hide titles" (counts and plain words, no topic or focus names). */

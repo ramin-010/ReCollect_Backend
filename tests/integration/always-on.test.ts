@@ -1,5 +1,6 @@
 // Stage 6 (ALWAYS_ON_SPEC): the wallpaper + widget, the morning notification's subscriptions and pass,
 // remote MCP's door, and the night job that prunes old agent history.
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -170,6 +171,52 @@ describe('the ambient phone (6.6)', () => {
             // The old link, already shared before the rename, still downloads it.
             expect((await request(app).get('/phone/recollect.apk')).status).toBe(200);
             expect((await request(app).get('/phone/connect')).text).toContain('Android, 2 KB');
+        } finally {
+            vi.unstubAllEnvs();
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("PHONE_UPDATE_PLAN §2: the release's description (version and build from the sidecar, size and SHA-256 from the file); the QA pair only where it was built", async () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rc-release-'));
+        const apk = path.join(dir, 'kaaga.apk');
+        const qa = path.join(dir, 'kaaga-qa.apk');
+        const sha = (b: Buffer) => crypto.createHash('sha256').update(b).digest('hex');
+        try {
+            vi.stubEnv('KAAGA_APK_PATH', apk);
+            vi.stubEnv('KAAGA_QA_APK_PATH', qa);
+            expect((await request(app).get('/phone/kaaga.json')).status).toBe(404);
+            const first = Buffer.alloc(4096, 7);
+            fs.writeFileSync(apk, first);
+            // A file without its sidecar is not a release the updater can judge.
+            const bare = await request(app).get('/phone/kaaga.json');
+            expect([bare.status, bare.body.message]).toEqual([404, 'No phone app release on this server.']);
+            // The sidecar's own size and checksum (stale here) are never used: the file is measured.
+            fs.writeFileSync(path.join(dir, 'kaaga.json'), JSON.stringify({ package: 'app.recollect.phone', version: '0.9.1', versionCode: 480000, minSdk: 26, notes: ['Kaaga now updates itself.'], builtAt: '2026-11-27T08:00:00.000Z', size: 1, sha256: 'stale' }));
+            const info = await request(app).get('/phone/kaaga.json');
+            expect([info.status, info.headers['cache-control']]).toEqual([200, 'no-cache']);
+            expect(info.body.data).toEqual({ package: 'app.recollect.phone', version: '0.9.1', versionCode: 480000, minSdk: 26, notes: ['Kaaga now updates itself.'], size: 4096, sha256: sha(first), url: '/phone/kaaga.apk', builtAt: '2026-11-27T08:00:00.000Z' });
+            // Settings › Phone app names the version and the checksum.
+            const user = await createTestUser();
+            const mine = await request(app).get('/api/ambient/app').set('Cookie', authCookie(user));
+            expect(mine.body.data).toMatchObject({ available: true, size: 4096, version: '0.9.1', versionCode: 480000, sha256: sha(first) });
+            // A new file under the same sidecar is measured again.
+            const second = Buffer.alloc(5000, 9);
+            fs.writeFileSync(apk, second);
+            expect((await request(app).get('/phone/kaaga.json')).body.data).toMatchObject({ size: 5000, sha256: sha(second) });
+            // A sidecar the updater can't trust (no build number, a version that isn't x.y.z): nothing is offered.
+            fs.writeFileSync(path.join(dir, 'kaaga.json'), JSON.stringify({ package: 'app.recollect.phone', version: 'next' }));
+            expect((await request(app).get('/phone/kaaga.json')).status).toBe(404);
+            expect((await request(app).get('/api/ambient/app').set('Cookie', authCookie(user))).body.data).toMatchObject({ available: true, version: null, sha256: null });
+            // The QA app's pair: nothing until its build exists, then its own package and file.
+            expect((await request(app).get('/phone/kaaga-qa.json')).status).toBe(404);
+            expect((await request(app).get('/phone/kaaga-qa.apk')).status).toBe(404);
+            fs.writeFileSync(qa, Buffer.alloc(1024, 3));
+            fs.writeFileSync(path.join(dir, 'kaaga-qa.json'), JSON.stringify({ package: 'app.recollect.phone.qa', version: '0.9.1-qa', versionCode: 480001 }));
+            const q = await request(app).get('/phone/kaaga-qa.json');
+            expect([q.status, q.body.data.package, q.body.data.url, q.body.data.notes, q.body.data.minSdk]).toEqual([200, 'app.recollect.phone.qa', '/phone/kaaga-qa.apk', [], null]);
+            const qaFile = await request(app).get('/phone/kaaga-qa.apk');
+            expect([qaFile.status, qaFile.headers['content-disposition']]).toEqual([200, 'attachment; filename="kaaga-qa.apk"']);
         } finally {
             vi.unstubAllEnvs();
             fs.rmSync(dir, { recursive: true, force: true });

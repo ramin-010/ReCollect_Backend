@@ -1,0 +1,10 @@
+{
+  "package": "app.recollect.phone",
+  "version": "0.9.0",
+  "versionCode": 475585,
+  "minSdk": 26,
+  "notes": [
+    "Kaaga now updates itself: when a new version is out, it says so and installs it in a tap."
+  ],
+  "builtAt": "2026-11-27T06:25:17.530Z"
+}
