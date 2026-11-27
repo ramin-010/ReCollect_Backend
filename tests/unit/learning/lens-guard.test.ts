@@ -16,6 +16,7 @@ const BOTH_AREAS: Record<string, string> = {
     'services/buddy/work.ts': 'the work log: time per folder beside its lines, work included',
     'services/users/accountExport.service.ts': 'the export: everything that is theirs',
     'services/users/accountSummary.service.ts': 'Your data: a count of everything kept, work included (TRUST_PLAN T3)',
+    'services/agent/agentLifecycle.service.ts': 'one time entry by its id, corrected or removed on their word (TOOL_ACCESS_PLAN §12.4)',
     'services/learningDb/leetcode.service.ts': 'the import’s own de-duplication by key',
     'services/learningDb/subjectDeletion.service.ts': 'a subject’s delete and undo',
     'services/buddy/outcomes.ts': 'sessions named by id (an ask’s origin)',

@@ -84,6 +84,8 @@ export function serializeAgentEdit(edit: AgentEdit) {
         createdAt: edit.createdAt,
         seenAt: edit.seenAt,
         undoneAt: edit.undoneAt,
+        /** §12.3: the agent that took its own change back; null when the user undid it (or nobody has). */
+        undoneBy: edit.undoneBy,
         canUndo: canUndo(edit),
     };
 }

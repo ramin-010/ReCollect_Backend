@@ -54,6 +54,10 @@ function agentEdit<B = undefined>(
                 Promise.resolve()
                     .then(() => spec.after({ req, actor, before, data: body.data }))
                     .then((line) => (line ? recordAgentEdit(actor, { kind, ...line }) : undefined))
+                    .then((editId) => {
+                        // TOOL_ACCESS_PLAN §12.3: the answer names its edit, so the app can take it back (undo_edit).
+                        if (editId && body.data && typeof body.data === 'object' && !Array.isArray(body.data) && body.data.editId === undefined) body.data.editId = editId;
+                    })
                     .catch((err: unknown) => console.error(`[agent] could not log a ${kind} edit:`, err))
                     .finally(() => send(body));
                 return res;

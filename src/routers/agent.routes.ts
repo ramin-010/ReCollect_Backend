@@ -22,6 +22,7 @@ import {
     replaceSection,
     restoreDoc,
     searchDocs,
+    takeBackEdit,
     trashDoc,
     undoEdit,
     updateCanvas,
@@ -32,6 +33,7 @@ import { deleteBlocks, editDocPart, getOutline, insertBlocks, moveBlocks, readBl
 import { addNote, listNotes, putCard, removeNote, updateNote } from '../controllers/agentNotes.controller';
 import { deletePocket, deleteSubject, listPocket, updatePocket, updateSubject } from '../controllers/agentPocket.controller';
 import { attachFile, noteFileBody, readFile, removeFile } from '../controllers/agentNoteFiles.controller';
+import { deleteDecision, deleteSession, deleteTask, removeTopic, stopRevision, uncompleteRevision, updateSession } from '../controllers/agentLifecycle.controller';
 
 const router = express.Router();
 
@@ -80,7 +82,18 @@ router.post('/subjects/:id/delete', requireScope('learning:write'), idempotency,
 // Who can see a doc of his (get_sharing, read only): published or not, the people, the requests.
 router.get('/docs/:id/sharing', requireScope('read'), handler(async (req, res) => ok(res, await docSharingForAgent(requireUser(req).id, param(req, 'id')))));
 
+// TOOL_ACCESS_PLAN §12.4 (11-27): what an AI added, it can take back or correct; each an edit with an Undo.
+router.post('/tasks/:id/delete', requireScope('tasks:write'), idempotency, deleteTask);
+router.post('/decisions/:id/delete', requireScope('learning:write'), idempotency, deleteDecision);
+router.post('/topics/:id/remove', requireScope('learning:write'), idempotency, removeTopic);
+router.post('/docs/:id/stop-revision', requireScope('learning:write'), idempotency, stopRevision);
+router.post('/revisions/:id/uncomplete', requireScope('learning:write'), idempotency, uncompleteRevision);
+router.patch('/sessions/:id', requireScope('sessions:write'), idempotency, updateSession);
+router.post('/sessions/:id/delete', requireScope('sessions:write'), idempotency, deleteSession);
+
 router.get('/edits', requireScope('read'), listEdits);
+// §12.3: an app takes back a change it made itself (undo_edit); only its own (the service checks the token).
+router.post('/edits/:id/take-back', requireScope('docs:write', 'learning:write', 'tasks:write', 'sessions:write'), idempotency, takeBackEdit);
 // The library's "From agents" view (cookie only): the docs agents wrote or changed, latest first.
 router.get('/doc-activity', cookieOnly, handler(async (req, res) => ok(res, await docsFromAgents(requireUser(req).id))));
 // Home only: an agent must not be able to hide ("seen") or revert its own work.

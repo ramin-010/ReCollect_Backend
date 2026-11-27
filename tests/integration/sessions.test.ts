@@ -160,7 +160,10 @@ describe('kinds, minutes and links when a write leaves them out (LOOP_COMPLETE_S
         await prisma.$executeRaw`UPDATE "WorkSession" SET "day" = "day" - 1, "updatedAt" = now() - interval '1 hour', "area" = 'work', "kindSetBy" = 'chat' WHERE "key" = ${key}`;
         const before = await prisma.workSession.findUniqueOrThrow({ where: { id: first._id } });
 
-        const today = (await chat.put(`/api/sessions/by-key/${key}`, { nextStep: 'Traceroute in your own words' })).body.data.session;
+        const write = (await chat.put(`/api/sessions/by-key/${key}`, { nextStep: 'Traceroute in your own words' })).body.data;
+        const today = write.session;
+        // TOOL_ACCESS_PLAN §12.5: the answer says a new day's part began, and what the day the chat began keeps.
+        expect(write.dayPart).toEqual({ day: today.day, began: before.day.toISOString().slice(0, 10), beganMinutes: before.minutes });
         expect(today.key).toMatch(new RegExp(`^${key}:d\\d{8}$`));
         expect(today._id).not.toBe(first._id);
         expect(today).toMatchObject({ kind: 'study', title: 'DNS and TCP', topic: { _id: web!._id }, subject: { _id: sys.id } });

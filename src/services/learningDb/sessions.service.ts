@@ -330,6 +330,11 @@ export interface SessionWriteResult {
     topicEditId: string | null;
     /** What became of `learned`: new memories, ones seen again, ones skipped (marked wrong, empty); null when none were sent. */
     learned: { saved: number; seen: number; skipped: number; paused: boolean } | null;
+    /**
+     * TOOL_ACCESS_PLAN §12.5: a chat that went on into a new day wrote this day's own row; the day the chat began keeps
+     * its minutes. Null on the chat's first day.
+     */
+    dayPart: { day: DayString; began: DayString; beganMinutes: number | null } | null;
 }
 
 function checkScore(score: SessionInput['score']): { scoreDone: number | null; scoreTotal: number | null } | undefined {
@@ -579,7 +584,8 @@ export async function upsertSessionByKey(writer: SessionWriter, key: string, inp
             paused: r.paused,
         };
     }
-    return { session: serializeSession(fresh), topic, weakSpots: open, topicEditId, learned };
+    const dayPart = carried ? { day: ctx.today, began: fromDbDay(carried.day), beganMinutes: carried.minutes } : null;
+    return { session: serializeSession(fresh), topic, weakSpots: open, topicEditId, learned, dayPart };
 }
 
 /** POST /api/sessions: a manual entry (no key), by the app. */

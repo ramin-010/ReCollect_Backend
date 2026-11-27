@@ -56,7 +56,8 @@ export const DAILY = ['get_brief', 'remember', 'update_memory', 'recall_memory',
 // Real hosts allow many steps; a found tool takes get_brief, a search, find_tools, then the call (stage 5: 4 cut runs short).
 const MAX_STEPS = 6;
 const REACHED = '__EVAL_REACHED__';
-const UNDO = 'Undo: the user can undo this from Home → From your agent.';
+// TOOL_ACCESS_PLAN §12.3: a write's answer names its edit for undo_edit, as the real tools now do.
+const UNDO = 'Undo: undo_edit {"editId":"edit_new"} takes this back if they ask; they can also undo it on Home → From your agent.';
 
 // ─── The case world: canned answers of the read tools (from evals/tools.json's world) ─────────────────
 
@@ -90,10 +91,10 @@ const READS: Record<string, string> = {
     get_settings: 'Daily budget 30 min · busy: none · morning email on at 07:30 · profile: none.',
     list_suggestions: 'Nothing waits for their tap.',
     get_sharing: 'Not published · shared with nobody.',
-    list_sessions: 'Thu 26 Nov · 1 h 10 min study · Wed 25 Nov · 45 min practice.',
+    list_sessions: 'Thu 26 Nov · 2 h 13 min: study 2 h 13 min\n- "How the web works" · 2 h 13 min study · Claude · id ses_web\nWed 25 Nov · 45 min: practice 45 min\n- "Two pointers" · 45 min practice · by hand · id ses_tp',
     get_quiz_results: 'Sliding window: last quiz 2026-11-24 · 3 strong, 1 weak · missed "when to shrink the window".',
     list_decisions: '"Use Postgres for the ERP" (dec_pg) · open · look again 2027-02-26.',
-    recent_agent_edits: 'No edits in the last day.',
+    recent_agent_edits: "1 edit by this app, newest first; undo_edit takes back one of this app's own by its id:\n- edit_dhcp · 2026-11-27 09:40 · Added 3 blocks at the end in \"Kafka basics\" · doc dockafka · not reviewed yet",
     list_pocket_notes: '"idea: a habit tracker" (pn_idea) · "link: a talk on Kafka internals" (pn_link).',
     read_note_file: 'cheatsheet.md: "Shrink from the left while the window is invalid."',
     preview_diagram: 'The board: 3 boxes, no problems.',

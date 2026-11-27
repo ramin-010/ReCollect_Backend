@@ -34,6 +34,7 @@ import { undoDocChange, undoDocCreate, undoDocUpdate } from './agentDocs.service
 import { undoMemoryClose } from '../buddy/memory.service';
 import { undoNoteEdit } from './agentNotes.service';
 import { undoCardPointer } from './docCard';
+import { undoDecisionDelete, undoRevisionStop, undoRevisionUncomplete, undoSessionDelete, undoSessionUpdate, undoTaskDelete, undoTopicDelete } from './agentLifecycle.service';
 
 export const EDITS_LIMIT_DEFAULT = 20;
 export const EDITS_LIMIT_MAX = 100;
@@ -59,7 +60,7 @@ export async function docsFromAgents(userId: string): Promise<Array<{ docId: str
 /** GET /api/agent/edits?since=&unseen=&limit=: newest first. */
 export async function listAgentEdits(
     userId: string,
-    options: { since?: Date | undefined; unseen?: boolean | undefined; limit?: number | undefined } = {}
+    options: { since?: Date | undefined; unseen?: boolean | undefined; limit?: number | undefined; tokenId?: string | undefined } = {}
 ): Promise<AgentEditJson[]> {
     const limit = Math.min(Math.max(Math.trunc(options.limit ?? EDITS_LIMIT_DEFAULT), 1), EDITS_LIMIT_MAX);
     const rows = await prisma.agentEdit.findMany({
@@ -67,6 +68,8 @@ export async function listAgentEdits(
             userId,
             ...(options.since ? { createdAt: { gt: options.since } } : {}),
             ...(options.unseen ? { seenAt: null } : {}),
+            // §12.3: `mine` (undo_edit's list): this token's own changes only.
+            ...(options.tokenId ? { tokenId: options.tokenId } : {}),
         },
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         take: limit,
@@ -97,6 +100,28 @@ export async function undoAgentEdit(userId: string, editId: string, now: Date = 
         throw err;
     }
     return serializeAgentEdit({ ...edit, undoneAt: now, seenAt });
+}
+
+/**
+ * POST /api/agent/edits/:id/take-back (undo_edit, TOOL_ACCESS_PLAN §12.3): an app takes back a change it made itself,
+ * on the user's ask. Only the token that made it can (another app's change, or one made in the app, is the user's to
+ * undo on Home); the Undo is the same one Home runs. The row stays unreviewed under "From your agent", saying who took
+ * it back: an agent can't silence its own work.
+ */
+export async function takeBackAgentEdit(actor: { userId: string; agentName: string; tokenId: string | null }, editId: string, now: Date = new Date()): Promise<AgentEditJson> {
+    const edit = await prisma.agentEdit.findFirst({ where: { id: editId, userId: actor.userId } });
+    if (!edit) throw new ErrorResponse(404, 'No change with that id. recent_agent_edits shows this app’s changes with their ids.');
+    if (!actor.tokenId || edit.tokenId !== actor.tokenId) throw new ErrorResponse(403, 'Only the app that made a change can take it back. The user can undo any change on Home → From your agent.');
+    if (edit.undoneAt) throw new ErrorResponse(409, 'This change was already undone.');
+    const { count } = await prisma.agentEdit.updateMany({ where: { id: edit.id, undoneAt: null }, data: { undoneAt: now, undoneBy: actor.agentName } });
+    if (count === 0) throw new ErrorResponse(409, 'This change was already undone.');
+    try {
+        await performUndo(actor.userId, edit, now);
+    } catch (err) {
+        await prisma.agentEdit.updateMany({ where: { id: edit.id }, data: { undoneAt: null, undoneBy: null } }).catch(() => {});
+        throw err;
+    }
+    return serializeAgentEdit({ ...edit, undoneAt: now, undoneBy: actor.agentName });
 }
 
 type UndoData = Record<string, unknown>;
@@ -302,6 +327,14 @@ const UNDO: Record<AgentEditKind, (ctx: UndoContext) => Promise<void>> = {
     // TOOL_ACCESS_PLAN §11: a file on a note.
     note_file_add: ({ userId, id, data }) => undoNoteFileAdd(userId, id, data),
     note_file_remove: ({ userId, id, data }) => undoNoteFileRemove(userId, id, data),
+    // TOOL_ACCESS_PLAN §12.4: the ways back for what an agent removed or corrected.
+    task_delete: ({ userId, id, data }) => undoTaskDelete(userId, id, data),
+    decision_delete: ({ userId, id, data }) => undoDecisionDelete(userId, id, data),
+    topic_delete: ({ userId, id, data }) => undoTopicDelete(userId, id, data),
+    revision_stop: ({ userId, data }) => undoRevisionStop(userId, data),
+    revision_uncomplete: ({ userId, id, now }) => undoRevisionUncomplete(userId, id, now),
+    session_update: ({ userId, id, data }) => undoSessionUpdate(userId, id, data),
+    session_delete: ({ userId, id, data }) => undoSessionDelete(userId, id, data),
 };
 
 async function performUndo(userId: string, edit: AgentEdit, now: Date): Promise<void> {

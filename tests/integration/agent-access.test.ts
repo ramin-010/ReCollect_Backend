@@ -426,6 +426,7 @@ describe('agents on the learning routes', () => {
             createdAt: expect.any(String),
             seenAt: null,
             undoneAt: null,
+            undoneBy: null,
             canUndo: true,
         });
 

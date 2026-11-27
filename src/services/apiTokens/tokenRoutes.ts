@@ -25,8 +25,8 @@ export interface TokenRoute {
     /** Matched against the whole path (no query string), with an optional trailing slash. */
     path: RegExp;
     scope: ApiScope;
-    /** A second scope that also opens it (the phone app's `ambient` on the day's picture). */
-    also?: ApiScope;
+    /** More scopes that also open it (the phone app's `ambient` on the day's picture; any write scope on take-back). */
+    also?: ApiScope | readonly ApiScope[];
     /** Shown in docs/tests. */
     pattern: string;
 }
@@ -35,7 +35,7 @@ const SEGMENT = '[^/]+';
 /** Doc ids are cuids or old ObjectIds: `/api/docs/shared-by-me` etc. never match. */
 const DOC_ID = '[A-Za-z0-9]+';
 
-function route(method: Method, pattern: string, scope: ApiScope, also?: ApiScope): TokenRoute {
+function route(method: Method, pattern: string, scope: ApiScope, also?: ApiScope | readonly ApiScope[]): TokenRoute {
     const source = pattern.replace(/:docId\b/g, DOC_ID).replace(/:\w+/g, SEGMENT);
     return { method, path: new RegExp(`^${source}/?$`), scope, pattern, ...(also ? { also } : {}) };
 }
@@ -157,6 +157,16 @@ export const TOKEN_ROUTES: readonly TokenRoute[] = [
     // Stage 6: the phone's wallpaper and widget (an automation app fetches them with a read token).
     route('GET', '/api/ambient/widget', 'read', 'ambient'),
     route('GET', '/api/ambient/wallpaper.png', 'read', 'ambient'),
+    // TOOL_ACCESS_PLAN §12 (11-27): an app takes back its own change; what an AI added it can remove or correct.
+    // Any write scope opens it: only the token that made the change can take it back (the service checks).
+    route('POST', '/api/agent/edits/:id/take-back', 'docs:write', ['learning:write', 'tasks:write', 'sessions:write']),
+    route('POST', '/api/agent/tasks/:id/delete', 'tasks:write'),
+    route('POST', '/api/agent/decisions/:id/delete', 'learning:write'),
+    route('POST', '/api/agent/topics/:id/remove', 'learning:write'),
+    route('POST', '/api/agent/docs/:id/stop-revision', 'learning:write'),
+    route('POST', '/api/agent/revisions/:id/uncomplete', 'learning:write'),
+    route('PATCH', '/api/agent/sessions/:id', 'sessions:write'),
+    route('POST', '/api/agent/sessions/:id/delete', 'sessions:write'),
     route('GET', '/api/ambient/styles', 'read', 'ambient'),
     route('POST', '/api/ambient/disconnect', 'ambient'),
     route('POST', '/api/ambient/reminders/scheduled', 'ambient'),
@@ -253,10 +263,19 @@ export const LOGGED: Readonly<Record<string, AgentEditKind>> = {
     'POST /api/reminders/:id/cancel': 'reminder_cancel',
     'POST /api/revisions/spread': 'revisions_spread',
     'POST /api/buddy/memories/:id/close': 'memory_close',
+    // TOOL_ACCESS_PLAN §12.4.
+    'POST /api/agent/tasks/:id/delete': 'task_delete',
+    'POST /api/agent/decisions/:id/delete': 'decision_delete',
+    'POST /api/agent/topics/:id/remove': 'topic_delete',
+    'POST /api/agent/docs/:id/stop-revision': 'revision_stop',
+    'POST /api/agent/revisions/:id/uncomplete': 'revision_uncomplete',
+    'PATCH /api/agent/sessions/:id': 'session_update',
+    'POST /api/agent/sessions/:id/delete': 'session_delete',
 };
 
 /** Token writes that are not AgentEdit rows, each with the reason. */
 export const SELF_LOGGED: Readonly<Record<string, string>> = {
+    'POST /api/agent/edits/:id/take-back': "an app takes back a change it made itself, on the user's ask (undo_edit): only the token that made it can, the Undo is Home's own, and the change's row stays unreviewed under From your agent saying who took it back",
     'POST /api/canvas/layout': 'stateless: lays a board out and stores nothing',
     'POST /api/canvas/render': 'stateless: draws a board as SVG or PNG and stores nothing',
     'PUT /api/sessions/by-key/:key': 'the session list is its own log (each entry names its writer; the user edits or deletes any); a topic change it asks for is logged as topic_update',
@@ -294,7 +313,7 @@ export function tokenRouteScopes(method: string, url: string): readonly ApiScope
     const verb = (method.toUpperCase() === 'HEAD' ? 'GET' : method.toUpperCase()) as Method;
     const path = pathOf(url);
     const hit = TOKEN_ROUTES.find((r) => r.method === verb && r.path.test(path));
-    return hit ? (hit.also ? [hit.scope, hit.also] : [hit.scope]) : null;
+    return hit ? [hit.scope, ...(hit.also === undefined ? [] : typeof hit.also === 'string' ? [hit.also] : hit.also)] : null;
 }
 
 /** The scope a token needs for this request, or null when tokens may not call it at all. */

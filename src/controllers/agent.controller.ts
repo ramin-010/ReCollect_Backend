@@ -22,7 +22,7 @@ import {
     updateDocForAgent,
     docTreeForAgent,
 } from '../services/agent/agentDocs.service';
-import { EDITS_LIMIT_MAX, listAgentEdits, markAgentEditsSeen, undoAgentEdit } from '../services/agent/agentEdits.service';
+import { EDITS_LIMIT_MAX, listAgentEdits, markAgentEditsSeen, takeBackAgentEdit, undoAgentEdit } from '../services/agent/agentEdits.service';
 import { previewCanvasForAgent, updateCanvasForAgent } from '../services/agent/agentCanvas.service';
 import { handler, ok, param, parse, zId } from './learning/common';
 
@@ -182,12 +182,15 @@ const editsSchema = z.object({
     since: z.iso.datetime({ offset: true }).optional(),
     unseen: queryFlag.optional(),
     limit: z.coerce.number().int().min(1).max(EDITS_LIMIT_MAX).optional(),
+    /** §12.3: this app's own changes only (a token's). */
+    mine: queryFlag.optional(),
 });
 
 /** GET /api/agent/edits?since=&unseen=&limit= → [{ id, kind, agentName, summary, docId, entityId, createdAt, seenAt, undoneAt, canUndo }] */
 export const listEdits = handler(async (req, res) => {
-    const { since, unseen, limit } = parse(editsSchema, req.query);
-    ok(res, await listAgentEdits(requireUser(req).id, { since: since ? new Date(since) : undefined, unseen, limit }));
+    const { since, unseen, limit, mine } = parse(editsSchema, req.query);
+    const tokenId = mine && req.auth?.via === 'token' ? req.auth.tokenId : undefined;
+    ok(res, await listAgentEdits(requireUser(req).id, { since: since ? new Date(since) : undefined, unseen, limit, tokenId }));
 });
 
 const seenSchema = z.object({ ids: z.array(zId).min(1).max(200) });
@@ -201,6 +204,11 @@ export const markSeen = handler(async (req, res) => {
 /** POST /api/agent/edits/:id/undo → the edit, with undoneAt (cookie only) */
 export const undoEdit = handler(async (req, res) => {
     ok(res, await undoAgentEdit(requireUser(req).id, param(req, 'id')));
+});
+
+/** POST /api/agent/edits/:id/take-back → the edit, undone, with undoneBy (undo_edit: the app's own change only). */
+export const takeBackEdit = handler(async (req, res) => {
+    ok(res, await takeBackAgentEdit(agentActor(req), param(req, 'id')));
 });
 
 /**

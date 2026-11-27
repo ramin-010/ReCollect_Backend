@@ -1188,6 +1188,20 @@ enum AgentEditKind {
   /// (Undo puts it back while the stored file is kept).
   note_file_add
   note_file_remove
+  /// TOOL_ACCESS_PLAN §12.4: what an AI can add it can also take back. A personal task an agent deleted (Undo brings it
+  /// back with its id, its reminders and tags).
+  task_delete
+  /// A decision an agent removed (Undo brings it back with its id).
+  decision_delete
+  /// A planned, empty topic an agent took off its path (Undo puts it back in its place).
+  topic_delete
+  /// A doc an agent took off spaced revision: its coming reviews went (Undo puts them back; done ones never moved).
+  revision_stop
+  /// A review an agent marked not done (Undo marks it done again).
+  revision_uncomplete
+  /// A time entry an agent corrected (Undo puts the old values back) or removed (Undo brings it back with its id).
+  session_update
+  session_delete
 }
 
 /// TOOL_ACCESS_PLAN §6.5: tool calls on the MCP doors, counted per day. No user, no arguments, no text: the product's
@@ -1360,6 +1374,8 @@ model AgentEdit {
   undoData   Json?
   createdAt  DateTime      @default(now())
   undoneAt   DateTime?
+  /// TOOL_ACCESS_PLAN §12.3: the agent that took its own change back (undo_edit); null when the user undid it on Home.
+  undoneBy   String?       @db.VarChar(60)
   seenAt     DateTime?
 
   @@index([userId, createdAt(sort: Desc)])

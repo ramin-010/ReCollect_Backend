@@ -13,6 +13,7 @@ import { emptyTrash, trashedDocs } from '../docs/trash.service';
 import { freshStart, type FreshStartResult } from '../learningDb/plan.service';
 import { describeShareAction, runShareAction } from '../docs/docSharing.service';
 import { UNDO_DAYS, deleteSubjectWithUndo, deletionPreview } from '../learningDb/subjectDeletion.service';
+import { describeTopicRemoval, runTopicRemoval } from '../agent/agentLifecycle.service';
 
 /** Pending actions a caller may have waiting at once. */
 export const ACTIONS_PENDING_MAX = 10;
@@ -89,6 +90,13 @@ const ACTIONS = {
             return `Deleted the subject "${d.name}": it can come back for ${UNDO_DAYS} days`;
         },
     } satisfies ActionDef<{ subjectId: string }>,
+    // TOOL_ACCESS_PLAN §12.4: a topic that holds a doc, reviews, notes, sessions or weak spots leaves its path only on
+    // their tap (its reviews and weak spots go for good; the doc and the notes stay).
+    delete_topic: {
+        input: z.object({ topicId: z.string().trim().min(1).max(64) }).strict(),
+        describe: (userId: string, input: { topicId: string }) => describeTopicRemoval(userId, input.topicId),
+        run: (userId: string, input: { topicId: string }) => runTopicRemoval(userId, input.topicId),
+    } satisfies ActionDef<{ topicId: string }>,
 } as const;
 
 type ShareDocInput = { docId: string; email: string; role: 'viewer' | 'editor' | 'remove'; withPages?: boolean | undefined };
