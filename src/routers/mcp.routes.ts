@@ -23,6 +23,31 @@ function unauthorized(res: Response, message: string, invalid = false): void {
     res.status(401).json({ jsonrpc: '2.0', error: { code: -32001, message }, id: null });
 }
 
+type RpcMessage = { jsonrpc?: unknown; id?: unknown; method?: unknown; params?: { name?: unknown } };
+const hasId = (m: RpcMessage): m is RpcMessage & { id: string | number } => typeof m.id === 'string' || typeof m.id === 'number';
+
+/**
+ * TOOL_ACCESS_PLAN §6.3, §12.2 (B3): takes one call from the token for every tools/call in the body, a single message
+ * or a batch. Null when they may all run; else the whole body's answer (each call a tool result with the limit's words,
+ * any other request in the batch an error) and the calls refused, for the counts.
+ */
+export function limitedBody(body: unknown, token: string, take: (token: string) => string | null = takeCall): { answer: unknown; calls: Array<{ tool: string }> } | null {
+    const batch = Array.isArray(body);
+    const messages = (batch ? body : [body]).filter((m): m is RpcMessage => !!m && typeof m === 'object');
+    const calls = messages.filter((m) => m.method === 'tools/call' && hasId(m));
+    if (!calls.length) return null;
+    let words: string | null = null;
+    for (const _ of calls) words ??= take(token);
+    if (!words) return null;
+    const limited = words;
+    const answers = messages.filter(hasId).map((m) =>
+        m.method === 'tools/call'
+            ? { result: { content: [{ type: 'text', text: limited }], isError: true }, jsonrpc: '2.0', id: m.id }
+            : { error: { code: -32000, message: limited }, jsonrpc: '2.0', id: m.id }
+    );
+    return { answer: batch ? answers : answers[0], calls: calls.map((c) => ({ tool: String(c.params?.name ?? '?').slice(0, 60) })) };
+}
+
 // Hosting P1-4: knocking without a valid token is limited per address. Only a refused request meets the limiter
 // (TOOL_ACCESS_PLAN stage 0, the bench): every claude.ai or ChatGPT user's calls come from that host's few addresses,
 // and a limiter in front of every request counts the ones in flight too, so busy hours would answer valid tokens 429.
@@ -36,14 +61,13 @@ router.post('/mcp', express.json({ limit: '2mb' }), async (req: Request, res: Re
     if (row.expiresAt && row.expiresAt.getTime() <= Date.now()) return refuse('This token has expired: refresh it, or sign in again.', true);
     // TOOL_ACCESS_PLAN §6.3: a call over the token's limit is answered as a tool result the model reads (a 429 would
     // show in the host as a broken connector); lists, initialize and notifications are not counted.
-    const call = req.body as { jsonrpc?: unknown; id?: unknown; method?: unknown; params?: { name?: unknown } } | undefined;
-    if (call && !Array.isArray(call) && call.method === 'tools/call' && (typeof call.id === 'string' || typeof call.id === 'number')) {
-        const over = takeCall(token);
-        if (over) {
-            recordToolCall({ door: 'web', app: row.name || 'Remote MCP', tool: String(call.params?.name ?? '?').slice(0, 60), via: 'direct', outcome: 'limited', ms: 0 });
-            res.status(200).json({ result: { content: [{ type: 'text', text: over }], isError: true }, jsonrpc: '2.0', id: call.id });
-            return;
-        }
+    // §12.2 (B3): every call counts, also each one of a batch (the transport takes JSON-RPC arrays); a batch with any
+    // call over the limit is answered whole, each call with the limit's words.
+    const over = limitedBody(req.body, token);
+    if (over) {
+        for (const c of over.calls) recordToolCall({ door: 'web', app: row.name || 'Remote MCP', tool: c.tool, via: 'direct', outcome: 'limited', ms: 0 });
+        res.status(200).json(over.answer);
+        return;
     }
     try {
         // The tools call this server on the address it listens on, never the public one (hosting P1-9).
