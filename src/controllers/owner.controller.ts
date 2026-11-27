@@ -23,6 +23,17 @@ import { inviteView, revokeInvite } from '../services/owner/invites.service';
 import { sendDiagnostics, sendFeedback, FEEDBACK_MAX } from '../services/owner/feedback.service';
 import { firstRunFor, updateFirstRun } from '../services/users/firstRun.service';
 import { exportAccount } from '../services/users/accountExport.service';
+import { logAction, logViews, ownerAccessOf } from '../services/owner/ownerAccess.service';
+import { accountSummary } from '../services/users/accountSummary.service';
+import { isOwnerAccount } from '../services/claude/allowance';
+
+/** TRUST_PLAN T4: a row in the person's own log; a logging failure never fails the owner's action. */
+function logged(what: Promise<unknown>): Promise<void> {
+    return what.then(
+        () => undefined,
+        (err: unknown) => console.warn(`[owner] the access log missed a row: ${(err as Error).message}`)
+    );
+}
 
 const isOwnerEmail = (email: string) => {
     const owner = ownerEmail();
@@ -41,7 +52,10 @@ export const checkHandler = handler(async (req, res) => {
 });
 
 export const peopleHandler = handler(async (_req, res) => {
-    ok(res, await peopleView());
+    const view = await peopleView();
+    // TRUST_PLAN T4: each person the page shows gets a row in their own log (one an hour); the owner's own never.
+    await logged(logViews(view.people.filter((p) => !p.isOwner).map((p) => p.id)));
+    ok(res, view);
 });
 
 const zUsd = z.number().finite().min(0).max(500);
@@ -56,23 +70,32 @@ export const addPersonHandler = handler(async (req, res) => {
 
 export const topUpHandler = handler(async (req, res) => {
     const input = parse(z.object({ amountUsd: zUsd.refine((n) => n > 0, { message: 'more than $0' }), note: z.string().trim().max(200).optional() }).strict(), req.body);
-    await topUp(requireUser(req).id, param(req, 'id'), input.amountUsd, input.note);
+    const ownerId = requireUser(req).id;
+    const personId = param(req, 'id');
+    await topUp(ownerId, personId, input.amountUsd, input.note);
+    if (personId !== ownerId) await logged(logAction(personId, 'topped_up', { usd: input.amountUsd }));
     ok(res, { done: true });
 });
 
 export const setBudgetHandler = handler(async (req, res) => {
     const input = parse(z.object({ dailyCapUsd: zUsd.nullable() }).strict(), req.body);
-    await setDailyCapUsd(param(req, 'id'), input.dailyCapUsd);
+    const personId = param(req, 'id');
+    await setDailyCapUsd(personId, input.dailyCapUsd);
+    if (personId !== requireUser(req).id) await logged(logAction(personId, 'limit_set', { limitUsd: input.dailyCapUsd }));
     ok(res, { done: true });
 });
 
 export const endAccessHandler = handler(async (req, res) => {
-    await endAccess(requireUser(req).id, param(req, 'id'));
+    const personId = param(req, 'id');
+    await endAccess(requireUser(req).id, personId);
+    await logged(logAction(personId, 'access_ended'));
     ok(res, { done: true });
 });
 
 export const restoreAccessHandler = handler(async (req, res) => {
-    await restoreAccess(param(req, 'id'));
+    const personId = param(req, 'id');
+    await restoreAccess(personId);
+    if (personId !== requireUser(req).id) await logged(logAction(personId, 'access_restored'));
     ok(res, { done: true });
 });
 
@@ -118,6 +141,18 @@ export const accountExportHandler = handler(async (req, res) => {
     res.setHeader('Content-Disposition', `attachment; filename="recollect-export-${data.exportedAt.slice(0, 10)}.json"`);
     res.setHeader('Cache-Control', 'no-store');
     ok(res, data);
+});
+
+/** GET /api/account/summary (TRUST_PLAN T3): what Kaaga keeps for this account, and who can see it. */
+export const accountSummaryHandler = handler(async (req, res) => {
+    ok(res, await accountSummary(requireUser(req).id));
+});
+
+/** GET /api/account/owner-access (TRUST_PLAN T4): what the app showed the owner of this account, and what they did. */
+export const ownerAccessHandler = handler(async (req, res) => {
+    const userId = requireUser(req).id;
+    const isOwner = await isOwnerAccount(userId);
+    ok(res, { isOwner, rows: isOwner ? [] : await ownerAccessOf(userId) });
 });
 
 /** GET /api/first-run: Home's checklist for a new account (stage 11, §9.6 item 2). */

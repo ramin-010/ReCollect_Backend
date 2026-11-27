@@ -18,6 +18,7 @@ import { deleteOrLeaveDoc, findAccessibleDoc } from './docs.service';
 import { isDocOwner } from './docPermissions';
 import { pruneThreads } from '../assistant/threads.service';
 import { pruneAgentHistory } from '../agent/prune.service';
+import { pruneOwnerAccess } from '../owner/ownerAccess.service';
 import { pruneOAuth } from '../oauth/oauth.service';
 import { purgeSubjectDeletions, UNDO_DAYS } from '../learningDb/subjectDeletion.service';
 
@@ -147,6 +148,9 @@ export async function trashHousekeeping(): Promise<void> {
     if (pruned.edits + pruned.snapshots > 0) console.log(`[agent] pruned ${pruned.edits} old edit(s), ${pruned.snapshots} snapshot(s)`);
     // Sign-in codes and refresh tokens that can't be used any more.
     await pruneOAuth();
+    // TRUST_PLAN T4: the owner-access log keeps a year.
+    const access = await pruneOwnerAccess();
+    if (access > 0) console.log(`[owner] pruned ${access} owner-access row(s) older than a year`);
 }
 
 export function startTrashCron() {

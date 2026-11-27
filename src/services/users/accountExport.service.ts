@@ -9,6 +9,7 @@ import { prisma } from '../../db/prisma';
 import { currentContent } from '../agent/agentDocs.service';
 import { docJsonToMarkdown } from '../docs/markdown/docMarkdown';
 import { exportBuddy } from '../buddy/memory.service';
+import { ownerAccessOf } from '../owner/ownerAccess.service';
 
 /** Bump when the file's shape changes. */
 export const EXPORT_VERSION = 1;
@@ -127,5 +128,7 @@ export async function exportAccount(userId: string, now: Date = new Date()) {
         },
         connectedApps: tokens,
         sentToOwner: feedback,
+        // TRUST_PLAN T4 (11-27): what the app showed the owner of this account, and what they did to it.
+        ownerAccess: await ownerAccessOf(userId, 500),
     };
 }

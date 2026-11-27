@@ -201,6 +201,8 @@ model User {
   invitesSent       SignupInvite[]     @relation("InviteBy")
   invitesUsed       SignupInvite[]     @relation("InviteUsedBy")
   feedback          Feedback[]
+  // TRUST_PLAN T4 (11-27): what the app showed the owner of this person, and what the owner did to their account.
+  ownerAccess       OwnerAccess[]
   buddyHeard        BuddyHeard[]
   buddySessionMarks BuddySessionMark[]
   buddyDays         BuddyCaptureDay[]
@@ -843,8 +845,8 @@ model Capture {
 
   /// DOC_PAGES_PLAN D4 (11-27): the page the note was written on. Its lesson stays topicId. SET NULL: the note outlives
   /// the page.
-  docId         String?
-  doc           Doc?        @relation(fields: [docId], references: [id], onDelete: SetNull)
+  docId String?
+  doc   Doc?    @relation(fields: [docId], references: [id], onDelete: SetNull)
 
   revisions Revision[]
 
@@ -2840,4 +2842,29 @@ model SubjectDeletion {
 
   @@index([userId, createdAt])
   @@index([expiresAt])
+}
+
+/// TRUST_PLAN T4 (11-27): what the app showed the owner of a person (the People page, at most one row an hour) and what
+/// the owner did to their account (a top-up, a daily limit, access ended or restored). The person reads their own rows
+/// on Settings › Your data; the app never edits or deletes one (append-only), the night job prunes rows after a year,
+/// and deleting the account deletes them (cascade).
+model OwnerAccess {
+  id      String          @id @default(cuid())
+  userId  String
+  user    User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind    OwnerAccessKind
+  /// What the row is about: the facts shown (`shown`), an amount (`usd`), a daily limit (`limitUsd`).
+  details Json?
+  at      DateTime        @default(now())
+
+  @@index([userId, at])
+  @@index([at])
+}
+
+enum OwnerAccessKind {
+  viewed
+  topped_up
+  limit_set
+  access_ended
+  access_restored
 }

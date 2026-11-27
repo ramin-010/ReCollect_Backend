@@ -5,6 +5,7 @@ import { authOnce, cookieOnly } from '../middlwares/scopes';
 import { doorLimit } from '../middlwares/rateLimit';
 import {
     accountExportHandler,
+    accountSummaryHandler,
     addPersonHandler,
     ceilingHandler,
     checkHandler,
@@ -13,6 +14,7 @@ import {
     feedbackHandler,
     firstRunHandler,
     inviteViewHandler,
+    ownerAccessHandler,
     ownerOnly,
     peopleHandler,
     restoreAccessHandler,
@@ -45,6 +47,9 @@ feedbackRouter.post('/feedback', authOnce, feedbackHandler);
 feedbackRouter.post('/phone/diagnostics', authOnce, diagnosticsHandler);
 // §9.6 item 6: "Download everything" (cookie only; DELETE /api/account is in user.routes.ts).
 feedbackRouter.get('/account/export', authOnce, cookieOnly, accountExportHandler);
+// TRUST_PLAN T3, T4 (Settings › Your data): what Kaaga keeps and who can see it; what the app showed the owner.
+feedbackRouter.get('/account/summary', authOnce, cookieOnly, accountSummaryHandler);
+feedbackRouter.get('/account/owner-access', authOnce, cookieOnly, ownerAccessHandler);
 // The first run (§9.6 item 2): Home's checklist for a new account (cookie only).
 feedbackRouter.get('/first-run', authOnce, cookieOnly, firstRunHandler);
 feedbackRouter.patch('/first-run', authOnce, cookieOnly, updateFirstRunHandler);
