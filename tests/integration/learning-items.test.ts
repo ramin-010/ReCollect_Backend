@@ -292,6 +292,22 @@ describe('POST /api/learning/uploads', () => {
         });
     });
 
+    it("11-27: a doc's File block sends its doc's id: the file is listed on that doc (for its cleanup), only when the uploader may edit it", async () => {
+        const user = await createLearner();
+        const stranger = await createLearner();
+        const doc = await prisma.doc.create({ data: { userId: user.id, title: 'With a file' } });
+        const theirs = await prisma.doc.create({ data: { userId: stranger.id, title: 'Not yours' } });
+        const sent = await request(app).post('/api/learning/uploads').set('Cookie', authCookie(user)).field('docId', doc.id).attach('file', Buffer.from('a,b\n1,2'), { filename: 'rates.csv', contentType: 'text/csv' });
+        expect(sent.status).toBe(200);
+        expect((await prisma.doc.findUniqueOrThrow({ where: { id: doc.id } })).cloudImages).toEqual([
+            { imageId: 'recollect-learning/rates.csv', cloudUrl: 'https://cdn.test/rates.csv', cloudPublicId: 'recollect-learning/rates.csv' },
+        ]);
+        // Someone else's doc: the upload still answers; nothing is listed there.
+        const other = await request(app).post('/api/learning/uploads').set('Cookie', authCookie(user)).field('docId', theirs.id).attach('file', Buffer.from('x'), { filename: 'x.txt', contentType: 'text/plain' });
+        expect(other.status).toBe(200);
+        expect((await prisma.doc.findUniqueOrThrow({ where: { id: theirs.id } })).cloudImages).toEqual([]);
+    });
+
     it('400 without a file, 413 over 10 MB (TOOL_ACCESS_PLAN §11.2), 400 for a video, 401 without a cookie', async () => {
         const user = await createLearner();
         const none = await request(app).post('/api/learning/uploads').set('Cookie', authCookie(user)).field('x', '1');

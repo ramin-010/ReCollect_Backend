@@ -24,6 +24,7 @@ import {
     updateTopic,
 } from '../../services/learningDb/items.service';
 import { uploadToCloud } from '../../services/learningDb/uploads.service';
+import { appendDocCloudImage } from '../../services/docs/docs.service';
 import { hearPocketNote } from '../../services/buddy/chatEar';
 import { handler, ok, param, parse, zAttachment, zId } from './common';
 
@@ -155,10 +156,20 @@ export const deleteCaptureHandler = handler(async (req, res) => {
 // ─── #21 Uploads ───────────────────────────────────────────────────────
 
 export const uploadHandler = handler(async (req, res) => {
-    requireUser(req);
+    const userId = requireUser(req).id;
     const file = req.file;
     if (!file || !file.buffer) throw badRequest('No file uploaded (field "file")', 'NO_FILE');
-    ok(res, await uploadToCloud({ buffer: file.buffer, originalname: file.originalname, mimetype: file.mimetype }));
+    const stored = await uploadToCloud({ buffer: file.buffer, originalname: file.originalname, mimetype: file.mimetype });
+    // 11-27: a doc's File block sends its doc's id; the file is listed on the doc (Doc.cloudImages, with its kind), so the
+    // doc's cleanup deletes it once no block or link in the doc points at it, as it does images. Not recorded (no edit
+    // right on that doc): the upload still answers, as an image's does.
+    const docId = typeof req.body?.docId === 'string' ? req.body.docId.trim() : '';
+    if (docId && stored.publicId) {
+        await appendDocCloudImage(docId, userId, { imageId: stored.publicId, cloudUrl: stored.url, cloudPublicId: stored.publicId, ...(stored.resourceType ? { resourceType: stored.resourceType } : {}) }).catch((err: unknown) =>
+            console.error('[uploads] a doc file was not recorded on its doc:', err),
+        );
+    }
+    ok(res, stored);
 });
 
 // ─── Quick notes ───────────────────────────────────────────────────────

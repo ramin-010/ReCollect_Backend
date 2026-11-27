@@ -26,6 +26,7 @@ import { generatePreviewState } from '../../utils/previewUtils';
 import {
     collectUploadedImages,
     partitionCloudImages,
+    publicIdsByType,
     readCloudImages,
     type CloudImage,
     type UploadedFiles,
@@ -206,7 +207,7 @@ export async function deleteOrLeaveDoc(docId: string, userId: string, db: DbClie
             : [];
         const all = [{ id: doc.id, title: doc.title, cloudImages: doc.cloudImages }, ...taken];
         const images = all.flatMap((d) => readCloudImages(d.cloudImages));
-        if (images.length > 0) await batchDeleteFromCloud(images.map((img) => img.cloudPublicId));
+        if (images.length > 0) await deleteDocCloudFiles(images);
         // Its path topics survive (SET NULL, with their revision history); they keep the doc's last
         // title instead of the one they were made with ("Untitled" for a doc named later).
         for (const d of all) await db.topic.updateMany({ where: { docId: d.id }, data: { title: d.title.trim() || 'Untitled' } });
@@ -218,6 +219,16 @@ export async function deleteOrLeaveDoc(docId: string, userId: string, db: DbClie
 }
 
 // ─── Cloud images ──────────────────────────────────────────────────────
+
+/**
+ * Deletes a doc's stored images and files from the store, each by its kind (11-27: a File block's file is "raw", or
+ * "video"; deleted as an image it would stay). Images go as one call, as before.
+ */
+export async function deleteDocCloudFiles(images: readonly CloudImage[]): Promise<void> {
+    for (const [type, ids] of publicIdsByType(images)) {
+        await (type === 'image' ? batchDeleteFromCloud(ids) : batchDeleteFromCloud(ids, type));
+    }
+}
 
 /**
  * POST /api/collab/upload: remember an image uploaded from the live editor in Doc.cloudImages so

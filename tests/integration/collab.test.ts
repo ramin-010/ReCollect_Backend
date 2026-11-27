@@ -116,6 +116,39 @@ describe('docHandler', () => {
         expect(readCloudImages(stored.cloudImages)).toEqual([image('used')]);
     });
 
+    it("cleanup (11-27): a File block's file stays while a block or a link in the doc points at it, and goes as its own kind", async () => {
+        const { owner } = await docFixture();
+        // The new editor's fragment: a File block, and a paragraph whose text links another file (an agent's Markdown edit
+        // turns a File block into the line [name](url), with the URL's spaces encoded).
+        const ydoc = new Y.Doc();
+        const group = new Y.XmlElement('blockGroup');
+        const fileBox = new Y.XmlElement('blockContainer');
+        const file = new Y.XmlElement('file');
+        file.setAttribute('url', 'https://cdn/raw/kept.csv');
+        fileBox.insert(0, [file]);
+        const textBox = new Y.XmlElement('blockContainer');
+        const para = new Y.XmlElement('paragraph');
+        const text = new Y.XmlText();
+        para.insert(0, [text]);
+        textBox.insert(0, [para]);
+        group.insert(0, [fileBox, textBox]);
+        ydoc.getXmlFragment('blocks').insert(0, [group]);
+        text.insert(0, 'notes.csv', { link: { href: 'https://cdn/raw/linked%20notes.csv' } });
+        const state = stateBytes(Buffer.from(Y.encodeStateAsUpdate(ydoc)).toString('base64'));
+        ydoc.destroy();
+        const raw = (name: string) => ({ imageId: `recollect-learning/${name}`, cloudUrl: `https://cdn/raw/${name}`, cloudPublicId: `recollect-learning/${name}`, resourceType: 'raw' });
+        const doc = await prisma.doc.create({
+            data: { userId: owner.id, title: 'Files', yjsState: state, cloudImages: [raw('kept.csv'), raw('linked notes.csv'), raw('gone.csv'), image('orphan')] },
+        });
+
+        await docHandler.cleanup!(doc.id);
+
+        // Images as before (one call, no kind); files by their kind.
+        expect(vi.mocked(batchDeleteFromCloud).mock.calls).toEqual([[['recollect/orphan']], [['recollect-learning/gone.csv'], 'raw']]);
+        const stored = await prisma.doc.findUniqueOrThrow({ where: { id: doc.id } });
+        expect(readCloudImages(stored.cloudImages)).toEqual([raw('kept.csv'), raw('linked notes.csv')]);
+    });
+
     it('cleanup keeps images only the live (not yet stored) document uses', async () => {
         const { owner } = await docFixture();
         const doc = await prisma.doc.create({

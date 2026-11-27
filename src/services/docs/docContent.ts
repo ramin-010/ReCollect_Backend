@@ -238,10 +238,30 @@ export function replaceImageSrcs(content: unknown, urls: Record<string, { url: s
 const BLOCKS_FRAGMENT = BLOCKS_YJS_FRAGMENT;
 const BLOCK_FILE_TYPES = new Set(['image', 'file', 'video', 'audio']);
 
+/** The hrefs of a text's links (y-prosemirror keeps a mark as an attribute: `link`, or `link--<hash>` beside another). */
+function linkHrefs(text: { toDelta(): unknown }): string[] {
+    const hrefs: string[] = [];
+    let delta: unknown;
+    try {
+        delta = text.toDelta();
+    } catch {
+        return hrefs;
+    }
+    if (!Array.isArray(delta)) return hrefs;
+    for (const op of delta as Array<{ attributes?: Record<string, unknown> }>) {
+        for (const [key, value] of Object.entries(op?.attributes ?? {})) {
+            if ((key === 'link' || key.startsWith('link--')) && value && typeof (value as { href?: unknown }).href === 'string') hrefs.push((value as { href: string }).href);
+        }
+    }
+    return hrefs;
+}
+
 /**
  * The images a Y.Doc still uses: the imageId attrs of the old editor's image nodes, plus the URLs
  * of the new editor's file blocks (fragment "blocks"), which carry no imageId. `partitionCloudImages`
- * keeps an image when either its id or its URL is listed.
+ * keeps an image when either its id or its URL is listed. Since 11-27 also every link's address in the
+ * new editor's text: a File block's file stays while a link points at it (an agent's Markdown edit
+ * turns the block into the link `[name](url)`), so cleanup never takes a file a doc still links to.
  */
 export function extractImageIdsFromYDoc(ydoc: Y.Doc): string[] {
     const ids: string[] = [];
@@ -261,6 +281,10 @@ export function extractImageIdsFromYDoc(ydoc: Y.Doc): string[] {
         const blocks: any[] = ydoc.getXmlFragment(BLOCKS_FRAGMENT).toArray();
         while (blocks.length > 0) {
             const element = blocks.pop();
+            if (element && typeof element.toDelta === 'function' && typeof element.toArray !== 'function') {
+                ids.push(...linkHrefs(element));
+                continue;
+            }
             if (!element || typeof element.toArray !== 'function') continue;
             if (typeof element.nodeName === 'string' && BLOCK_FILE_TYPES.has(element.nodeName)) {
                 const url = element.getAttribute?.('url');

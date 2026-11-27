@@ -2,7 +2,6 @@
 // and the Cloudinary orphan-image cleanup when someone disconnects. DB access goes through
 // src/services/docs/docs.service.ts; yjsState is bytes (D3, 2026-11-15).
 import { DocumentHandler, CollabAccess, CollabDocument, registerDocumentHandler, hocuspocusServer } from './hocuspocus';
-import { batchDeleteFromCloud } from '../utils/cloudinary';
 import { generatePreviewAndMetadata } from '../utils/previewUtils';
 import { stateBytes } from '../services/docs/docState';
 import { extractImageIdsFromYDoc, extractImageIdsFromYjsState } from '../services/docs/docContent';
@@ -10,6 +9,7 @@ import { docProblem, repairDoc } from '../services/docs/docRepair';
 import type * as Y from 'yjs';
 import { partitionCloudImages, readCloudImages } from '../services/uploads/cloudImages';
 import {
+  deleteDocCloudFiles,
   findDocImageState,
   getDocLiveRole,
   loadDocYjsState,
@@ -80,7 +80,8 @@ const docHandler: DocumentHandler = {
 
   /**
    * Delete Cloudinary images the doc no longer uses (not in the stored nor in the live state, nor
-   * in a snapshot an agent edit can still be undone to).
+   * in a snapshot an agent edit can still be undone to). Since 11-27 also a File block's file, which
+   * stays while any block or link in the doc points at it, and goes as its own kind.
    */
   async cleanup(docId: string): Promise<void> {
     const doc = await findDocImageState(docId);
@@ -100,8 +101,8 @@ const docHandler: DocumentHandler = {
     const { orphaned } = partitionCloudImages(readCloudImages(doc.cloudImages), inUse);
     if (orphaned.length === 0) return;
 
-    console.log(`[docHandler] Cleanup ${docId}: deleting ${orphaned.length} orphaned image(s)`);
-    await batchDeleteFromCloud(orphaned.map((img) => img.cloudPublicId));
+    console.log(`[docHandler] Cleanup ${docId}: deleting ${orphaned.length} orphaned image(s) or file(s)`);
+    await deleteDocCloudFiles(orphaned);
     await removeDocCloudImages(docId, orphaned.map((img) => img.imageId));
   },
 };

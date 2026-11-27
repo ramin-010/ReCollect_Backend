@@ -261,6 +261,25 @@ describe('image helpers', () => {
         plain.destroy();
     });
 
+    it("11-27: lists every link's address in the new editor's text too (a File block an agent's Markdown turned into a link keeps its file)", () => {
+        const ydoc = new Y.Doc();
+        const group = new Y.XmlElement('blockGroup');
+        const container = new Y.XmlElement('blockContainer');
+        const para = new Y.XmlElement('paragraph');
+        const text = new Y.XmlText();
+        para.insert(0, [text]);
+        container.insert(0, [para]);
+        group.insert(0, [container]);
+        ydoc.getXmlFragment('blocks').insert(0, [group]);
+        text.insert(0, 'see ');
+        text.insert(4, 'rates.csv', { link: { href: 'https://cdn/raw/rates.csv' } });
+        text.insert(13, ' and ');
+        // Beside another link mark, y-prosemirror names the attribute link--<hash>.
+        text.insert(18, 'the talk', { 'link--a1b2': { href: 'https://talks.test/kafka' }, bold: true });
+        expect(extractImageIdsFromYDoc(ydoc).sort()).toEqual(['https://cdn/raw/rates.csv', 'https://talks.test/kafka']);
+        ydoc.destroy();
+    });
+
     it('returns null (not "no images") for a state it cannot read', () => {
         vi.spyOn(console, 'error').mockImplementation(() => {});
         expect(extractImageIdsFromYjsState(Buffer.from([0xff, 0xff, 0xff, 0x01]).toString('base64'))).toBeNull();

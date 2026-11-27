@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { collectUploadedImages, partitionCloudImages, readCloudImages } from '../../../src/services/uploads/cloudImages';
+import { collectUploadedImages, partitionCloudImages, publicIdsByType, readCloudImages } from '../../../src/services/uploads/cloudImages';
 import { parseJsonField, readOptionalBoolean, readOptionalString, readStringList } from '../../../src/utils/requestFields';
 
 describe('readCloudImages', () => {
@@ -50,6 +50,32 @@ describe('partitionCloudImages', () => {
         expect(partitionCloudImages([a, b], ['https://cdn/a.webp'])).toEqual({ retain: [a], orphaned: [b] });
         // An empty URL never matches an empty key.
         expect(partitionCloudImages([b], [''])).toEqual({ retain: [], orphaned: [b] });
+    });
+
+    it("11-27: a file's URL counts however it is encoded (a Markdown link writes spaces and parentheses encoded)", () => {
+        const f = { imageId: 'p/f', cloudUrl: 'https://cdn/raw/rate limits (q3).xlsx', cloudPublicId: 'p/f', resourceType: 'raw' };
+        expect(partitionCloudImages([f], ['https://cdn/raw/rate%20limits%20(q3).xlsx'])).toEqual({ retain: [f], orphaned: [] });
+        // The Markdown printer's form (linkUrl encodes the parentheses too).
+        expect(partitionCloudImages([f], ['https://cdn/raw/rate%20limits%20%28q3%29.xlsx']).retain).toEqual([f]);
+        expect(partitionCloudImages([f], ['https://cdn/raw/other.xlsx']).orphaned).toEqual([f]);
+        // A malformed escape is compared as it is (never throws).
+        expect(partitionCloudImages([{ ...f, cloudUrl: 'https://cdn/raw/100%.csv' }], ['https://cdn/raw/100%.csv']).retain).toHaveLength(1);
+    });
+});
+
+describe('readCloudImages / publicIdsByType (11-27: files in docs)', () => {
+    it("keeps an entry's kind, and groups the public ids by it: images first, one call each", () => {
+        expect(readCloudImages([{ imageId: 'p/f', cloudUrl: 'u', cloudPublicId: 'p/f', resourceType: 'raw' }, { imageId: 'x', cloudPublicId: 'p/x', resourceType: 5 }])).toEqual([
+            { imageId: 'p/f', cloudUrl: 'u', cloudPublicId: 'p/f', resourceType: 'raw' },
+            { imageId: 'x', cloudUrl: '', cloudPublicId: 'p/x' },
+        ]);
+        const img = (id: string) => ({ imageId: id, cloudUrl: '', cloudPublicId: `p/${id}` });
+        expect(publicIdsByType([{ ...img('f'), resourceType: 'raw' }, img('a'), { ...img('v'), resourceType: 'video' }, img('b'), { ...img('g'), resourceType: 'raw' }])).toEqual([
+            ['image', ['p/a', 'p/b']],
+            ['raw', ['p/f', 'p/g']],
+            ['video', ['p/v']],
+        ]);
+        expect(publicIdsByType([])).toEqual([]);
     });
 });
 

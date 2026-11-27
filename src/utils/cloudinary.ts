@@ -12,12 +12,14 @@ cloudinary.config({
 /**
  * Delete one asset from Cloudinary. Rejects if Cloudinary reports an error.
  * (Moved here unchanged from the cut content controller; used by user avatars and doc images.)
+ * `resourceType` (11-27): the store's kind of the asset when it isn't an image ("raw" for a doc's file, or "video");
+ * Cloudinary deletes by kind, so a file deleted as an image would stay.
  */
-export const deleteFromCloud = async (publicId: string): Promise<void> => {
+export const deleteFromCloud = async (publicId: string, resourceType?: string): Promise<void> => {
     try {
         console.log("Deleting from cloud:", publicId);
         return new Promise((resolve, reject) => {
-            cloudinary.uploader.destroy(publicId, { invalidate: true }, (err: any, result: any) => {
+            cloudinary.uploader.destroy(publicId, { invalidate: true, ...(resourceType ? { resource_type: resourceType } : {}) }, (err: any, result: any) => {
                 if (err) {
                     console.error("Cloud deletion error:", err);
                     reject(err);
@@ -33,12 +35,12 @@ export const deleteFromCloud = async (publicId: string): Promise<void> => {
     }
 }
 
-/** Delete many assets; individual failures are logged and never thrown. */
-export const batchDeleteFromCloud = async (publicIds: string[]): Promise<void> => {
+/** Delete many assets (of one kind: images unless `resourceType` says); individual failures are logged and never thrown. */
+export const batchDeleteFromCloud = async (publicIds: string[], resourceType?: string): Promise<void> => {
     if (publicIds.length === 0) return;
 
     const deletePromises = publicIds.map(id =>
-        deleteFromCloud(id).catch(err => {
+        deleteFromCloud(id, resourceType).catch(err => {
             console.error(`Failed to delete ${id}:`, err);
         })
     );
