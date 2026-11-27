@@ -55,6 +55,7 @@ export const TOKEN_ROUTES: readonly TokenRoute[] = [
     route('POST', '/api/agent/docs/:id/blocks/move', 'docs:write'),
     route('POST', '/api/agent/docs/:id/blocks/delete', 'docs:write'),
     route('PATCH', '/api/agent/docs/:id/blocks/:blockId', 'docs:write'),
+    route('POST', '/api/agent/docs/:id/part', 'docs:write'),
     route('POST', '/api/agent/docs/:id/trash', 'docs:write'),
     route('POST', '/api/agent/docs/:id/restore', 'docs:write'),
     route('POST', '/api/agent/docs/:id/canvas/:canvasId', 'docs:write'),
@@ -207,6 +208,7 @@ export const LOGGED: Readonly<Record<string, AgentEditKind>> = {
     'POST /api/agent/docs/:id/blocks/move': 'doc_blocks',
     'POST /api/agent/docs/:id/blocks/delete': 'doc_blocks',
     'PATCH /api/agent/docs/:id/blocks/:blockId': 'doc_blocks',
+    'POST /api/agent/docs/:id/part': 'doc_blocks',
     'POST /api/agent/docs/:id/canvas/:canvasId': 'doc_canvas_update',
     // STUDY_FLOW_PLAN: the card is a doc change (its pointer goes back with Undo); a note's add, change, move, merge
     // and removal are pocket_add rows with undoData.note (no new enum value).

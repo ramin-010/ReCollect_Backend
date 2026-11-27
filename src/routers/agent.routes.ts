@@ -28,7 +28,7 @@ import {
     updateDoc,
     docTree,
 } from '../controllers/agent.controller';
-import { deleteBlocks, getOutline, insertBlocks, moveBlocks, readBlocks, updateBlock } from '../controllers/agentBlocks.controller';
+import { deleteBlocks, editDocPart, getOutline, insertBlocks, moveBlocks, readBlocks, updateBlock } from '../controllers/agentBlocks.controller';
 import { addNote, listNotes, putCard, removeNote, updateNote } from '../controllers/agentNotes.controller';
 import { deletePocket, deleteSubject, listPocket, updatePocket, updateSubject } from '../controllers/agentPocket.controller';
 import { attachFile, noteFileBody, readFile, removeFile } from '../controllers/agentNoteFiles.controller';
@@ -58,6 +58,8 @@ router.post('/docs/:id/blocks', requireScope('docs:write'), idempotency, insertB
 router.post('/docs/:id/blocks/move', requireScope('docs:write'), idempotency, moveBlocks);
 router.post('/docs/:id/blocks/delete', requireScope('docs:write'), idempotency, deleteBlocks);
 router.patch('/docs/:id/blocks/:blockId', requireScope('docs:write'), idempotency, updateBlock);
+// TOOL_ACCESS_PLAN §10 (11-27): one part named in words (a heading, quoted words, a kind), changed in one call.
+router.post('/docs/:id/part', requireScope('docs:write'), idempotency, editDocPart);
 // STUDY_FLOW_PLAN (11-23): a lesson's revision card, and the notes and links on a lesson or a subject.
 router.put('/docs/:id/card', requireScope('docs:write'), idempotency, putCard);
 router.get('/notes', requireScope('read'), listNotes);

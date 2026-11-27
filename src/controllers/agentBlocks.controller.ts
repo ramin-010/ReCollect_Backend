@@ -5,6 +5,7 @@ import { requireUser } from '../middlwares/auth';
 import { agentActor } from '../services/agent/agentEditLog';
 import { deleteBlocksForAgent, insertBlocksForAgent, moveBlocksForAgent, outlineForAgent, readBlocksForAgent, updateBlockForAgent } from '../services/agent/agentBlocks.service';
 import type { Where } from '../services/docs/blocks/docOps';
+import { PART_ACTIONS, editDocPartForAgent } from '../services/agent/agentDocPart.service';
 import { handler, ok, param, parse } from './learning/common';
 
 const MARKDOWN_MAX = 500_000;
@@ -74,4 +75,16 @@ const deleteSchema = z.object({ ids });
 export const deleteBlocks = handler(async (req, res) => {
     const input = parse(deleteSchema, req.body);
     ok(res, await deleteBlocksForAgent(agentActor(req), param(req, 'id'), input.ids));
+});
+
+const partSchema = z.object({
+    part: z.string().trim().min(1, 'name the part: a heading, words from the block, or a kind ("the code block")').max(300),
+    action: z.enum(PART_ACTIONS),
+    markdown: markdown.optional(),
+});
+
+/** POST /api/agent/docs/:id/part { part, action, markdown? } → { id, title, done, part, ids?, editId } (TOOL_ACCESS_PLAN §10). */
+export const editDocPart = handler(async (req, res) => {
+    const input = parse(partSchema, req.body);
+    ok(res, await editDocPartForAgent(agentActor(req), param(req, 'id'), input));
 });
