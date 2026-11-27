@@ -43,6 +43,7 @@ const KINDS: ReadonlyArray<{ re: RegExp; types: readonly string[]; name: string;
     { re: /\bdiagrams?\b|\bmermaid\b|\bflowcharts?\b/, types: ['diagram'], name: 'diagram' },
     { re: /\bcanvas(?:es)?\b|\bboards?\b/, types: ['canvas'], name: 'canvas' },
     { re: /\bimages?\b|\bpictures?\b|\bscreenshots?\b/, types: ['image'], name: 'image' },
+    { re: /\bfiles?\b|\battachments?\b|\bpdfs?\b|\bspreadsheets?\b/, types: ['file'], name: 'file' },
     { re: /\bquotes?\b|\bblockquotes?\b/, types: ['quote'], name: 'quote' },
     { re: /\bdividers?\b|\bhorizontal (?:line|rule)\b/, types: ['divider'], name: 'divider' },
     { re: /\btoggles?\b/, types: ['toggleListItem'], name: 'toggle' },

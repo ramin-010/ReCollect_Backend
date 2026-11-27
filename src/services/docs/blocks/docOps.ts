@@ -87,6 +87,7 @@ function firstWords(b: DocBlock): string {
     if (b.type === 'canvas') return `canvas ${String(b.props['canvasId'] ?? '')}`;
     if (b.type === 'image') return `image ${String(b.props['url'] ?? '')}`.slice(0, 80);
     if (b.type === 'table') return 'table';
+    if (b.type === 'file') return `file ${String(b.props['name'] ?? '')}`.trim().slice(0, 80);
     const text = inlineText(b.content).replace(/\s+/g, ' ').trim();
     return text.length > 80 ? `${text.slice(0, 79)}…` : text;
 }

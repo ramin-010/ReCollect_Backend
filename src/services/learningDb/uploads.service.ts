@@ -133,6 +133,9 @@ function storeInCloud(file: { buffer: Buffer; originalname: string; mimetype: st
         const stream = cloudinary.uploader.upload_stream(
             { resource_type: 'auto', folder: LEARNING_UPLOAD_FOLDER, use_filename: true, unique_filename: true, filename_override: file.originalname },
             (err: unknown, result: { secure_url?: string; url?: string; public_id?: string; resource_type?: string; bytes?: number } | undefined) => {
+                // The store refusing the file itself ("Invalid PDF file") is the sender's file, not a server failure.
+                const said = err as { http_code?: number; message?: string } | undefined;
+                if (said?.http_code && said.http_code >= 400 && said.http_code < 500) return reject(new LearningHttpError(400, 'FILE_NOT_STORED', `The file could not be stored: ${said.message ?? 'the store refused it'}.`));
                 if (err || !result?.public_id) return reject(err ?? new Error('Cloudinary returned no file'));
                 resolve({
                     url: result.secure_url ?? result.url ?? '',

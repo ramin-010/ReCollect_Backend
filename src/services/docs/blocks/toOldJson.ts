@@ -144,6 +144,14 @@ function blockToOld(b: AnyBlock, opts: OldJsonOptions): JSONContent[] {
             const w = Number(b.props?.['previewWidth']);
             return url ? [{ type: 'resizableImage', attrs: { src: url, alt: String(b.props?.['caption'] ?? '') || null, width: w > 0 ? `${w}px` : '100%' } }, ...after] : after;
         }
+        case 'file':
+        case 'video':
+        case 'audio': {
+            // Files in docs (11-27): a line holding a link with the file's name (search finds the name).
+            const url = String(b.props?.['url'] ?? '');
+            const name = String(b.props?.['name'] ?? '').trim() || decodeURIComponent(url.split('/').pop() ?? '') || 'file';
+            return url ? [{ type: 'paragraph', content: [{ type: 'text', text: name, marks: [{ type: 'link', attrs: { href: url } }] }] }, ...after] : after;
+        }
         case 'divider':
             return [{ type: 'horizontalRule' }, ...after];
         case 'table': {

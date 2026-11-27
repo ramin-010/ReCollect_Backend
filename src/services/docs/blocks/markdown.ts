@@ -22,6 +22,9 @@ type AnyBlock = DocBlock | NewBlock;
 // ─── Inline ───────────────────────────────────────────────────────────
 
 /** Characters that would start Markdown syntax inside text. */
+/** A URL inside Markdown's (…): whitespace and parentheses encoded (encodeURIComponent leaves the parentheses). */
+const linkUrl = (url: string) => url.replace(/[()\s]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0')}`);
+
 function escapeText(text: string): string {
     return text.replace(/([\\`*_[\]<>~|=])/g, '\\$1');
 }
@@ -56,7 +59,7 @@ function printRun(run: StyledText): string {
 
 export function printInline(content: readonly InlineNode[] | undefined): string {
     return (content ?? [])
-        .map((n) => (n.type === 'link' ? `[${n.content.map(printRun).join('')}](${n.href.replace(/[()\s]/g, encodeURIComponent)})` : printRun(n)))
+        .map((n) => (n.type === 'link' ? `[${n.content.map(printRun).join('')}](${linkUrl(n.href)})` : printRun(n)))
         .join('');
 }
 
@@ -162,7 +165,15 @@ function printBlock(b: AnyBlock, ctx: PrintContext, numbered: number): string {
         case 'image': {
             const url = String(b.props?.['url'] ?? '');
             const alt = String(b.props?.['caption'] ?? '');
-            return url ? after(`![${escapeText(alt)}](${url.replace(/[()\s]/g, encodeURIComponent)})`) : '';
+            return url ? after(`![${escapeText(alt)}](${linkUrl(url)})`) : '';
+        }
+        case 'file':
+        case 'video':
+        case 'audio': {
+            // Files in docs (11-27): a link with the file's name (BlockNote keeps url, name and caption).
+            const url = String(b.props?.['url'] ?? '');
+            const name = String(b.props?.['name'] ?? '').trim() || decodeURIComponent(url.split('/').pop() ?? '') || 'file';
+            return url ? after(`[${escapeText(name)}](${linkUrl(url)})`) : '';
         }
         case 'table':
             return after(b.content && typeof b.content === 'object' && !Array.isArray(b.content) ? printTable(b.content as TableContent) : '');
@@ -183,7 +194,7 @@ export function printBlocks(blocks: readonly AnyBlock[], ctx: PrintContext = {})
         const text = printBlock(b, ctx, n);
         const tight = prev && LIST.has(prev.type) && prev.type === b.type;
         // An empty paragraph between blocks is a blank line the editor shows; Markdown drops it.
-        if ((b.type === 'paragraph' || b.type === 'page') && !text && !(b.children ?? []).length) {
+        if ((b.type === 'paragraph' || b.type === 'page' || b.type === 'file' || b.type === 'video' || b.type === 'audio') && !text && !(b.children ?? []).length) {
             prev = b;
             continue;
         }
