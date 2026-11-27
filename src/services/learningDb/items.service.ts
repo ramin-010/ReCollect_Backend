@@ -6,7 +6,7 @@ import { prisma } from '../../db/prisma';
 import { isUniqueViolation } from '../../db/errors';
 import { batchDeleteFromCloud } from '../../utils/cloudinary';
 import { findAccessibleDoc } from '../docs/docs.service';
-import { assertCanBeLesson, lessonOf } from '../docs/docTree.service';
+import { assertCanBeLesson, lessonOf, lessonsBelow } from '../docs/docTree.service';
 import { nextRevisionAction } from '../learning';
 import { badRequest, conflict, notFound } from '../learning/http';
 import {
@@ -128,7 +128,12 @@ export async function topicByDoc(userId: string, docId: string, now: Date = new 
     // STUDY_FLOW_PLAN §4.4: the doc's revision card (its pointer; the card route says 404 if its heading is gone).
     const hasCard = !!doc.cardBlockId;
     // DOC_PAGES_PLAN §3.2 (D5): a page inside a lesson has no topic of its own; it is revised with that lesson.
-    if (!topic) return { topic: null, chain: [] as ChainRevisionJson[], nextAction: { kind: 'start' as const }, hasCard, lesson: await lessonOf(docId, userId) };
+    if (!topic) {
+        const lesson = await lessonOf(docId, userId);
+        // D5's other side: a doc that holds lessons (a hub) can't be one; the Subject row says why (lessons in the trash count).
+        const lessonsInside = lesson ? 0 : (await lessonsBelow(docId, userId)).length;
+        return { topic: null, chain: [] as ChainRevisionJson[], nextAction: { kind: 'start' as const }, hasCard, lesson, ...(lessonsInside ? { lessonsInside } : {}) };
+    }
     const rows = await prisma.revision.findMany({ where: { topicId: topic.id }, orderBy: chainOrder });
     const action = nextRevisionAction(rows.map(toEngineRevision), ctx.today);
     const byId = new Map(rows.map((r) => [r.id, r]));
